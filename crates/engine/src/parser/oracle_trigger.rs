@@ -7157,7 +7157,7 @@ fn trigger_object_pronoun_ref_for_condition(condition_text: &str) -> Option<Targ
     // CR 608.2k + CR 601.2a: spell-cast trigger conditions introduce the cast
     // spell as the effect body's untargeted object antecedent. "it" in
     // "Whenever you cast a spell, put it ..." names the spell on the stack.
-    alt((
+    let is_spell_cast_trigger = alt((
         tag::<_, _, OracleError<'_>>("you cast "),
         tag("a player casts "),
         tag("an opponent casts "),
@@ -7166,8 +7166,8 @@ fn trigger_object_pronoun_ref_for_condition(condition_text: &str) -> Option<Targ
         tag("enchanted player casts "),
     ))
     .parse(after_keyword)
-    .ok()
-    .map(|_| TargetFilter::TriggeringSource)
+    .is_ok();
+    is_spell_cast_trigger.then_some(TargetFilter::TriggeringSource)
 }
 
 // ---------------------------------------------------------------------------
