@@ -506,6 +506,9 @@ export function ActionButton() {
         <AttackTargetPicker
           validTargets={validAttackTargets}
           selectedAttackers={selectedAttackers}
+          attackerConstraints={
+            waitingFor?.type === "DeclareAttackers" ? waitingFor.data.attacker_constraints : undefined
+          }
           onConfirm={handleTargetPickerConfirm}
           onCancel={() => setShowTargetPicker(false)}
         />

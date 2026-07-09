@@ -278,7 +278,8 @@
     "assignRemaining_one": "Przydziel jeszcze {{count}}",
     "assignRemaining_other": "Przydziel jeszcze {{count}}",
     "confirmDistribute_one": "Zadeklaruj {{count}} atakującego",
-    "confirmDistribute_other": "Zadeklaruj {{count}} atakujących"
+    "confirmDistribute_other": "Zadeklaruj {{count}} atakujących",
+    "mustAttackPlayer": "{{creature}} musi zaatakować {{player}}"
   },
   "fullControl": {
     "label": "Kontrola",
