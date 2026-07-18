@@ -1667,7 +1667,7 @@ pub(crate) fn parse_event_context_quantity(text: &str) -> Option<QuantityExpr> {
     let lower = text.to_lowercase();
     let lower = lower.trim();
     if let Ok((_, expr)) =
-        all_consuming(nom_quantity::parse_cost_paid_object_pt_difference).parse(lower)
+        all_consuming(nom_quantity::parse_demonstrative_pt_difference).parse(lower)
     {
         return Some(expr);
     }
@@ -3469,10 +3469,10 @@ mod tests {
             matches!(
                 expr,
                 Some(QuantityExpr::Difference { ref left, ref right })
-                    if matches!(**left, QuantityExpr::Ref { qty: QuantityRef::Power { scope: ObjectScope::CostPaidObject } })
-                    && matches!(**right, QuantityExpr::Ref { qty: QuantityRef::Toughness { scope: ObjectScope::CostPaidObject } })
+                    if matches!(**left, QuantityExpr::Ref { qty: QuantityRef::Power { scope: ObjectScope::Demonstrative } })
+                    && matches!(**right, QuantityExpr::Ref { qty: QuantityRef::Toughness { scope: ObjectScope::Demonstrative } })
             ),
-            "trigger-condition referent must use CostPaidObject, got {expr:?}"
+            "bare demonstrative referent must use Demonstrative, got {expr:?}"
         );
     }
 
@@ -3486,7 +3486,7 @@ mod tests {
             assert_eq!(
                 parse_event_context_quantity(phrase),
                 None,
-                "recipient phrase must not bind to CostPaidObject: {phrase:?}"
+                "recipient phrase must not bind to Demonstrative: {phrase:?}"
             );
             assert_eq!(
                 parse_cda_quantity(phrase),

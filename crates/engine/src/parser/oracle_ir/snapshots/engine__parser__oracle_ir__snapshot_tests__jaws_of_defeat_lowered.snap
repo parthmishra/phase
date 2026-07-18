@@ -18,7 +18,7 @@ expression: "&lowered"
               "qty": {
                 "type": "Power",
                 "scope": {
-                  "type": "CostPaidObject"
+                  "type": "Demonstrative"
                 }
               }
             },
@@ -27,7 +27,7 @@ expression: "&lowered"
               "qty": {
                 "type": "Toughness",
                 "scope": {
-                  "type": "CostPaidObject"
+                  "type": "Demonstrative"
                 }
               }
             }

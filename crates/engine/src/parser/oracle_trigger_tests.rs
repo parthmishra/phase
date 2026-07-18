@@ -6365,12 +6365,12 @@ fn jaws_of_defeat_binds_life_loss_to_entering_creature_pt_difference() {
         &QuantityExpr::Difference {
             left: Box::new(QuantityExpr::Ref {
                 qty: QuantityRef::Power {
-                    scope: ObjectScope::CostPaidObject,
+                    scope: ObjectScope::Demonstrative,
                 },
             }),
             right: Box::new(QuantityExpr::Ref {
                 qty: QuantityRef::Toughness {
-                    scope: ObjectScope::CostPaidObject,
+                    scope: ObjectScope::Demonstrative,
                 },
             }),
         }

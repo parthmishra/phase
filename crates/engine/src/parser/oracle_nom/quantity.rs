@@ -69,7 +69,7 @@ fn parse_pt_stat(input: &str) -> OracleResult<'_, PtStat> {
 #[derive(Clone, Copy)]
 enum SameObjectReferent {
     Recipient,
-    TriggerCondition,
+    Demonstrative,
 }
 
 impl SameObjectReferent {
@@ -78,14 +78,14 @@ impl SameObjectReferent {
             Self::Recipient => {
                 value((), alt((tag("its "), tag("~'s "), tag("this creature's ")))).parse(input)
             }
-            Self::TriggerCondition => value((), tag("that creature's ")).parse(input),
+            Self::Demonstrative => value((), tag("that creature's ")).parse(input),
         }
     }
 
     fn scope(self) -> ObjectScope {
         match self {
             Self::Recipient => ObjectScope::Recipient,
-            Self::TriggerCondition => ObjectScope::CostPaidObject,
+            Self::Demonstrative => ObjectScope::Demonstrative,
         }
     }
 }
@@ -135,10 +135,10 @@ pub(crate) fn parse_recipient_pt_difference(input: &str) -> OracleResult<'_, Qua
     parse_same_object_pt_difference(input, SameObjectReferent::Recipient)
 }
 
-// CR 608.2k: An effect keeps referring to the specific untargeted object named by
-// its trigger condition even if that object's characteristics change.
-pub(crate) fn parse_cost_paid_object_pt_difference(input: &str) -> OracleResult<'_, QuantityExpr> {
-    parse_same_object_pt_difference(input, SameObjectReferent::TriggerCondition)
+// CR 608.2c: The demonstrative noun phrase follows the established instruction-
+// order referent chain: an earlier effect-context object, then the trigger event.
+pub(crate) fn parse_demonstrative_pt_difference(input: &str) -> OracleResult<'_, QuantityExpr> {
+    parse_same_object_pt_difference(input, SameObjectReferent::Demonstrative)
 }
 
 fn parse_quantity_operand(input: &str) -> OracleResult<'_, QuantityExpr> {
@@ -5203,14 +5203,14 @@ mod tests {
     }
 
     #[test]
-    fn same_object_pt_difference_cost_paid_object_covers_trigger_referent() {
-        let (rest, parsed) = all_consuming(parse_cost_paid_object_pt_difference)
+    fn same_object_pt_difference_demonstrative_covers_trigger_referent() {
+        let (rest, parsed) = all_consuming(parse_demonstrative_pt_difference)
             .parse("the difference between that creature's power and its toughness")
             .expect("Jaws of Defeat event-object P/T difference");
         assert_eq!(rest, "");
         assert_pt_difference(
             parsed,
-            ObjectScope::CostPaidObject,
+            ObjectScope::Demonstrative,
             PtStat::Power,
             PtStat::Toughness,
         );
