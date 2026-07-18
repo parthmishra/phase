@@ -4,7 +4,7 @@ use engine::game::scenario::{GameRunner, GameScenario, P0, P1};
 use engine::game::triggers::process_triggers;
 use engine::game::zones::move_to_zone;
 use engine::types::ability::{
-    ContinuousModification, Duration, StaticDefinition, TargetFilter, TargetRef,
+    ContinuousModification, Duration, StaticCondition, StaticDefinition, TargetFilter, TargetRef,
 };
 use engine::types::actions::GameAction;
 use engine::types::events::GameEvent;
@@ -344,6 +344,99 @@ fn entrant_pt_uses_lki_after_it_leaves_before_jaws_resolves() {
         runner.life(P1),
         17,
         "CR 608.2k: the trigger keeps referring to the specific entrant after it leaves"
+    );
+}
+
+#[test]
+fn blinked_entrant_uses_original_incarnation_lki_not_reentered_live_pt() {
+    let mut scenario = GameScenario::new_n_player(3, 42);
+    scenario.at_phase(Phase::PreCombatMain);
+    scenario
+        .add_creature_from_oracle(P0, "Jaws of Defeat", 0, 1, JAWS_ORACLE)
+        .as_enchantment();
+    let mut entrant_builder = scenario.add_creature_to_exile(P0, "Blink Entrant", 2, 2);
+    let entrant = entrant_builder.id();
+    entrant_builder.with_static_definition(
+        StaticDefinition::continuous()
+            .affected(TargetFilter::SpecificObject { id: entrant })
+            .modifications(vec![ContinuousModification::AddPower { value: 3 }])
+            .condition(StaticCondition::SourceIsTapped),
+    );
+    let mut runner = scenario.build();
+
+    let events = enter_from_exile(&mut runner, entrant);
+    runner.state_mut().objects.get_mut(&entrant).unwrap().tapped = true;
+    evaluate_layers(runner.state_mut());
+    assert_eq!(
+        (
+            runner.state().objects[&entrant].power,
+            runner.state().objects[&entrant].toughness
+        ),
+        (Some(5), Some(2)),
+        "the original entrant must have a discriminating 5/2 LKI"
+    );
+    process_triggers(runner.state_mut(), &events);
+    surface_pending_trigger_target_selection(&mut runner);
+    choose_trigger_player(&mut runner, P1);
+
+    let original_incarnation =
+        match runner
+            .state()
+            .stack
+            .back()
+            .and_then(|entry| match &entry.kind {
+                StackEntryKind::TriggeredAbility {
+                    trigger_event: Some(GameEvent::ZoneChanged { record, .. }),
+                    ..
+                } => record.entered_incarnation,
+                _ => None,
+            }) {
+            Some(incarnation) => incarnation,
+            None => panic!("Jaws stack event must retain the entrant incarnation"),
+        };
+
+    let mut blink_events = Vec::new();
+    move_to_zone(
+        runner.state_mut(),
+        entrant,
+        Zone::Graveyard,
+        &mut blink_events,
+    );
+    move_to_zone(
+        runner.state_mut(),
+        entrant,
+        Zone::Battlefield,
+        &mut blink_events,
+    );
+    evaluate_layers(runner.state_mut());
+    let reentered = &runner.state().objects[&entrant];
+    assert_ne!(reentered.incarnation, original_incarnation);
+    assert_eq!(
+        (reentered.power, reentered.toughness),
+        (Some(2), Some(2)),
+        "the re-entered incarnation must be a hostile live 2/2"
+    );
+
+    move_to_zone(
+        runner.state_mut(),
+        entrant,
+        Zone::Graveyard,
+        &mut blink_events,
+    );
+    assert_eq!(
+        (
+            runner.state().lki_cache[&entrant].power,
+            runner.state().lki_cache[&entrant].toughness
+        ),
+        (Some(2), Some(2)),
+        "the second departure must overwrite the legacy ObjectId-only LKI"
+    );
+
+    runner.advance_until_stack_empty();
+    assert_eq!(
+        runner.life(P1),
+        17,
+        "CR 400.7 + CR 608.2h: Jaws must use the original entrant's 5/2 LKI, not the re-entered 2/2"
     );
 }
 
