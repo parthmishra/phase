@@ -5953,6 +5953,7 @@ async fn handle_client_message(
 mod state_transport_derived_tests {
     use super::*;
     use engine::types::ability::SearchSelectionConstraint;
+    use engine::types::actions::GameAction;
     use engine::types::game_state::{
         ActiveSearchDecisionAuthority, ActiveSearchDecisionControl, PriorityPassingMode, WaitingFor,
     };
