@@ -5959,7 +5959,7 @@ mod state_transport_derived_tests {
     use engine::types::identifiers::ObjectId;
     use engine::types::phase::Phase;
 
-    fn smart_priority_result(
+    fn low_use_window_priority_result(
         semantic_player: PlayerId,
         controller: Option<PlayerId>,
     ) -> ActionResult {
@@ -5973,7 +5973,7 @@ mod state_transport_derived_tests {
         state.phase = Phase::End;
         state.priority_passing_modes.insert(
             controller.unwrap_or(semantic_player),
-            PriorityPassingMode::Smart,
+            PriorityPassingMode::SkipLowUseWindows,
         );
         let legal_actions = vec![
             GameAction::PassPriority,
@@ -6006,20 +6006,20 @@ mod state_transport_derived_tests {
     }
 
     #[test]
-    fn turn_controller_receives_smart_recommendation_instead_of_controlled_seat() {
+    fn turn_controller_receives_low_use_window_recommendation_instead_of_controlled_seat() {
         let controlled = PlayerId(0);
         let controller = PlayerId(1);
-        let result = smart_priority_result(controlled, Some(controller));
+        let result = low_use_window_priority_result(controlled, Some(controller));
 
         assert_eq!(state_update_action_fields(&result, controller), (2, true));
         assert_eq!(state_update_action_fields(&result, controlled), (0, false));
     }
 
     #[test]
-    fn ordinary_actor_receives_smart_recommendation_and_nonactor_does_not() {
+    fn ordinary_actor_receives_low_use_window_recommendation_and_nonactor_does_not() {
         let actor = PlayerId(0);
         let nonactor = PlayerId(1);
-        let result = smart_priority_result(actor, None);
+        let result = low_use_window_priority_result(actor, None);
 
         assert_eq!(state_update_action_fields(&result, actor), (2, true));
         assert_eq!(state_update_action_fields(&result, nonactor), (0, false));

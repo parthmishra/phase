@@ -64,11 +64,11 @@ describe("useGameplayPreferencesSync", () => {
     });
     expect(dispatchAction).toHaveBeenCalledTimes(2);
 
-    act(() => usePreferencesStore.getState().setPriorityPassingMode("Smart"));
+    act(() => usePreferencesStore.getState().setPriorityPassingMode("SkipLowUseWindows"));
     await waitFor(() => {
       expect(dispatchAction).toHaveBeenLastCalledWith({
         type: "SetPriorityPassingMode",
-        data: { mode: "Smart" },
+        data: { mode: "SkipLowUseWindows" },
       });
       expect(dispatchAction).toHaveBeenCalledTimes(3);
     });

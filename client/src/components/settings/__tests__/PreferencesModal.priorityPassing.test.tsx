@@ -16,14 +16,22 @@ describe("PreferencesModal priority passing", () => {
 
   afterEach(() => cleanup());
 
-  it("offers the experimental Smart mode and persists the selection", () => {
+  it("offers an opt-in checkbox for skipping low-use priority windows", () => {
     render(<PreferencesModal onClose={vi.fn()} initialTab="gameplay" />);
 
-    expect(screen.getByText("Priority Passing")).toBeInTheDocument();
+    expect(screen.getByText("Auto-Pass")).toBeInTheDocument();
     expect(
-      screen.getByText(/automatically passes your empty Upkeep, Draw, and End/i),
+      screen.getByText(/automatically pass your own empty-stack upkeep, draw, and end-step/i),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Smart (Experimental)" }));
-    expect(usePreferencesStore.getState().priorityPassingMode).toBe("Smart");
+    const checkbox = screen.getByRole("checkbox", {
+      name: /skip low-use priority windows/i,
+    });
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(checkbox);
+    expect(usePreferencesStore.getState().priorityPassingMode).toBe("SkipLowUseWindows");
+
+    fireEvent.click(checkbox);
+    expect(usePreferencesStore.getState().priorityPassingMode).toBe("Standard");
   });
 });

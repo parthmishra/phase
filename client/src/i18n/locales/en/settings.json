@@ -22,12 +22,9 @@
     "title": "Gameplay",
     "language": "Language",
     "cardSize": "Card Size",
-    "priorityPassing": "Priority Passing",
-    "priorityPassingOptions": {
-      "Standard": "Standard",
-      "Smart": "Smart (Experimental)"
-    },
-    "priorityPassingDescription": "Smart automatically passes your empty Upkeep, Draw, and End priority windows. Phase stops and Full Control always win.",
+    "autoPass": "Auto-Pass",
+    "skipLowUsePriorityWindows": "Skip low-use priority windows (Experimental)",
+    "skipLowUsePriorityWindowsDescription": "Automatically pass your own empty-stack upkeep, draw, and end-step priority windows. Phase stops and Full Control still pause.",
     "logDefault": "Log Default",
     "spellPayment": "Spell Payment",
     "manualManaPayment": "Manual mana payment for spells",

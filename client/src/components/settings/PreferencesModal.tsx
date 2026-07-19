@@ -36,7 +36,6 @@ import type {
   MultiplayerBoardLayout,
   ZoneCollapseMode,
 } from "../../stores/preferencesStore.ts";
-import type { PriorityPassingMode } from "../../adapter/types.ts";
 import type { SupportedLng } from "../../i18n/resources.ts";
 import { LanguageFlag } from "../ui/LanguageFlag.tsx";
 import { BATTLEFIELDS } from "../board/battlefields.ts";
@@ -73,7 +72,6 @@ const COMMAND_ZONE_DISPLAYS: CommandZoneDisplay[] = ["auto", "inline", "compact"
 const ZONE_COLLAPSE_MODES: ZoneCollapseMode[] = ["auto", "on", "off"];
 const CARD_PREVIEW_MODES: CardPreviewMode[] = ["follow", "side", "shift"];
 const LOG_DEFAULTS: LogDefaultState[] = ["open", "closed"];
-const PRIORITY_PASSING_MODES: PriorityPassingMode[] = ["Standard", "Smart"];
 const VFX_QUALITIES: VfxQuality[] = ["full", "reduced", "minimal"];
 const MULTIPLAYER_BOARD_LAYOUTS: MultiplayerBoardLayout[] = ["focused", "split"];
 
@@ -367,16 +365,25 @@ export function PreferencesModal({
                     />
                   </SettingGroup>
 
-                  <SettingGroup label={t("gameplay.priorityPassing")}>
-                    <SegmentedControl
-                      options={PRIORITY_PASSING_MODES}
-                      value={priorityPassingMode}
-                      onChange={setPriorityPassingMode}
-                      renderLabel={(mode) => t(`gameplay.priorityPassingOptions.${mode}`)}
-                    />
-                    <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                      {t("gameplay.priorityPassingDescription")}
-                    </p>
+                  <SettingGroup label={t("gameplay.autoPass")}>
+                    <label className="flex min-h-11 items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={priorityPassingMode === "SkipLowUseWindows"}
+                        onChange={(event) => {
+                          setPriorityPassingMode(
+                            event.target.checked ? "SkipLowUseWindows" : "Standard",
+                          );
+                        }}
+                        className="mt-1 accent-cyan-500"
+                      />
+                      <span className="text-sm text-slate-200">
+                        {t("gameplay.skipLowUsePriorityWindows")}
+                        <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">
+                          {t("gameplay.skipLowUsePriorityWindowsDescription")}
+                        </span>
+                      </span>
+                    </label>
                   </SettingGroup>
 
                   <SettingGroup label={t("gameplay.commandZone")}>

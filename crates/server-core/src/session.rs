@@ -2005,16 +2005,19 @@ mod tests {
         assert!(!standard, "meaningful End-step action holds in Standard");
         assert!(events.is_empty() && logs.is_empty());
 
-        let (_, events, _, logs, smart, _, _) = mgr
+        let (_, events, _, logs, skips_low_use_window, _, _) = mgr
             .handle_action(
                 &code,
                 &token0,
                 GameAction::SetPriorityPassingMode {
-                    mode: PriorityPassingMode::Smart,
+                    mode: PriorityPassingMode::SkipLowUseWindows,
                 },
             )
-            .expect("Smart preference route");
-        assert!(smart, "Smart opts into passing the own empty End window");
+            .expect("low-use-window preference route");
+        assert!(
+            skips_low_use_window,
+            "the opt-in mode passes the player's own empty End window"
+        );
         assert!(events.is_empty() && logs.is_empty());
         assert_eq!(
             mgr.sessions
@@ -2022,7 +2025,7 @@ mod tests {
                 .unwrap()
                 .state
                 .priority_passing_modes,
-            HashMap::from([(PlayerId(0), PriorityPassingMode::Smart)])
+            HashMap::from([(PlayerId(0), PriorityPassingMode::SkipLowUseWindows)])
         );
 
         let (_, _, _, _, standard_again, _, _) = mgr

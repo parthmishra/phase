@@ -1721,14 +1721,14 @@ mod tests {
     #[test]
     fn set_priority_passing_mode_roundtrips_with_bounded_scalar_payload() {
         let action = GameAction::SetPriorityPassingMode {
-            mode: crate::types::game_state::PriorityPassingMode::Smart,
+            mode: crate::types::game_state::PriorityPassingMode::SkipLowUseWindows,
         };
         let json = serde_json::to_value(&action).unwrap();
         assert_eq!(
             json,
             serde_json::json!({
                 "type": "SetPriorityPassingMode",
-                "data": { "mode": "Smart" }
+                "data": { "mode": "SkipLowUseWindows" }
             })
         );
         assert_eq!(serde_json::from_value::<GameAction>(json).unwrap(), action);
@@ -1854,7 +1854,7 @@ mod tests {
             (GameAction::CancelAutoPass, None),
             (
                 GameAction::SetPriorityPassingMode {
-                    mode: crate::types::game_state::PriorityPassingMode::Smart,
+                    mode: crate::types::game_state::PriorityPassingMode::SkipLowUseWindows,
                 },
                 None,
             ),

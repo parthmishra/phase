@@ -215,7 +215,7 @@ describe("preferencesStore", () => {
       usePreferencesStore.getState().setCardSize("large");
       usePreferencesStore.getState().setMasterVolume(20);
       usePreferencesStore.getState().setPacingMultiplier("combat", 1.5);
-      usePreferencesStore.getState().setPriorityPassingMode("Smart");
+      usePreferencesStore.getState().setPriorityPassingMode("SkipLowUseWindows");
     });
 
     act(() => {
@@ -383,17 +383,17 @@ describe("preferencesStore", () => {
     expect(usePreferencesStore.getState().phaseStops).toEqual([]);
   });
 
-  it("migrates v24 priority passing mode with safe invalid normalization", () => {
+  it("migrates the v25 Smart value and safely normalizes invalid modes", () => {
     localStorage.setItem(
       "phase-preferences",
-      JSON.stringify({ state: { priorityPassingMode: "Smart" }, version: 24 }),
+      JSON.stringify({ state: { priorityPassingMode: "Smart" }, version: 25 }),
     );
     act(() => usePreferencesStore.persist.rehydrate());
-    expect(usePreferencesStore.getState().priorityPassingMode).toBe("Smart");
+    expect(usePreferencesStore.getState().priorityPassingMode).toBe("SkipLowUseWindows");
 
     localStorage.setItem(
       "phase-preferences",
-      JSON.stringify({ state: { priorityPassingMode: "Aggressive" }, version: 24 }),
+      JSON.stringify({ state: { priorityPassingMode: "Aggressive" }, version: 25 }),
     );
     act(() => usePreferencesStore.persist.rehydrate());
     expect(usePreferencesStore.getState().priorityPassingMode).toBe("Standard");

@@ -9494,7 +9494,8 @@ pub enum AutoPassMode {
 /// This is an opt-in interface preference, not a change to priority itself:
 /// every recommended pass is still submitted as `GameAction::PassPriority` and
 /// resolved by the normal CR 117.3d / CR 117.4 engine path. `Standard` preserves
-/// the existing meaningful-action-aware recommendation ladder. `Smart` adds a
+/// the existing meaningful-action-aware recommendation ladder.
+/// `SkipLowUseWindows` adds a
 /// narrow fast path for the active player's empty-stack Upkeep, Draw, and End
 /// priority windows; explicit phase stops, priority yields, and Full Control
 /// remain higher-authority user choices.
@@ -9502,7 +9503,7 @@ pub enum AutoPassMode {
 pub enum PriorityPassingMode {
     #[default]
     Standard,
-    Smart,
+    SkipLowUseWindows,
 }
 
 /// CR 732.2a: user-controllable gate for the live combo (infinite-loop) detector.
@@ -16193,8 +16194,8 @@ mod tests {
             PriorityPassingMode::Standard
         );
         assert_eq!(
-            serde_json::from_str::<PriorityPassingMode>("\"Smart\"").unwrap(),
-            PriorityPassingMode::Smart
+            serde_json::from_str::<PriorityPassingMode>("\"SkipLowUseWindows\"").unwrap(),
+            PriorityPassingMode::SkipLowUseWindows
         );
 
         let mut state = GameState::new_two_player(42);
@@ -16203,13 +16204,13 @@ mod tests {
 
         state
             .priority_passing_modes
-            .insert(PlayerId(0), PriorityPassingMode::Smart);
+            .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
         let json = serde_json::to_value(&state).unwrap();
-        assert_eq!(json["priority_passing_modes"]["0"], "Smart");
+        assert_eq!(json["priority_passing_modes"]["0"], "SkipLowUseWindows");
         let decoded: GameState = serde_json::from_value(json).unwrap();
         assert_eq!(
             decoded.priority_passing_mode(PlayerId(0)),
-            PriorityPassingMode::Smart
+            PriorityPassingMode::SkipLowUseWindows
         );
         assert_eq!(
             decoded.priority_passing_mode(PlayerId(1)),

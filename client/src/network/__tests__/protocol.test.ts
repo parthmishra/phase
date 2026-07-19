@@ -43,7 +43,10 @@ describe("encodeWireMessage / decodeWireMessage", () => {
     {
       type: "action",
       senderPlayerId: 0,
-      action: { type: "SetPriorityPassingMode", data: { mode: "Smart" } },
+      action: {
+        type: "SetPriorityPassingMode",
+        data: { mode: "SkipLowUseWindows" },
+      },
     },
     {
       type: "action",
@@ -74,7 +77,7 @@ describe("encodeWireMessage / decodeWireMessage", () => {
       assignedPlayerId: 1,
       playerToken: "token-123",
       state: buildGameState({
-        priority_passing_modes: { 1: "Smart" },
+        priority_passing_modes: { 1: "SkipLowUseWindows" },
         derived: {
           planechase: {
             can_roll: true,

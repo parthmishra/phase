@@ -1340,17 +1340,17 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
         return true;
     }
 
-    if state.priority_passing_mode(mode_owner) == PriorityPassingMode::Smart {
+    if state.priority_passing_mode(mode_owner) == PriorityPassingMode::SkipLowUseWindows {
         // A turn controller can configure their own stop without exposing or
         // rewriting the controlled player's private preference. Honor that
-        // distinct controller stop before Smart's empty-window fast path.
+        // distinct controller stop before the low-use-window fast path.
         if mode_owner != player && state.stack.is_empty() && state.phase_stop_hit(mode_owner) {
             return false;
         }
 
         // CR 117.3a + CR 503.1 + CR 504.2 + CR 513.1: the active player gets
         // the ordinary priority window in these steps after turn-based actions
-        // and beginning-of-step triggers have been handled. Smart mode is an
+        // and beginning-of-step triggers have been handled. This opt-in mode is
         // opt-in pre-commitment to pass these empty-stack windows even when a
         // meaningful instant-speed action exists. CR 117.3d/117.4 remain
         // authoritative because the frontend still submits PassPriority.
@@ -1997,7 +1997,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_mode_fast_passes_only_own_empty_upkeep_draw_and_end() {
+    fn low_use_window_mode_fast_passes_only_own_empty_upkeep_draw_and_end() {
         for phase in [Phase::Upkeep, Phase::Draw, Phase::End] {
             let mut state = setup_priority();
             state.phase = phase;
@@ -2009,10 +2009,10 @@ mod tests {
             );
             state
                 .priority_passing_modes
-                .insert(PlayerId(0), PriorityPassingMode::Smart);
+                .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
             assert!(
                 super::auto_pass_recommended(&state, &actions),
-                "Smart should pass the active player's empty {phase:?} window"
+                "the low-use-window mode should pass the active player's empty {phase:?} window"
             );
         }
 
@@ -2020,7 +2020,7 @@ mod tests {
         precombat.phase = Phase::PreCombatMain;
         precombat
             .priority_passing_modes
-            .insert(PlayerId(0), PriorityPassingMode::Smart);
+            .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
         assert!(!super::auto_pass_recommended(
             &precombat,
             &meaningful_priority_actions()
@@ -2029,7 +2029,7 @@ mod tests {
         let mut opponent_turn = setup_opponent_priority(Phase::End);
         opponent_turn
             .priority_passing_modes
-            .insert(PlayerId(0), PriorityPassingMode::Smart);
+            .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
         assert!(!super::auto_pass_recommended(
             &opponent_turn,
             &meaningful_priority_actions()
@@ -2041,7 +2041,7 @@ mod tests {
         };
         non_priority
             .priority_passing_modes
-            .insert(PlayerId(0), PriorityPassingMode::Smart);
+            .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
         assert!(!super::auto_pass_recommended(
             &non_priority,
             &meaningful_priority_actions()
@@ -2049,7 +2049,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_mode_respects_semantic_and_turn_controller_phase_stops() {
+    fn low_use_window_mode_respects_semantic_and_turn_controller_phase_stops() {
         let stop = PhaseStop {
             phase: Phase::End,
             scope: PhaseStopScope::AllTurns,
@@ -2060,7 +2060,7 @@ mod tests {
         state.priority_player = PlayerId(1);
         state
             .priority_passing_modes
-            .insert(PlayerId(1), PriorityPassingMode::Smart);
+            .insert(PlayerId(1), PriorityPassingMode::SkipLowUseWindows);
         let actions = meaningful_priority_actions();
 
         assert!(super::auto_pass_recommended(&state, &actions));
@@ -2075,14 +2075,14 @@ mod tests {
     }
 
     #[test]
-    fn viewer_wrapper_reaches_smart_mode_only_for_authorized_submitter() {
+    fn viewer_wrapper_reaches_low_use_window_mode_only_for_authorized_submitter() {
         let mut state = setup_priority();
         state.phase = Phase::End;
         state.turn_decision_controller = Some(PlayerId(1));
         state.priority_player = PlayerId(1);
         state
             .priority_passing_modes
-            .insert(PlayerId(1), PriorityPassingMode::Smart);
+            .insert(PlayerId(1), PriorityPassingMode::SkipLowUseWindows);
         let actions = meaningful_priority_actions();
 
         assert!(super::auto_pass_recommended(&state, &actions));

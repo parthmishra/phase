@@ -773,7 +773,7 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
     }),
     {
       name: "phase-preferences",
-      version: 25,
+      version: 26,
       // v0 → v1: flat aiDifficulty + aiDeckName become aiSeats[0].
       // v1 → v2: discrete animationSpeed/combatPacing enums become numeric
       //          animationSpeedMultiplier/combatPacingMultiplier.
@@ -827,6 +827,8 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       // v24 → v25: Add priorityPassingMode. Standard preserves the prior
       //          recommendation behavior; invalid persisted values normalize
       //          to Standard rather than enabling the experimental mode.
+      // v25 → v26: Rename the experimental Smart value to the behavior it
+      //          actually enables: SkipLowUseWindows.
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         let migrated = persisted as Record<string, unknown>;
@@ -984,7 +986,21 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
           const legacy = (migrated as { priorityPassingMode?: unknown }).priorityPassingMode;
           migrated = {
             ...migrated,
-            priorityPassingMode: legacy === "Smart" ? "Smart" : "Standard",
+            priorityPassingMode:
+              legacy === "Smart" || legacy === "SkipLowUseWindows"
+                ? "SkipLowUseWindows"
+                : "Standard",
+          };
+        }
+
+        if (version < 26) {
+          const legacy = (migrated as { priorityPassingMode?: unknown }).priorityPassingMode;
+          migrated = {
+            ...migrated,
+            priorityPassingMode:
+              legacy === "Smart" || legacy === "SkipLowUseWindows"
+                ? "SkipLowUseWindows"
+                : "Standard",
           };
         }
 

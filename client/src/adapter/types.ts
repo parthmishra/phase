@@ -373,7 +373,7 @@ export interface PhaseStop {
 }
 
 /** Standing engine preference for ordinary priority recommendations. */
-export type PriorityPassingMode = "Standard" | "Smart";
+export type PriorityPassingMode = "Standard" | "SkipLowUseWindows";
 
 export type Zone =
   | "Library"

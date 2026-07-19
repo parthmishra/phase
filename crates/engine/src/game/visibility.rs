@@ -1758,16 +1758,16 @@ mod tests {
         let mut state = GameState::new(FormatConfig::standard(), 3, 42);
         state
             .priority_passing_modes
-            .insert(PlayerId(0), PriorityPassingMode::Smart);
+            .insert(PlayerId(0), PriorityPassingMode::SkipLowUseWindows);
         state
             .priority_passing_modes
-            .insert(PlayerId(1), PriorityPassingMode::Smart);
+            .insert(PlayerId(1), PriorityPassingMode::SkipLowUseWindows);
 
         let p0 = filter_state_for_viewer(&state, PlayerId(0));
         assert_eq!(p0.priority_passing_modes.len(), 1);
         assert_eq!(
             p0.priority_passing_mode(PlayerId(0)),
-            PriorityPassingMode::Smart
+            PriorityPassingMode::SkipLowUseWindows
         );
         assert_eq!(
             p0.priority_passing_mode(PlayerId(1)),

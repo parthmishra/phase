@@ -2108,7 +2108,7 @@ fn set_priority_passing_mode_is_actor_scoped_sparse_and_any_state() {
         &mut state,
         PlayerId(0),
         GameAction::SetPriorityPassingMode {
-            mode: PriorityPassingMode::Smart,
+            mode: PriorityPassingMode::SkipLowUseWindows,
         },
     )
     .expect("non-priority actor may set their own mode");
@@ -2119,7 +2119,7 @@ fn set_priority_passing_mode_is_actor_scoped_sparse_and_any_state() {
     assert_eq!(state.auto_pass, auto_pass);
     assert_eq!(
         state.priority_passing_mode(PlayerId(0)),
-        PriorityPassingMode::Smart
+        PriorityPassingMode::SkipLowUseWindows
     );
     assert_eq!(
         state.priority_passing_mode(PlayerId(1)),
