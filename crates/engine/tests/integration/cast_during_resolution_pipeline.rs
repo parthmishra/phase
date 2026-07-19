@@ -30,6 +30,7 @@ use engine::types::zones::{EtbTapState, Zone};
 
 const THRUMMING_STONE_ORACLE: &str = "Spells you cast have ripple 4. (When you cast a spell, you may reveal the top four cards of your library. You may cast any revealed cards with the same name as the cast spell without paying their mana costs. Put the rest on the bottom of your library in any order.)";
 const RAT_COLONY_ORACLE: &str = "Rat Colony gets +1/+0 for each other Rat you control named Rat Colony.\nA deck can have any number of cards named Rat Colony.";
+const AETHERFLUX_RESERVOIR_ORACLE: &str = "Whenever you cast a spell, you gain 1 life for each spell you've cast this turn.\nPay 50 life: This artifact deals 50 damage to any target.";
 
 /// CR 614.1a: a synthetic global Library-destination redirect used to force a
 /// genuine CR 616.1 ordering choice in the terminal Ripple bottom batch.
@@ -419,6 +420,179 @@ fn thrumming_stone_terminal_ripple_waits_through_bottom_replacement_choice() {
     assert!(runner.state().deferred_triggers.is_empty());
     assert!(runner.state().pending_resolution_completion.is_none());
     assert!(runner.state().pending_batch_deliveries.is_none());
+}
+
+/// CR 603.2 + CR 603.3b + CR 608.2g + CR 616.1: terminal Ripple settlement
+/// must not re-collect the resumed final cast merely because the earlier,
+/// parked observer is a different source. Aetherflux Reservoir is a distinct
+/// battlefield source, so its exactly-once B/C triggers prove the synthetic
+/// terminal SpellCast collector keys on the event, not `source_id == final_cast`.
+#[test]
+fn terminal_ripple_replacement_resume_collects_distinct_spell_cast_observer() {
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+    red_pool(&mut scenario, 2);
+    let observer = scenario
+        .add_creature_from_oracle(
+            P0,
+            "Aetherflux Reservoir",
+            0,
+            0,
+            AETHERFLUX_RESERVOIR_ORACLE,
+        )
+        .as_enchantment()
+        .id();
+    let rat_a = scenario
+        .add_creature_to_hand_from_oracle(P0, "Rat Colony", 2, 1, RAT_COLONY_ORACLE)
+        .with_mana_cost(ManaCost::generic(2))
+        .with_keyword(engine::types::keywords::Keyword::Ripple(4))
+        .id();
+    let rat_c = scenario
+        .add_creature_to_hand_from_oracle(P0, "Rat Colony", 2, 1, RAT_COLONY_ORACLE)
+        .with_mana_cost(ManaCost::generic(2))
+        .id();
+    let miss = scenario
+        .add_spell_to_hand_from_oracle(P0, "Terminal Observer Miss", true, "Draw a card.")
+        .with_mana_cost(ManaCost::generic(1))
+        .id();
+    let rat_b = scenario
+        .add_creature_to_hand_from_oracle(P0, "Rat Colony", 2, 1, RAT_COLONY_ORACLE)
+        .with_mana_cost(ManaCost::generic(2))
+        .id();
+    for (name, destination) in [
+        ("Observer Library Redirect to Hand", Zone::Hand),
+        ("Observer Library Redirect to Graveyard", Zone::Graveyard),
+    ] {
+        scenario
+            .add_creature(P0, name, 0, 0)
+            .as_enchantment()
+            .with_replacement_definition(redirect_library_move_to(destination));
+    }
+
+    let mut runner = scenario.build();
+    {
+        let state = runner.state_mut();
+        for id in [rat_b, miss, rat_c] {
+            engine::game::zones::remove_from_zone(state, id, Zone::Hand, P0);
+            engine::game::zones::add_to_zone(state, id, Zone::Library, P0);
+            state.objects.get_mut(&id).expect("library card").zone = Zone::Library;
+        }
+    }
+    assert!(
+        runner.state().objects[&observer]
+            .trigger_definitions
+            .as_slice()
+            .iter()
+            .any(|trigger| matches!(
+                trigger.definition.mode,
+                engine::types::triggers::TriggerMode::SpellCast
+            )),
+        "exact Aetherflux Reservoir Oracle text must parse to its SpellCast observer"
+    );
+    assert_ne!(
+        observer, rat_c,
+        "the observer must be a distinct battlefield object from the terminal Rat"
+    );
+
+    let card_id = runner.state().objects[&rat_a].card_id;
+    runner
+        .act(GameAction::CastSpell {
+            object_id: rat_a,
+            card_id,
+            targets: vec![],
+            payment_mode: CastPaymentMode::Auto,
+        })
+        .expect("cast first Rat Colony");
+
+    // Put Aetherflux's initial-cast trigger below A's Ripple so it remains a
+    // live, distinct observer while Ripple performs the terminal free cast.
+    let initial_order = match &runner.state().waiting_for {
+        WaitingFor::OrderTriggers { triggers, .. } => {
+            let observer_index = triggers
+                .iter()
+                .position(|trigger| trigger.source_id == observer)
+                .expect("Aetherflux observes the initial Rat cast");
+            let ripple_index = triggers
+                .iter()
+                .position(|trigger| trigger.source_id == rat_a)
+                .expect("Rat A's granted Ripple observes its own cast");
+            vec![observer_index, ripple_index]
+        }
+        waiting_for => panic!("expected initial observer/Ripple ordering, got {waiting_for:?}"),
+    };
+    runner
+        .act(GameAction::OrderTriggers {
+            order: initial_order,
+        })
+        .expect("place initial observer below Ripple");
+    runner.act(GameAction::PassPriority).expect("p0 pass");
+    runner.act(GameAction::PassPriority).expect("p1 pass");
+    assert!(matches!(
+        runner.state().waiting_for,
+        WaitingFor::CastOffer {
+            kind: CastOfferKind::Ripple { hit_card, .. },
+            ..
+        } if hit_card == rat_b
+    ));
+
+    runner
+        .act(GameAction::RippleChoice {
+            choice: CastChoice::Cast,
+        })
+        .expect("accept B while A's Ripple still offers C");
+    assert!(matches!(
+        runner.state().waiting_for,
+        WaitingFor::CastOffer {
+            kind: CastOfferKind::Ripple { hit_card, .. },
+            ..
+        } if hit_card == rat_c
+    ));
+    assert_eq!(
+        runner
+            .state()
+            .deferred_triggers
+            .iter()
+            .filter(|context| context.pending.source_id == observer)
+            .count(),
+        1,
+        "B's observer trigger must park while A's Ripple keeps offering cards"
+    );
+
+    runner
+        .act(GameAction::RippleChoice {
+            choice: CastChoice::Cast,
+        })
+        .expect("accept terminal C until bottom replacement choice");
+    assert!(matches!(
+        runner.state().waiting_for,
+        WaitingFor::ReplacementChoice { .. }
+    ));
+    runner
+        .act(GameAction::ChooseReplacement { index: 0 })
+        .expect("resolve the terminal bottom replacement");
+
+    assert!(matches!(
+        runner.state().waiting_for,
+        WaitingFor::Priority { .. }
+    ));
+
+    let first_accepted_rat_index = runner
+        .state()
+        .stack
+        .iter()
+        .position(|entry| entry.id == rat_b)
+        .expect("B remains on the stack");
+    assert_eq!(
+        runner
+            .state()
+            .stack
+            .iter()
+            .skip(first_accepted_rat_index + 1)
+            .filter(|entry| entry.source_id == observer)
+            .count(),
+        2,
+        "Aetherflux contributes exactly one observer trigger for each accepted B/C cast"
+    );
 }
 
 /// CR 113.2c + CR 702.60b: two independent Thrumming Stones grant two Ripple
