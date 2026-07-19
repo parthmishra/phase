@@ -16,6 +16,8 @@ import type {
 } from "./types";
 import { AdapterError, AdapterErrorCode, isStaleActionMessage, isStateLostMessage, nextSnapshotSeq } from "./types";
 import type { BracketDeckRequest, BracketEstimate } from "../types/bracketEstimate";
+import { fetchCardDatabaseText } from "../services/cardDatabaseSource";
+import { isTauri } from "../services/sidecar";
 import { isBracketEstimate } from "../types/bracketEstimate";
 import { EngineWorkerClient } from "./engine-worker-client";
 import { AiWorkerPool } from "./ai-worker-pool";
@@ -206,31 +208,38 @@ export class WasmAdapter implements EngineAdapter {
     if (this.cardDbLoaded) return Promise.resolve();
     if (this.cardDbPromise) return this.cardDbPromise;
     const pending = (async () => {
-      try {
-        if (this.engine) {
-          const count = await this.engine.loadCardDbFromUrl();
-          console.log(`Card database loaded in worker: ${count} cards`);
-        } else if (this.fallback) {
-          const count = await this.fallback.ensureCardDatabase();
-          console.log(`Card database loaded: ${count} cards`);
-        }
-        this.cardDbLoaded = true;
-        // Also load into AI pool if it's already initialized. AI-pool workers
-        // get the game-scoped subset (built on the main engine), not the full
-        // corpus; an unbounded universe (e.g. Momir) disposes the pool instead.
-        if (this.engine && this.aiPool && !this.aiPool.isCardDbLoaded) {
-          await this.loadAiPoolGameDb(this.engine, this.aiPool);
-        }
-      } catch (err) {
-        console.warn("Failed to load card database:", err);
+      if (this.engine) {
+        // WKWebView workers cannot reliably fetch assets through Tauri's
+        // custom protocol. Fetch the bundled database in the owning WebView
+        // and transfer it to the worker instead. Browser/PWA workers retain
+        // the direct URL path so service-worker caching still applies.
+        const count = isTauri()
+          ? await this.engine.loadCardDb(await fetchCardDatabaseText())
+          : await this.engine.loadCardDbFromUrl();
+        console.log(`Card database loaded in worker: ${count} cards`);
+      } else if (this.fallback) {
+        const count = await this.fallback.ensureCardDatabase();
+        console.log(`Card database loaded: ${count} cards`);
+      }
+      this.cardDbLoaded = true;
+      // Also load into AI pool if it's already initialized. AI-pool workers
+      // get the game-scoped subset (built on the main engine), not the full
+      // corpus; an unbounded universe (e.g. Momir) disposes the pool instead.
+      if (this.engine && this.aiPool && !this.aiPool.isCardDbLoaded) {
+        await this.loadAiPoolGameDb(this.engine, this.aiPool);
       }
     })();
     // Clear the in-flight ref once settled so a *failed* load (cardDbLoaded
     // still false) can be retried by a later caller. A successful load
     // short-circuits on the `cardDbLoaded` latch above and never re-enters.
-    this.cardDbPromise = pending.finally(() => {
-      this.cardDbPromise = null;
-    });
+    this.cardDbPromise = pending
+      .catch((err) => {
+        console.warn("Failed to load card database:", err);
+        throw err;
+      })
+      .finally(() => {
+        this.cardDbPromise = null;
+      });
     return this.cardDbPromise;
   }
 

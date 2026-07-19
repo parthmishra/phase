@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WasmAdapter } from "../wasm-adapter";
 import { EngineWorkerClient } from "../engine-worker-client";
 import type { EngineAdapter, SubmitResult } from "../types";
@@ -46,6 +46,11 @@ describe("WasmAdapter", () => {
     adapter = new WasmAdapter();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  });
+
   it("implements EngineAdapter interface", () => {
     const _check: EngineAdapter = adapter;
     expect(_check).toBeDefined();
@@ -90,6 +95,25 @@ describe("WasmAdapter", () => {
       await expect(adapter.warmCardDatabase()).rejects.toThrow();
       expect(adapter.cardDbLoaded).toBe(false);
     });
+
+    it("loads bundled Tauri card data on the window thread", async () => {
+      Reflect.defineProperty(window, "__TAURI_INTERNALS__", {
+        configurable: true,
+        value: {},
+      });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('{"forest":{}}'),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await adapter.warmCardDatabase();
+
+      expect(fetchMock).toHaveBeenCalledWith("/card-data.json");
+      expect(mockWorkerClient.loadCardDb).toHaveBeenCalledWith('{"forest":{}}');
+      expect(mockWorkerClient.loadCardDbFromUrl).not.toHaveBeenCalled();
+      expect(adapter.cardDbLoaded).toBe(true);
+    });
   });
 
   describe("checkDeckCompatibility", () => {
@@ -99,6 +123,17 @@ describe("WasmAdapter", () => {
       expect(mockWorkerClient.loadCardDbFromUrl).toHaveBeenCalledOnce();
       expect(mockWorkerClient.evaluateDeckCompatibility).toHaveBeenCalledWith(request);
       expect(result).toEqual({ standard: { compatible: true, reasons: [] } });
+    });
+
+    it("surfaces the database load error instead of querying an empty worker", async () => {
+      mockWorkerClient.loadCardDbFromUrl.mockRejectedValueOnce(
+        new Error("custom protocol fetch failed"),
+      );
+
+      await expect(adapter.checkDeckCompatibility({})).rejects.toThrow(
+        "custom protocol fetch failed",
+      );
+      expect(mockWorkerClient.evaluateDeckCompatibility).not.toHaveBeenCalled();
     });
   });
 

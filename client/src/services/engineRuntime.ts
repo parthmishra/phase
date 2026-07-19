@@ -9,6 +9,7 @@ import {
   loadScryfallData,
   type ScryfallCard,
 } from "./scryfall";
+import { fetchCardDatabaseText } from "./cardDatabaseSource";
 
 type EngineModule = typeof import("@wasm/engine");
 
@@ -38,11 +39,7 @@ export async function ensureCardDatabase(): Promise<number> {
     cardDbPromise = (async () => {
       await ensureWasmInit();
       const engine = await loadEngineModule();
-      const resp = await fetch(__CARD_DATA_URL__);
-      if (!resp.ok) {
-        throw new Error(`Failed to load card-data.json (${resp.status})`);
-      }
-      const text = await resp.text();
+      const text = await fetchCardDatabaseText();
       return engine.load_card_database(text);
     })();
   }
