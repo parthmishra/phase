@@ -6479,7 +6479,7 @@ pub(crate) fn run_batch_completion(
             source_id,
             final_cast,
         } => {
-            // The final accepted Ripple cast has not yet emitted SpellCast: this
+            // CR 702.60a + CR 603.3b: The final accepted Ripple cast has not yet emitted SpellCast: this
             // batch completion runs inside its pre-finalization cleanup. Mark the
             // terminal settlement now, but leave both the resolver LKI and parked
             // triggers intact until that spell finishes announcement.

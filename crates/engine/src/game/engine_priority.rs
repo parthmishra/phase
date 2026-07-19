@@ -131,6 +131,8 @@ pub(crate) fn run_post_action_pipeline_from(
         // `ScryChoice` when 2+ same-controller triggers fire). Park them in
         // `deferred_triggers`; they are drained below once the action settles
         // back to Priority. Mirrors `batch_or_drain_observer_triggers`' B2 branch.
+        // CR 603.3b: Terminal-resolution observers join the deferred batch so
+        // they are ordered only after the resolving ability has completed.
         if super::engine_resolution_choices::handles(&state.waiting_for)
             || state.pending_resolution_completion.is_some()
         {
@@ -178,6 +180,8 @@ pub(crate) fn run_post_action_pipeline_from(
         }
         if events.len() > events_before {
             let sba_events: Vec<_> = events[events_before..].to_vec();
+            // CR 603.3b: SBA-generated triggers join the terminal batch rather
+            // than being ordered before its final cast trigger is collected.
             if state.pending_resolution_completion.is_some() {
                 triggers::collect_triggers_into_deferred(state, &sba_events);
             } else {
@@ -215,6 +219,8 @@ pub(crate) fn run_post_action_pipeline_from(
             &exile_return_events,
             &consumed_exile_return_events,
         );
+        // CR 603.3b: Exile-return triggers also join a terminal batch so they
+        // cannot be ordered before the final cast trigger is collected.
         if !matches!(state.waiting_for, WaitingFor::Priority { .. })
             || state.pending_resolution_completion.is_some()
         {
@@ -373,11 +379,10 @@ fn ensure_terminal_cast_spell_triggers_collected(
         return;
     };
     let already_collected = state.deferred_triggers.iter().any(|context| {
-        context.pending.source_id == object_id
-            && matches!(
-                context.pending.trigger_event.as_ref(),
-                Some(GameEvent::SpellCast { object_id: event_id, .. }) if *event_id == object_id
-            )
+        matches!(
+            context.pending.trigger_event.as_ref(),
+            Some(GameEvent::SpellCast { object_id: event_id, .. }) if *event_id == object_id
+        )
     });
     if already_collected {
         return;
