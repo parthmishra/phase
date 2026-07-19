@@ -59,7 +59,7 @@ pub(crate) fn run_post_action_pipeline_from(
     // `collect_triggers_into_deferred` when `waiting_for` is `NamedChoice`)
     // and fired a second time by the replay, causing double-fire for ETB
     // observers like Soul Warden (issue #830).
-    // A terminal resolution completion can be installed while a
+    // CR 603.3b + CR 608.2g: A terminal resolution completion can be installed while a
     // replacement-resume action is finalizing its deferred free cast. That
     // action may have already handled ordinary zone-event triggers, but its
     // just-emitted `SpellCast` still has to join the terminal batch before B's
