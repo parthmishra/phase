@@ -36,6 +36,7 @@ import type {
   MultiplayerBoardLayout,
   ZoneCollapseMode,
 } from "../../stores/preferencesStore.ts";
+import type { PriorityPassingMode } from "../../adapter/types.ts";
 import type { SupportedLng } from "../../i18n/resources.ts";
 import { LanguageFlag } from "../ui/LanguageFlag.tsx";
 import { BATTLEFIELDS } from "../board/battlefields.ts";
@@ -72,6 +73,7 @@ const COMMAND_ZONE_DISPLAYS: CommandZoneDisplay[] = ["auto", "inline", "compact"
 const ZONE_COLLAPSE_MODES: ZoneCollapseMode[] = ["auto", "on", "off"];
 const CARD_PREVIEW_MODES: CardPreviewMode[] = ["follow", "side", "shift"];
 const LOG_DEFAULTS: LogDefaultState[] = ["open", "closed"];
+const PRIORITY_PASSING_MODES: PriorityPassingMode[] = ["Standard", "Smart"];
 const VFX_QUALITIES: VfxQuality[] = ["full", "reduced", "minimal"];
 const MULTIPLAYER_BOARD_LAYOUTS: MultiplayerBoardLayout[] = ["focused", "split"];
 
@@ -162,6 +164,7 @@ export function PreferencesModal({
   const logDefaultState = usePreferencesStore((s) => s.logDefaultState);
   const multiplayerBoardLayout = usePreferencesStore((s) => s.multiplayerBoardLayout);
   const spellPaymentMode = usePreferencesStore((s) => s.spellPaymentMode);
+  const priorityPassingMode = usePreferencesStore((s) => s.priorityPassingMode);
   const boardBackground = usePreferencesStore((s) => s.boardBackground);
   const vfxQuality = usePreferencesStore((s) => s.vfxQuality);
   const animationSpeedMultiplier = usePreferencesStore((s) => s.animationSpeedMultiplier);
@@ -173,6 +176,7 @@ export function PreferencesModal({
   const setLogDefaultState = usePreferencesStore((s) => s.setLogDefaultState);
   const setMultiplayerBoardLayout = usePreferencesStore((s) => s.setMultiplayerBoardLayout);
   const setSpellPaymentMode = usePreferencesStore((s) => s.setSpellPaymentMode);
+  const setPriorityPassingMode = usePreferencesStore((s) => s.setPriorityPassingMode);
   const setBoardBackground = usePreferencesStore((s) => s.setBoardBackground);
   const customBackgroundUrl = usePreferencesStore((s) => s.customBackgroundUrl);
   const setCustomBackgroundUrl = usePreferencesStore((s) => s.setCustomBackgroundUrl);
@@ -361,6 +365,18 @@ export function PreferencesModal({
                       onChange={setCardSize}
                       renderLabel={(opt) => t(`gameplay.cardSizeOptions.${opt}`)}
                     />
+                  </SettingGroup>
+
+                  <SettingGroup label={t("gameplay.priorityPassing")}>
+                    <SegmentedControl
+                      options={PRIORITY_PASSING_MODES}
+                      value={priorityPassingMode}
+                      onChange={setPriorityPassingMode}
+                      renderLabel={(mode) => t(`gameplay.priorityPassingOptions.${mode}`)}
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                      {t("gameplay.priorityPassingDescription")}
+                    </p>
                   </SettingGroup>
 
                   <SettingGroup label={t("gameplay.commandZone")}>

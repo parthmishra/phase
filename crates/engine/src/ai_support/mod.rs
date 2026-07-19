@@ -20,7 +20,7 @@ use crate::types::card_type::CoreType;
 use crate::types::events::{GameEvent, ManaTapState};
 use crate::types::game_state::{
     AutoMayChoice, CastOfferKind, GameState, MulliganDecisionPhase, PayCostKind,
-    PendingMulliganAction, WaitingFor,
+    PendingMulliganAction, PriorityPassingMode, WaitingFor,
 };
 use crate::types::identifiers::ObjectId;
 use crate::types::mana::ManaCost;
@@ -1293,6 +1293,10 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
         WaitingFor::Priority { player } => *player,
         _ => return false,
     };
+    // CR 723.5: a player controlling another player makes that player's
+    // decisions. Preferences belong to the authenticated decision maker, while
+    // rules-facing priority checks continue to use the semantic priority seat.
+    let mode_owner = crate::game::turn_control::authorized_submitter_for_player(state, player);
 
     // Lazy, compute-once locals shared across rungs (§C):
     //  - `cast_probe`: one `PriorityCastProbe` built when the first castability
@@ -1334,6 +1338,28 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
         .is_some_and(|top| state.is_priority_yielded(player, top))
     {
         return true;
+    }
+
+    if state.priority_passing_mode(mode_owner) == PriorityPassingMode::Smart {
+        // A turn controller can configure their own stop without exposing or
+        // rewriting the controlled player's private preference. Honor that
+        // distinct controller stop before Smart's empty-window fast path.
+        if mode_owner != player && state.stack.is_empty() && state.phase_stop_hit(mode_owner) {
+            return false;
+        }
+
+        // CR 117.3a + CR 503.1 + CR 504.2 + CR 513.1: the active player gets
+        // the ordinary priority window in these steps after turn-based actions
+        // and beginning-of-step triggers have been handled. Smart mode is an
+        // opt-in pre-commitment to pass these empty-stack windows even when a
+        // meaningful instant-speed action exists. CR 117.3d/117.4 remain
+        // authoritative because the frontend still submits PassPriority.
+        if state.stack.is_empty()
+            && player == state.active_player
+            && matches!(state.phase, Phase::Upkeep | Phase::Draw | Phase::End)
+        {
+            return true;
+        }
     }
 
     // Rung 4 — MTGA-style: auto-pass when the player's own spell/ability is on
@@ -1469,6 +1495,21 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
     }
 
     false
+}
+
+/// Viewer-scoped auto-pass recommendation for transport adapters.
+///
+/// CR 117.1 + CR 723.5: only a viewer authorized to submit the current
+/// semantic player's decision may receive a positive recommendation. The
+/// authoritative helper still resolves which player's standing preference
+/// applies, including turn-control redirection.
+pub fn auto_pass_recommended_for_viewer(
+    state: &GameState,
+    viewer: PlayerId,
+    actions: &[GameAction],
+) -> bool {
+    crate::game::turn_control::is_authorized_submitter(state, viewer)
+        && auto_pass_recommended(state, actions)
 }
 
 /// Returns the legal actions for the current game state.
@@ -1913,8 +1954,8 @@ mod tests {
     use crate::types::card_type::CoreType;
     use crate::types::game_state::{
         CastingVariant, ConvokeMode, DistributionUnit, GameState, MulliganDecisionEntry,
-        MulliganDecisionPhase, PendingCast, PendingMulliganAction, StackEntry, StackEntryKind,
-        WaitingFor,
+        MulliganDecisionPhase, PendingCast, PendingMulliganAction, PriorityPassingMode, StackEntry,
+        StackEntryKind, WaitingFor,
     };
     use crate::types::identifiers::{CardId, ObjectId};
     use crate::types::keywords::{Keyword, KeywordKind};
@@ -1943,6 +1984,123 @@ mod tests {
             player: PlayerId(0),
         };
         state
+    }
+
+    fn meaningful_priority_actions() -> Vec<GameAction> {
+        vec![
+            GameAction::PassPriority,
+            GameAction::TurnFaceUp {
+                object_id: ObjectId(999),
+                x: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn smart_mode_fast_passes_only_own_empty_upkeep_draw_and_end() {
+        for phase in [Phase::Upkeep, Phase::Draw, Phase::End] {
+            let mut state = setup_priority();
+            state.phase = phase;
+            let actions = meaningful_priority_actions();
+
+            assert!(
+                !super::auto_pass_recommended(&state, &actions),
+                "Standard must preserve the meaningful-action hold in {phase:?}"
+            );
+            state
+                .priority_passing_modes
+                .insert(PlayerId(0), PriorityPassingMode::Smart);
+            assert!(
+                super::auto_pass_recommended(&state, &actions),
+                "Smart should pass the active player's empty {phase:?} window"
+            );
+        }
+
+        let mut precombat = setup_priority();
+        precombat.phase = Phase::PreCombatMain;
+        precombat
+            .priority_passing_modes
+            .insert(PlayerId(0), PriorityPassingMode::Smart);
+        assert!(!super::auto_pass_recommended(
+            &precombat,
+            &meaningful_priority_actions()
+        ));
+
+        let mut opponent_turn = setup_opponent_priority(Phase::End);
+        opponent_turn
+            .priority_passing_modes
+            .insert(PlayerId(0), PriorityPassingMode::Smart);
+        assert!(!super::auto_pass_recommended(
+            &opponent_turn,
+            &meaningful_priority_actions()
+        ));
+
+        let mut non_priority = setup_priority();
+        non_priority.waiting_for = WaitingFor::GameOver {
+            winner: Some(PlayerId(0)),
+        };
+        non_priority
+            .priority_passing_modes
+            .insert(PlayerId(0), PriorityPassingMode::Smart);
+        assert!(!super::auto_pass_recommended(
+            &non_priority,
+            &meaningful_priority_actions()
+        ));
+    }
+
+    #[test]
+    fn smart_mode_respects_semantic_and_turn_controller_phase_stops() {
+        let stop = PhaseStop {
+            phase: Phase::End,
+            scope: PhaseStopScope::AllTurns,
+        };
+        let mut state = setup_priority();
+        state.phase = Phase::End;
+        state.turn_decision_controller = Some(PlayerId(1));
+        state.priority_player = PlayerId(1);
+        state
+            .priority_passing_modes
+            .insert(PlayerId(1), PriorityPassingMode::Smart);
+        let actions = meaningful_priority_actions();
+
+        assert!(super::auto_pass_recommended(&state, &actions));
+        state.phase_stops.insert(PlayerId(0), vec![stop]);
+        assert!(!super::auto_pass_recommended(&state, &actions));
+        state.phase_stops.clear();
+        state.phase_stops.insert(PlayerId(1), vec![stop]);
+        assert!(!super::auto_pass_recommended(&state, &actions));
+        state.phase_stops.clear();
+        state.phase_stops.insert(PlayerId(2), vec![stop]);
+        assert!(super::auto_pass_recommended(&state, &actions));
+    }
+
+    #[test]
+    fn viewer_wrapper_reaches_smart_mode_only_for_authorized_submitter() {
+        let mut state = setup_priority();
+        state.phase = Phase::End;
+        state.turn_decision_controller = Some(PlayerId(1));
+        state.priority_player = PlayerId(1);
+        state
+            .priority_passing_modes
+            .insert(PlayerId(1), PriorityPassingMode::Smart);
+        let actions = meaningful_priority_actions();
+
+        assert!(super::auto_pass_recommended(&state, &actions));
+        assert!(super::auto_pass_recommended_for_viewer(
+            &state,
+            PlayerId(1),
+            &actions
+        ));
+        assert!(!super::auto_pass_recommended_for_viewer(
+            &state,
+            PlayerId(0),
+            &actions
+        ));
+        assert!(!super::auto_pass_recommended_for_viewer(
+            &state,
+            PlayerId(2),
+            &actions
+        ));
     }
 
     fn create_land(state: &mut GameState, name: &str, subtypes: &[&str]) -> ObjectId {

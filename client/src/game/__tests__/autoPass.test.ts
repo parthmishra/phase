@@ -42,7 +42,7 @@ describe("shouldAutoPass", () => {
     expect(shouldAutoPass(createState(), priority(0), false, false)).toBe(false);
   });
 
-  it("does not auto-pass in full control mode even if engine recommends it", () => {
+  it("does not auto-pass in Full Control even for a Smart-mode recommendation", () => {
     expect(shouldAutoPass(createState(), priority(0), true, true)).toBe(false);
   });
 
