@@ -982,17 +982,8 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
           };
         }
 
-        if (version < 25) {
-          const legacy = (migrated as { priorityPassingMode?: unknown }).priorityPassingMode;
-          migrated = {
-            ...migrated,
-            priorityPassingMode:
-              legacy === "Smart" || legacy === "SkipLowUseWindows"
-                ? "SkipLowUseWindows"
-                : "Standard",
-          };
-        }
-
+        // v25 → v26: rename the experimental mode and normalize unknown values.
+        // This single block also handles older stores that never had the field.
         if (version < 26) {
           const legacy = (migrated as { priorityPassingMode?: unknown }).priorityPassingMode;
           migrated = {

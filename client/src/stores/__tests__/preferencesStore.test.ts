@@ -383,14 +383,16 @@ describe("preferencesStore", () => {
     expect(usePreferencesStore.getState().phaseStops).toEqual([]);
   });
 
-  it("migrates the v25 Smart value and safely normalizes invalid modes", () => {
+  it.each([24, 25])("migrates the legacy Smart value from v%i", (version) => {
     localStorage.setItem(
       "phase-preferences",
-      JSON.stringify({ state: { priorityPassingMode: "Smart" }, version: 25 }),
+      JSON.stringify({ state: { priorityPassingMode: "Smart" }, version }),
     );
     act(() => usePreferencesStore.persist.rehydrate());
     expect(usePreferencesStore.getState().priorityPassingMode).toBe("SkipLowUseWindows");
+  });
 
+  it("safely normalizes invalid v25 priority-passing modes", () => {
     localStorage.setItem(
       "phase-preferences",
       JSON.stringify({ state: { priorityPassingMode: "Aggressive" }, version: 25 }),

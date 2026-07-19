@@ -61,7 +61,7 @@ export const MIN_SUPPORTED_SERVER_PROTOCOL = PROTOCOL_VERSION;
  * LobbyOnly carries matchmaking metadata only, so it keeps a one-version
  * rollout window while Full servers stay current-only.
  */
-export const LOBBY_MIN_SUPPORTED_SERVER_PROTOCOL = 18;
+export const LOBBY_MIN_SUPPORTED_SERVER_PROTOCOL = PROTOCOL_VERSION - 1;
 
 /** Identity advertised by the server in its `ServerHello`. */
 export interface ServerInfo {
