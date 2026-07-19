@@ -47,7 +47,7 @@ export interface DeckData {
  *      into a MulliganDecisionPhase::BottomCards sub-phase on
  *      WaitingFor::MulliganDecision.
  */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /**
  * Lowest server protocol version this client will accept in the handshake.
@@ -61,7 +61,7 @@ export const MIN_SUPPORTED_SERVER_PROTOCOL = PROTOCOL_VERSION;
  * LobbyOnly carries matchmaking metadata only, so it keeps a one-version
  * rollout window while Full servers stay current-only.
  */
-export const LOBBY_MIN_SUPPORTED_SERVER_PROTOCOL = 17;
+export const LOBBY_MIN_SUPPORTED_SERVER_PROTOCOL = 18;
 
 /** Identity advertised by the server in its `ServerHello`. */
 export interface ServerInfo {
