@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EngineAdapter, GameState } from "../../adapter/types";
-import { dispatchAction } from "../../game/dispatch";
+import { dispatchActionForGameSession } from "../../game/dispatch";
 import { useGameplayPreferencesSync } from "../useGameplayPreferencesSync";
 import {
   nextGameSessionGeneration,
@@ -10,14 +10,14 @@ import {
 } from "../../stores/gameStore";
 import { usePreferencesStore } from "../../stores/preferencesStore";
 
-vi.mock("../../game/dispatch", () => ({ dispatchAction: vi.fn() }));
+vi.mock("../../game/dispatch", () => ({ dispatchActionForGameSession: vi.fn() }));
 
 const adapter = {} as EngineAdapter;
 const gameState = {} as GameState;
 
 describe("useGameplayPreferencesSync", () => {
   beforeEach(() => {
-    vi.mocked(dispatchAction).mockClear();
+    vi.mocked(dispatchActionForGameSession).mockClear();
     usePreferencesStore.setState({
       phaseStops: [],
       priorityPassingMode: "Standard",
@@ -38,39 +38,44 @@ describe("useGameplayPreferencesSync", () => {
     act(() => {
       useGameStore.setState({ adapter });
     });
-    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(dispatchActionForGameSession).not.toHaveBeenCalled();
 
     act(() => {
       useGameStore.setState({ gameState, engineCommitEpoch: 1 });
     });
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(2));
-    expect(dispatchAction).toHaveBeenNthCalledWith(1, {
-      type: "SetPhaseStops",
-      data: { stops: [] },
-    });
-    expect(dispatchAction).toHaveBeenNthCalledWith(2, {
-      type: "SetPriorityPassingMode",
-      data: { mode: "Standard" },
-    });
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(2));
+    expect(dispatchActionForGameSession).toHaveBeenNthCalledWith(
+      1,
+      { type: "SetPhaseStops", data: { stops: [] } },
+      adapter,
+      expect.any(Number),
+    );
+    expect(dispatchActionForGameSession).toHaveBeenNthCalledWith(
+      2,
+      { type: "SetPriorityPassingMode", data: { mode: "Standard" } },
+      adapter,
+      expect.any(Number),
+    );
 
     act(() => {
       useGameStore.setState({ engineCommitEpoch: 2 });
     });
-    expect(dispatchAction).toHaveBeenCalledTimes(2);
+    expect(dispatchActionForGameSession).toHaveBeenCalledTimes(2);
 
     act(() => {
       usePreferencesStore.getState().setPhaseStops([]);
       usePreferencesStore.getState().setPriorityPassingMode("Standard");
     });
-    expect(dispatchAction).toHaveBeenCalledTimes(2);
+    expect(dispatchActionForGameSession).toHaveBeenCalledTimes(2);
 
     act(() => usePreferencesStore.getState().setPriorityPassingMode("SkipLowUseWindows"));
     await waitFor(() => {
-      expect(dispatchAction).toHaveBeenLastCalledWith({
-        type: "SetPriorityPassingMode",
-        data: { mode: "SkipLowUseWindows" },
-      });
-      expect(dispatchAction).toHaveBeenCalledTimes(3);
+      expect(dispatchActionForGameSession).toHaveBeenLastCalledWith(
+        { type: "SetPriorityPassingMode", data: { mode: "SkipLowUseWindows" } },
+        adapter,
+        expect.any(Number),
+      );
+      expect(dispatchActionForGameSession).toHaveBeenCalledTimes(3);
     });
 
     const firstGeneration = useGameStore.getState().gameSessionGeneration;
@@ -78,37 +83,41 @@ describe("useGameplayPreferencesSync", () => {
       useGameStore.setState({ gameSessionGeneration: nextGameSessionGeneration() });
     });
     expect(useGameStore.getState().gameSessionGeneration).toBeGreaterThan(firstGeneration);
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(5));
 
     const secondGeneration = useGameStore.getState().gameSessionGeneration;
     act(() => {
       useGameStore.setState({ gameSessionGeneration: nextGameSessionGeneration() });
     });
     expect(useGameStore.getState().gameSessionGeneration).toBeGreaterThan(secondGeneration);
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(7));
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(7));
   });
 
   it("retries rejected sends without duplicating successful preferences", async () => {
-    vi.mocked(dispatchAction)
+    vi.mocked(dispatchActionForGameSession)
       .mockRejectedValueOnce(new Error("transient"))
       .mockResolvedValue(undefined);
     useGameStore.setState({ adapter, gameState, engineCommitEpoch: 1 });
     renderHook(() => useGameplayPreferencesSync());
 
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(1));
 
     act(() => usePreferencesStore.getState().setPhaseStops([]));
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(3));
-    expect(dispatchAction).toHaveBeenNthCalledWith(2, {
-      type: "SetPhaseStops",
-      data: { stops: [] },
-    });
-    expect(dispatchAction).toHaveBeenNthCalledWith(3, {
-      type: "SetPriorityPassingMode",
-      data: { mode: "Standard" },
-    });
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(3));
+    expect(dispatchActionForGameSession).toHaveBeenNthCalledWith(
+      2,
+      { type: "SetPhaseStops", data: { stops: [] } },
+      adapter,
+      expect.any(Number),
+    );
+    expect(dispatchActionForGameSession).toHaveBeenNthCalledWith(
+      3,
+      { type: "SetPriorityPassingMode", data: { mode: "Standard" } },
+      adapter,
+      expect.any(Number),
+    );
 
     act(() => usePreferencesStore.getState().setPhaseStops([]));
-    await waitFor(() => expect(dispatchAction).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(dispatchActionForGameSession).toHaveBeenCalledTimes(3));
   });
 });

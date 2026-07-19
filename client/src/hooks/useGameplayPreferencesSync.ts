@@ -5,7 +5,7 @@ import type {
   PhaseStop,
   PriorityPassingMode,
 } from "../adapter/types";
-import { dispatchAction } from "../game/dispatch";
+import { dispatchActionForGameSession } from "../game/dispatch";
 import { useGameStore } from "../stores/gameStore";
 import { usePreferencesStore } from "../stores/preferencesStore";
 
@@ -67,7 +67,11 @@ async function drainGameplayPreferenceSync(): Promise<void> {
 
       if (!sent.stops || !phaseStopsEqual(sent.stops, stops)) {
         try {
-          await dispatchAction({ type: "SetPhaseStops", data: { stops: [...stops] } });
+          await dispatchActionForGameSession(
+            { type: "SetPhaseStops", data: { stops: [...stops] } },
+            adapter,
+            generation,
+          );
         } catch {
           // dispatchAction reports engine failures. Leave this value unsent so
           // the next store notification can retry it.
@@ -100,7 +104,11 @@ async function drainGameplayPreferenceSync(): Promise<void> {
       const modeSent = successfulSendFor(adapter, generation);
       if (modeSent.mode !== mode) {
         try {
-          await dispatchAction({ type: "SetPriorityPassingMode", data: { mode } });
+          await dispatchActionForGameSession(
+            { type: "SetPriorityPassingMode", data: { mode } },
+            adapter,
+            generation,
+          );
         } catch {
           // As above, a rejected dispatch must remain retryable.
           continue;

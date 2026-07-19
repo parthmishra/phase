@@ -1311,19 +1311,18 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
     let mut grouped_mana_priority: Option<bool> = None;
 
     // A phase stop on the current phase (empty stack = initial priority window)
-    // means the player asked to pause here — never recommend auto-pass. Moved
+    // means the authorized decision maker asked to pause here — never recommend
+    // auto-pass. Moved
     // from the frontend so the engine is the single authority. Disjoint from the
     // CR 117.3d yield short-circuit below, which requires a NON-empty stack
     // (`stack.back()` is `Some`); this branch requires an EMPTY stack.
     //
-    // Seat note: this gate keys on the `WaitingFor::Priority` player bound
-    // above; the frontend gate it replaced keyed on `state.priority_player`.
-    // CR 723.5: while controlling another player, one player makes all of that
-    // player's choices — so the priority holder and `priority_player` can be
-    // different seats. With an empty stack those two seats diverge only in that
-    // turn-control case, and this divergence is accepted (the checked seat is
-    // the one actually being asked to act).
-    if state.stack.is_empty() && state.phase_stop_hit(player) {
+    // CR 723.5: while controlling another player, the controller makes the
+    // controlled player's choices. Preference ownership therefore follows the
+    // same authorized submitter as `PriorityPassingMode`; consulting the
+    // controlled seat here would both honor the wrong user's preference and
+    // reveal it through the viewer-scoped recommendation bit.
+    if state.stack.is_empty() && state.phase_stop_hit(mode_owner) {
         return false;
     }
 
@@ -1341,13 +1340,6 @@ pub fn auto_pass_recommended(state: &GameState, actions: &[GameAction]) -> bool 
     }
 
     if state.priority_passing_mode(mode_owner) == PriorityPassingMode::SkipLowUseWindows {
-        // A turn controller can configure their own stop without exposing or
-        // rewriting the controlled player's private preference. Honor that
-        // distinct controller stop before the low-use-window fast path.
-        if mode_owner != player && state.stack.is_empty() && state.phase_stop_hit(mode_owner) {
-            return false;
-        }
-
         // CR 117.3a + CR 503.1 + CR 504.2 + CR 513.1: the active player gets
         // the ordinary priority window in these steps after turn-based actions
         // and beginning-of-step triggers have been handled. This opt-in mode is
@@ -2049,7 +2041,7 @@ mod tests {
     }
 
     #[test]
-    fn low_use_window_mode_respects_semantic_and_turn_controller_phase_stops() {
+    fn low_use_window_mode_uses_only_the_authorized_submitters_phase_stops() {
         let stop = PhaseStop {
             phase: Phase::End,
             scope: PhaseStopScope::AllTurns,
@@ -2065,10 +2057,16 @@ mod tests {
 
         assert!(super::auto_pass_recommended(&state, &actions));
         state.phase_stops.insert(PlayerId(0), vec![stop]);
-        assert!(!super::auto_pass_recommended(&state, &actions));
+        assert!(
+            super::auto_pass_recommended(&state, &actions),
+            "the controlled seat's private stop must not affect its controller"
+        );
         state.phase_stops.clear();
         state.phase_stops.insert(PlayerId(1), vec![stop]);
-        assert!(!super::auto_pass_recommended(&state, &actions));
+        assert!(
+            !super::auto_pass_recommended(&state, &actions),
+            "the authorized controller's stop must suppress the recommendation"
+        );
         state.phase_stops.clear();
         state.phase_stops.insert(PlayerId(2), vec![stop]);
         assert!(super::auto_pass_recommended(&state, &actions));
