@@ -5,7 +5,11 @@
 // cp target/server-release/phase-server client/src-tauri/binaries/phase-server-$(rustc --print host-tuple)
 
 import { Command } from "@tauri-apps/plugin-shell";
-import { resolveResource } from "@tauri-apps/api/path";
+import { appLocalDataDir, join, resolveResource } from "@tauri-apps/api/path";
+
+const HEALTH_POLL_INTERVAL_MS = 500;
+const HEALTH_STARTUP_TIMEOUT_MS = 30_000;
+const MAX_DIAGNOSTIC_LINES = 20;
 
 /** Check whether we are running inside a Tauri webview. */
 export function isTauri(): boolean {
@@ -81,10 +85,16 @@ export async function spawnSidecar(
 async function trySpawnOnPort(port: number, llm?: SidecarLlmConfig): Promise<SidecarHandle> {
   // Resolve the bundled data directory so the server can load card-data.json
   const dataDir = await resolveResource("data");
+  // Runtime state must not be written into the app bundle. That location is
+  // read-only when running directly from a DMG or from a system installation.
+  const stateDir = await join(await appLocalDataDir(), "sidecar");
+  const logDir = await join(stateDir, "logs");
 
   const env: Record<string, string> = {
     PORT: String(port),
     PHASE_DATA_DIR: dataDir,
+    PHASE_STATE_DIR: stateDir,
+    PHASE_LOG_DIR: logDir,
   };
   if (llm) {
     env.PHASE_LLM_AI_ENDPOINT = llm.endpoint;
@@ -99,13 +109,38 @@ async function trySpawnOnPort(port: number, llm?: SidecarLlmConfig): Promise<Sid
   }
 
   const command = Command.sidecar("binaries/phase-server", [], { env });
+  const diagnosticLines: string[] = [];
+  let termination: string | null = null;
+  const rememberOutput = (source: "stdout" | "stderr", line: string) => {
+    diagnosticLines.push(`${source}: ${line}`);
+    if (diagnosticLines.length > MAX_DIAGNOSTIC_LINES) {
+      diagnosticLines.shift();
+    }
+  };
+  command.stdout.on("data", (line) => rememberOutput("stdout", line));
+  command.stderr.on("data", (line) => rememberOutput("stderr", line));
+  command.on("error", (error) => {
+    termination = `reported an error: ${error}`;
+  });
+  command.on("close", ({ code, signal }) => {
+    termination = `exited with code ${String(code)} and signal ${String(signal)}`;
+  });
 
   const child = await command.spawn();
 
-  // Health check: poll /health every 500ms, up to 10 attempts (5s)
-  const maxAttempts = 10;
+  // Cold startup parses the bundled ~94 MB card database before binding the
+  // listener. On macOS this routinely exceeds five seconds, so allow a bounded
+  // 30-second startup window while still failing immediately if the process
+  // exits or the shell reports an error.
+  const maxAttempts = HEALTH_STARTUP_TIMEOUT_MS / HEALTH_POLL_INTERVAL_MS;
   for (let i = 0; i < maxAttempts; i++) {
-    await sleep(500);
+    if (termination) {
+      const output = diagnosticLines.length > 0
+        ? `; recent output: ${diagnosticLines.join(" | ")}`
+        : "";
+      throw new Error(`Sidecar ${termination}${output}`);
+    }
+    await sleep(HEALTH_POLL_INTERVAL_MS);
     const healthy = await checkHealth(port);
     if (healthy) {
       return {
@@ -116,13 +151,15 @@ async function trySpawnOnPort(port: number, llm?: SidecarLlmConfig): Promise<Sid
   }
 
   // Timed out -- kill the process and throw
-  await child.kill();
-  throw new Error(`Sidecar health check timed out on port ${port}`);
+  await child.kill().catch(() => undefined);
+  throw new Error(
+    `Sidecar health check timed out after ${HEALTH_STARTUP_TIMEOUT_MS / 1000}s on port ${port}`,
+  );
 }
 
 async function checkHealth(port: number): Promise<boolean> {
   try {
-    const response = await fetch(`http://localhost:${port}/health`);
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
     return response.ok;
   } catch {
     return false;

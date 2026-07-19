@@ -5,7 +5,8 @@ mod logging;
 mod persistence;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -488,6 +489,11 @@ struct Cli {
     #[arg(short, long, default_value = "data", env = "PHASE_DATA_DIR")]
     data_dir: String,
 
+    /// Writable directory for runtime state such as games.db. Defaults to the
+    /// card-data directory for backward compatibility with server deployments.
+    #[arg(long, env = "PHASE_STATE_DIR")]
+    state_dir: Option<PathBuf>,
+
     /// Allowed CORS origin (use '*' for permissive, or a specific URL)
     #[arg(long, env = "PHASE_CORS_ORIGIN")]
     cors_origin: Option<String>,
@@ -807,8 +813,13 @@ async fn main() {
     info!(cards = card_db.card_count(), "card database loaded");
     let db: SharedDb = Arc::new(card_db);
 
+    // Keep mutable runtime state separate from read-only card assets when a
+    // state directory is configured (for example by the bundled desktop app).
+    let state_path = cli.state_dir.as_deref().unwrap_or(data_path);
+    fs::create_dir_all(state_path).expect("Failed to create state directory");
+
     // Initialize SQLite persistence
-    let game_db_path = data_path.join("games.db");
+    let game_db_path = state_path.join("games.db");
     let game_db: SharedGameDb =
         Arc::new(persistence::GameDb::open(&game_db_path).expect("Failed to open game database"));
     // Clean up stale sessions (>24 hours old)
