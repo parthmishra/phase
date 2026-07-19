@@ -1282,6 +1282,49 @@ fn legal_actions_result_for_viewer(state: &GameState, viewer: PlayerId) -> Legal
     }
 }
 
+#[cfg(test)]
+mod viewer_priority_tests {
+    use super::*;
+    use engine::types::game_state::{PriorityPassingMode, WaitingFor};
+    use engine::types::phase::Phase;
+
+    #[test]
+    fn viewer_result_routes_turn_control_recommendation_only_to_controller() {
+        let controller = PlayerId(0);
+        let controlled = PlayerId(1);
+        let mut state = GameState::new_two_player(19);
+        state.active_player = controlled;
+        state.phase = Phase::End;
+        state.waiting_for = WaitingFor::Priority { player: controlled };
+        state.priority_player = controller;
+        state.turn_decision_controller = Some(controller);
+        state
+            .priority_passing_modes
+            .insert(controller, PriorityPassingMode::SkipLowUseWindows);
+
+        let controller_result = legal_actions_result_for_viewer(&state, controller);
+        assert!(
+            controller_result
+                .actions
+                .iter()
+                .any(|action| matches!(action, GameAction::PassPriority)),
+            "the authorized controller must receive the controlled seat's priority actions"
+        );
+        assert!(controller_result.auto_pass_recommended);
+
+        let controlled_result = legal_actions_result_for_viewer(&state, controlled);
+        assert!(controlled_result.actions.is_empty());
+        assert!(
+            auto_pass_recommended(&state, &controlled_result.actions),
+            "reach guard: the unscoped recommendation would leak true to the controlled viewer"
+        );
+        assert!(
+            !controlled_result.auto_pass_recommended,
+            "the controlled viewer is not authorized to act and must receive false"
+        );
+    }
+}
+
 #[wasm_bindgen]
 pub fn get_viewer_snapshot_js(player_id: u32) -> JsValue {
     match with_state_mut(|state| {
