@@ -16,6 +16,7 @@ pub mod draft_eval;
 pub mod duel_suite;
 pub mod eval;
 pub mod features;
+pub mod llm_projection;
 pub mod mana_colors;
 pub mod plan;
 pub mod planner;

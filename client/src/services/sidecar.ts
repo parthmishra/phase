@@ -17,6 +17,15 @@ export interface SidecarHandle {
   kill: () => Promise<void>;
 }
 
+export interface SidecarLlmConfig {
+  endpoint: string;
+  model: string;
+  token: string;
+  apiKey?: string;
+  apiStyle: "chat_completions" | "responses";
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+}
+
 /** Module-level handle for cleanup on page unload. */
 let activeSidecar: SidecarHandle | null = null;
 
@@ -24,17 +33,25 @@ let activeSidecar: SidecarHandle | null = null;
  * Spawn the phase-server sidecar binary on an available port.
  * Scans ports 9374-9383 and performs a health check before returning.
  */
-export async function spawnSidecar(port = 9374): Promise<SidecarHandle> {
+export async function spawnSidecar(
+  port = 9374,
+  llm?: SidecarLlmConfig,
+): Promise<SidecarHandle> {
   if (!isTauri()) {
     throw new Error("Sidecar is only available in Tauri desktop builds");
   }
 
   const maxPort = port + 10;
+  let lastError: unknown;
 
   for (let tryPort = port; tryPort < maxPort; tryPort++) {
     // Check if port is already in use by trying a health check
     const alreadyRunning = await checkHealth(tryPort);
     if (alreadyRunning) {
+      // An arbitrary existing phase-server was not started with this request's
+      // ephemeral desktop token/provider configuration. Never send a private
+      // game snapshot to it; choose another loopback port instead.
+      if (llm) continue;
       // Server already running on this port -- reuse it
       const handle: SidecarHandle = {
         port: tryPort,
@@ -47,28 +64,41 @@ export async function spawnSidecar(port = 9374): Promise<SidecarHandle> {
     }
 
     try {
-      const handle = await trySpawnOnPort(tryPort);
+      const handle = await trySpawnOnPort(tryPort, llm);
       activeSidecar = handle;
       return handle;
-    } catch {
+    } catch (error) {
+      lastError = error;
       // Port may be in use by something else, try next
       continue;
     }
   }
 
-  throw new Error(`Failed to spawn sidecar on ports ${port}-${maxPort - 1}`);
+  const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+  throw new Error(`Failed to spawn sidecar on ports ${port}-${maxPort - 1}: ${detail}`);
 }
 
-async function trySpawnOnPort(port: number): Promise<SidecarHandle> {
+async function trySpawnOnPort(port: number, llm?: SidecarLlmConfig): Promise<SidecarHandle> {
   // Resolve the bundled data directory so the server can load card-data.json
   const dataDir = await resolveResource("data");
 
-  const command = Command.sidecar("binaries/phase-server", [], {
-    env: {
-      PORT: String(port),
-      PHASE_DATA_DIR: dataDir,
-    },
-  });
+  const env: Record<string, string> = {
+    PORT: String(port),
+    PHASE_DATA_DIR: dataDir,
+  };
+  if (llm) {
+    env.PHASE_LLM_AI_ENDPOINT = llm.endpoint;
+    env.PHASE_LLM_AI_MODEL = llm.model;
+    env.PHASE_LLM_DESKTOP_TOKEN = llm.token;
+    env.PHASE_LLM_AI_API_STYLE = llm.apiStyle;
+    if (llm.apiKey) env.PHASE_LLM_AI_API_KEY = llm.apiKey;
+    if (llm.reasoningEffort) {
+      env.PHASE_LLM_AI_REASONING_EFFORT = llm.reasoningEffort;
+      env.PHASE_LLM_AI_TIMEOUT_MS = "120000";
+    }
+  }
+
+  const command = Command.sidecar("binaries/phase-server", [], { env });
 
   const child = await command.spawn();
 

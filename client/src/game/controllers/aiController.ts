@@ -4,6 +4,7 @@ import type { GameAction, GameState, WaitingFor } from "../../adapter/types";
 import { AdapterError, AdapterErrorCode } from "../../adapter/types";
 import { pressureMultiplier, STACK_PRESSURE_ELEVATED } from "../../utils/stackPressure";
 import { effectiveStackPressure } from "../../utils/stackThroughput";
+import { chooseDesktopLlmAction, clearDesktopLlmPlans } from "../../services/desktopLlm";
 import { debugLog } from "../debugLog";
 import { dispatchAction } from "../dispatch";
 import { attemptStateRehydrate, isEnginePanic, notifyEngineLost, routePanic } from "../engineRecovery";
@@ -72,6 +73,7 @@ function waitingForDebugLabel(waitingFor: WaitingFor | null | undefined): string
 }
 
 export function createAIController(config: AIControllerConfig): AIController {
+  if (config.seats.some((seat) => seat.difficulty === "LLM")) clearDesktopLlmPlans();
   let active = false;
   let pending = false;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -309,9 +311,16 @@ export function createAIController(config: AIControllerConfig): AIController {
     const waitingForType = gameState?.waiting_for?.type;
     const scheduledWaitingFor = gameState?.waiting_for ?? null;
     const scheduledWaitingForFingerprint = waitingForFingerprint(scheduledWaitingFor);
-    const actionPromise: Promise<GameAction | null> = Promise.resolve(
-      adapter?.getAiAction(difficulty, playerId, waitingForType) ?? null,
-    );
+    const actionPromise: Promise<GameAction | null> =
+      difficulty === "LLM" && gameState
+        ? chooseDesktopLlmAction(gameState, playerId).catch((error) => {
+            debugLog(
+              `Desktop LLM unavailable; using VeryHard fallback: ${error instanceof Error ? error.message : String(error)}`,
+              "warn",
+            );
+            return adapter?.getAiAction("VeryHard", playerId, waitingForType) ?? null;
+          })
+        : Promise.resolve(adapter?.getAiAction(difficulty, playerId, waitingForType) ?? null);
     // Suppress unhandled-rejection warnings if stop() cancels the timeout
     // before it fires and nothing else awaits this promise.
     actionPromise.catch(() => {});

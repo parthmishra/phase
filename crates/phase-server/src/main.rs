@@ -1,19 +1,22 @@
 mod admin;
 mod draft_pools;
+mod llm_provider;
 mod logging;
 mod persistence;
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Request, State, WebSocketUpgrade};
+use axum::http::HeaderMap;
 use axum::middleware::{from_fn, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::Json;
 use axum::Router;
 use clap::Parser;
 use engine::ai_support::{
@@ -22,6 +25,7 @@ use engine::ai_support::{
 use engine::database::CardDatabase;
 use engine::game::derived_views::derive_filtered_views;
 use engine::game::validate_name_deck_for_format_full;
+use engine::types::actions::GameAction;
 use engine::types::events::GameEvent;
 use engine::types::game_state::GameState;
 use engine::types::player::PlayerId;
@@ -31,6 +35,9 @@ use lobby_broker::{
     check_build_commit, conn_holds_reservation, Broker, BrokerEnv, BuildCommitCheck, ConnState,
     Outbound, NOT_OWNED_RESERVATION,
 };
+use phase_ai::config::{create_config_for_players, AiDifficulty, Platform};
+use phase_ai::llm_projection::{prepare_llm_decision, LlmPreparation};
+use phase_ai::session::AiSession;
 use rand::Rng;
 use seat_reducer::types::{DeckChoice, DeckResolver, ReducerCtx};
 use server_core::ai_seats_wire_guard::{guard_create_ai_seats, MAX_FULL_GAME_PLAYER_COUNT};
@@ -1161,6 +1168,14 @@ async fn main() {
             get(admin::p2p_backup_get).delete(admin::p2p_backup_delete),
         );
 
+    let desktop_llm_token = std::env::var("PHASE_LLM_DESKTOP_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty());
+    if desktop_llm_token.is_some() {
+        app = app.route("/desktop/llm-decision", post(desktop_llm_decision));
+        info!("desktop LLM decision endpoint enabled for the bundled app");
+    }
+
     // Administrative endpoints are destructive and information-disclosing, and
     // reachable through the same reverse proxy as `/ws` (see deploy nginx).
     // Mount them only when PHASE_ADMIN_TOKEN is set; otherwise absent (404).
@@ -1187,6 +1202,7 @@ async fn main() {
         game_spectators,
         mode,
         public_url: advertised_public_url,
+        desktop_llm_token,
     });
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port))
@@ -1416,6 +1432,119 @@ struct AppState {
     /// embedded ngrok tunnel), or `None` when the server has no reachable
     /// address to share. Cloned per connection at greet time only.
     public_url: Option<String>,
+    /// Ephemeral bearer token supplied only to the bundled desktop sidecar.
+    /// When absent, the desktop decision route is not mounted.
+    desktop_llm_token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmDecisionRequest {
+    state: GameState,
+    submitter: u8,
+    #[serde(default)]
+    previous_plan: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmDecisionResponse {
+    action: GameAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<String>,
+    used_provider: bool,
+}
+
+async fn desktop_llm_decision(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<DesktopLlmDecisionRequest>,
+) -> Result<Json<DesktopLlmDecisionResponse>, http::StatusCode> {
+    let expected = app_state
+        .desktop_llm_token
+        .as_deref()
+        .ok_or(http::StatusCode::NOT_FOUND)?;
+    let presented = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(http::StatusCode::UNAUTHORIZED)?;
+    if !tokens_match(presented.as_bytes(), expected.as_bytes()) {
+        return Err(http::StatusCode::UNAUTHORIZED);
+    }
+
+    let submitter = PlayerId(request.submitter);
+    if usize::from(request.submitter) >= request.state.players.len() {
+        return Err(http::StatusCode::BAD_REQUEST);
+    }
+    let config = create_config_for_players(
+        AiDifficulty::VeryHard,
+        Platform::Native,
+        request.state.players.len() as u8,
+    );
+    let session = AiSession::arc_from_game(&request.state);
+    let db = Arc::clone(&app_state.db);
+    let state = request.state;
+    let previous_plan = request.previous_plan;
+    let preparation = tokio::task::spawn_blocking(move || {
+        prepare_llm_decision(
+            &state,
+            submitter,
+            &config,
+            &session,
+            rand::rng().random(),
+            &db,
+            previous_plan.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let response = match preparation {
+        LlmPreparation::LocalOnly {
+            action: Some(action),
+            ..
+        } => DesktopLlmDecisionResponse {
+            action,
+            plan: None,
+            used_provider: false,
+        },
+        LlmPreparation::LocalOnly { action: None, .. } => {
+            return Err(http::StatusCode::BAD_REQUEST);
+        }
+        LlmPreparation::Provider(prepared) => {
+            let prepared = *prepared;
+            let selected = match configured_llm_provider() {
+                Some(provider) => {
+                    provider
+                        .choose(&prepared.request)
+                        .await
+                        .ok()
+                        .and_then(|choice| {
+                            prepared
+                                .action_for_id(&choice.candidate_id)
+                                .cloned()
+                                .map(|action| (action, choice.plan))
+                        })
+                }
+                None => None,
+            };
+            match selected {
+                Some((action, plan)) => DesktopLlmDecisionResponse {
+                    action,
+                    plan,
+                    used_provider: true,
+                },
+                None => DesktopLlmDecisionResponse {
+                    action: prepared.fallback,
+                    plan: None,
+                    used_provider: false,
+                },
+            }
+        }
+    };
+
+    Ok(Json(response))
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(app_state): State<AppState>) -> impl IntoResponse {
@@ -2681,6 +2810,13 @@ impl DeckResolver for ServerDeckResolver<'_> {
             bracket_tier: deck.bracket_tier,
         })
     }
+}
+
+fn configured_llm_provider() -> Option<&'static llm_provider::LlmProvider> {
+    static PROVIDER: OnceLock<Option<llm_provider::LlmProvider>> = OnceLock::new();
+    PROVIDER
+        .get_or_init(llm_provider::LlmProvider::from_env)
+        .as_ref()
 }
 
 async fn broadcast_game_started(
@@ -6480,6 +6616,7 @@ mod issue_4548_full_create_tests {
                 game_spectators: Arc::new(Mutex::new(HashMap::new())),
                 mode: ServerMode::Full,
                 public_url: None,
+                desktop_llm_token: None,
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -7278,6 +7415,7 @@ mod admin_auth_tests {
             game_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
             mode: ServerMode::Full,
             public_url: None,
+            desktop_llm_token: None,
         }
     }
 
@@ -7443,6 +7581,7 @@ mod p2p_backup_delete_tests {
             game_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
             mode: ServerMode::Full,
             public_url: None,
+            desktop_llm_token: None,
         }
     }
 

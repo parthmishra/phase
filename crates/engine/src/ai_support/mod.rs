@@ -30,7 +30,8 @@ use crate::types::zones::Zone;
 
 pub use candidates::{
     candidate_actions, candidate_actions_broad, candidate_actions_exact,
-    candidate_actions_with_probe, ActionMetadata, CandidateAction, TacticalClass,
+    candidate_actions_with_probe, ActionMetadata, CandidateAction, DecisionAuthority,
+    TacticalClass,
 };
 pub use context::{build_decision_context, AiDecisionContext};
 pub use copy::{
@@ -64,6 +65,24 @@ pub fn validated_candidate_actions_with_probe(
     // allocation-free `GameAction::cmp_stable` total order (not `Debug` strings).
     actions.sort_by(|a, b| a.action.cmp_stable(&b.action));
     actions
+}
+
+/// Returns only legal candidates whose semantic decision subject is currently
+/// controlled by `submitter`. This is the authority-preserving boundary for
+/// transports and AI drivers: candidate metadata continues to identify the
+/// subject, while turn-control effects determine who may submit it.
+pub fn validated_candidate_actions_for_submitter(
+    state: &GameState,
+    submitter: PlayerId,
+) -> Vec<CandidateAction> {
+    validated_candidate_actions(state)
+        .into_iter()
+        .filter(|candidate| {
+            candidate
+                .decision_authority(state)
+                .is_some_and(|authority| authority.authorized_submitter == submitter)
+        })
+        .collect()
 }
 
 /// CR 702.51a / 702.66a / 702.126a: During `ManaPayment`, every structurally
@@ -1710,11 +1729,35 @@ pub fn legal_actions_for_viewer(state: &GameState, viewer: PlayerId) -> LegalAct
     // turn's legal actions instead of an empty set (which would freeze the
     // controlled turn for them). Coincides with `acting_players().contains`
     // whenever no turn-control effect is active.
-    if crate::game::turn_control::is_authorized_submitter(state, viewer) {
-        legal_actions_full(state)
-    } else {
-        (Vec::new(), HashMap::new(), HashMap::new())
+    if !crate::game::turn_control::is_authorized_submitter(state, viewer) {
+        return (Vec::new(), HashMap::new(), HashMap::new());
     }
+
+    let (mut actions, mut spell_costs, mut grouped) = legal_actions_full(state);
+    let allowed: Vec<GameAction> = validated_candidate_actions_for_submitter(state, viewer)
+        .into_iter()
+        .map(|candidate| candidate.action)
+        .collect();
+
+    actions.retain(|action| allowed.contains(action));
+
+    // Priority has exactly one semantic decision subject. Its grouped-only
+    // mana actions belong to the same authorized submitter even though mana
+    // actions are intentionally absent from the flat candidate list.
+    let viewer_has_priority = matches!(
+        state.waiting_for,
+        WaitingFor::Priority { player }
+            if crate::game::turn_control::authorized_submitter_for_player(state, player) == viewer
+    );
+    if !viewer_has_priority {
+        spell_costs.clear();
+        grouped.retain(|_, bucket| {
+            bucket.retain(|action| allowed.contains(action));
+            !bucket.is_empty()
+        });
+    }
+
+    (actions, spell_costs, grouped)
 }
 
 /// Non-fatal diagnostic describing a wedged decision point.
@@ -1897,6 +1940,7 @@ mod tests {
     use super::{
         candidate_actions, cheap_reject_candidate, legal_actions, legal_actions_for_viewer,
         legal_actions_full, stuck_decision_diagnostic, validated_candidate_actions,
+        validated_candidate_actions_for_submitter,
     };
     use crate::game::engine::apply_as_current;
     use crate::game::mana_sources;
@@ -2147,6 +2191,30 @@ mod tests {
             controller_actions, full.0,
             "CR 723.5: the controller must receive the controlled player's legal actions"
         );
+    }
+
+    /// CR 723.5: candidate provenance keeps the controlled player as the
+    /// decision subject while separately deriving the controller as the
+    /// authorized submitter. Reintroducing the old actor rewrite makes the
+    /// subject assertion fail.
+    #[test]
+    fn candidate_authority_separates_controlled_subject_from_submitter() {
+        let controlled = PlayerId(1);
+        let controller = PlayerId(0);
+        let mut state = GameState::new_two_player(42);
+        state.active_player = controlled;
+        state.turn_decision_controller = Some(controller);
+        state.priority_player = controller;
+        state.waiting_for = WaitingFor::Priority { player: controlled };
+
+        let pass = validated_candidate_actions_for_submitter(&state, controller)
+            .into_iter()
+            .find(|candidate| matches!(candidate.action, GameAction::PassPriority))
+            .expect("controller receives controlled player's pass candidate");
+        let authority = pass.decision_authority(&state).unwrap();
+        assert_eq!(authority.decision_subject, controlled);
+        assert_eq!(authority.authorized_submitter, controller);
+        assert!(validated_candidate_actions_for_submitter(&state, controlled).is_empty());
     }
 
     /// Issue #537 cross-player AI test (5c): Animate Dead in player B's hand

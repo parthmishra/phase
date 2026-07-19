@@ -15,7 +15,7 @@ import {
   type PacingCategory,
   type VfxQuality,
 } from "../animation/types";
-import type { AIDifficulty } from "../constants/ai";
+import type { AIDifficulty, LocalAiOpponent } from "../constants/ai";
 import { DEFAULT_AI_DIFFICULTY } from "../constants/ai";
 import type { DeckArchetype } from "../services/engineRuntime";
 import { detectInitialLanguage, SUPPORTED_LNGS, type SupportedLng } from "../i18n/resources";
@@ -32,7 +32,7 @@ export const DEFAULT_AI_COVERAGE_FLOOR = 90;
  *  the player count slider. Archetype and coverage filters remain global: they
  *  filter the *pool* of Random picks, a concept that doesn't vary per seat. */
 export interface AiSeatPref {
-  difficulty: AIDifficulty;
+  difficulty: LocalAiOpponent;
   deckId: AiDeckSelection;
 }
 
@@ -454,7 +454,7 @@ interface PreferencesActions {
   setBattlefieldPeekOnHover: (enabled: boolean) => void;
   setCardPreviewMode: (mode: CardPreviewMode) => void;
   setCardPreviewHoverDelayMs: (ms: number) => void;
-  setAiSeatDifficulty: (index: number, difficulty: AIDifficulty) => void;
+  setAiSeatDifficulty: (index: number, difficulty: LocalAiOpponent) => void;
   setAiSeatDeckId: (index: number, id: AiDeckSelection) => void;
   /** Grow or shrink `aiSeats` to `count` slots. New slots inherit defaults;
    *  shrinking truncates trailing slots. Called whenever the player count

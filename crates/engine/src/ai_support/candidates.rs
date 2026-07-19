@@ -53,6 +53,31 @@ pub struct CandidateAction {
     pub metadata: ActionMetadata,
 }
 
+/// The player whose game decision a candidate answers and the player who is
+/// currently authorized to submit that answer. These identities coincide in
+/// ordinary play but intentionally diverge while one player controls another
+/// player's turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecisionAuthority {
+    pub decision_subject: PlayerId,
+    pub authorized_submitter: PlayerId,
+}
+
+impl CandidateAction {
+    /// CR 723.5: A controlling player makes the controlled player's choices
+    /// without changing which player those choices belong to.
+    pub fn decision_authority(&self, state: &GameState) -> Option<DecisionAuthority> {
+        let decision_subject = self.metadata.actor?;
+        Some(DecisionAuthority {
+            decision_subject,
+            authorized_submitter: crate::game::turn_control::authorized_submitter_for_player(
+                state,
+                decision_subject,
+            ),
+        })
+    }
+}
+
 const SELECTION_POOL_CAP: usize = 12;
 const SELECTION_CANDIDATE_CAP: usize = 64;
 
@@ -1545,7 +1570,8 @@ pub fn candidate_actions_broad_with_probe(
         // `player`. AI candidate enumeration must tag each `ChooseOption`
         // with the player who is authorized to submit it; otherwise the
         // action gets routed to the wrong AI seat in multiplayer. The
-        // `actor` field is always set to the authorized submitter.
+        // `actor` remains the semantic decision subject. Submission authority
+        // is derived separately by `CandidateAction::decision_authority`.
         // CR 608.2d + CR 700.3: AI opponent choice for pile separation — offer each
         // candidate opponent as a legal action.
         WaitingFor::SeparatePilesChooseOpponent {
@@ -3209,12 +3235,6 @@ pub fn candidate_actions_with_probe(
                 Some(player),
             ));
         }
-    }
-
-    for action in &mut actions {
-        action.metadata.actor = action.metadata.actor.map(|player| {
-            crate::game::turn_control::authorized_submitter_for_player(state, player)
-        });
     }
 
     actions

@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import type { GameFormat, MatchType } from "../../adapter/types";
 import { formatSuppliesDeck } from "../../data/formatRegistry";
-import { AI_DIFFICULTIES, type AIDifficulty } from "../../constants/ai";
+import {
+  AI_DIFFICULTIES,
+  LOCAL_AI_OPPONENT_OPTIONS,
+  type LocalAiOpponent,
+} from "../../constants/ai";
 import type { AiDeckCandidate } from "../../services/aiDeckCatalog";
 import { filterByBracket, useAiDeckCatalog } from "../../services/aiDeckCatalog";
 import { CEDH_BRACKET } from "../../services/cedhLock";
@@ -16,12 +20,34 @@ import {
 } from "../../stores/preferencesStore";
 import { MenuSelect } from "../ui/MenuSelect";
 import type { DeckArchetype } from "../../services/engineRuntime";
+import {
+  loadDesktopLlmConfig,
+  saveDesktopLlmConfig,
+  setDesktopLlmApiKey,
+  type DesktopLlmProvider,
+  type DesktopLlmReasoningEffort,
+} from "../../services/desktopLlm";
+import { isTauri } from "../../services/sidecar";
 import { BracketFilter } from "./BracketFilter";
 
 const AI_MENU_CLASS =
   "min-h-[44px] rounded-lg border border-gray-700 bg-gray-800/60 px-2 py-1.5 text-sm sm:min-h-0";
 const AI_MENU_LAYOUT = "dropdown" as const;
 const AI_MENU_WRAPPER = "w-full min-w-0";
+const OPENAI_MODELS = [
+  { value: "gpt-5.6-sol", label: "Sol — strongest" },
+  { value: "gpt-5.6-terra", label: "Terra — balanced" },
+  { value: "gpt-5.6-luna", label: "Luna — fastest" },
+] as const;
+const OPENAI_MODEL_IDS = new Set(OPENAI_MODELS.map(({ value }) => value));
+const REASONING_EFFORTS: DesktopLlmReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 interface Props {
   selectedFormat?: GameFormat | null;
@@ -135,7 +161,7 @@ export function AiOpponentConfig({
   const seatsToRender = useMemo(() => {
     const fallback = aiSeats[0];
     return Array.from({ length: opponentCount }, (_, i) =>
-      aiSeats[i] ?? fallback ?? { difficulty: "Medium" as AIDifficulty, deckId: AI_DECK_RANDOM },
+      aiSeats[i] ?? fallback ?? { difficulty: "Medium" as LocalAiOpponent, deckId: AI_DECK_RANDOM },
     );
   }, [aiSeats, opponentCount]);
 
@@ -144,6 +170,33 @@ export function AiOpponentConfig({
   // Track which seat panel is expanded in multi-AI mode. Single-AI mode
   // always renders the controls inline (no collapsing needed).
   const [expandedIndex, setExpandedIndex] = useState<number | null>(isMulti ? null : 0);
+  const [llmConfig, setLlmConfig] = useState(loadDesktopLlmConfig);
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const llmSelected = seatsToRender.some((seat) => seat.difficulty === "LLM");
+  const openAiSelected = llmConfig.provider === "openai";
+
+  const selectLlmProvider = (provider: DesktopLlmProvider) => {
+    setLlmConfig((current) => ({
+      ...current,
+      provider,
+      model:
+        provider === "openai"
+          ? OPENAI_MODEL_IDS.has(current.model as (typeof OPENAI_MODELS)[number]["value"])
+            ? current.model
+            : OPENAI_MODELS[0].value
+          : OPENAI_MODEL_IDS.has(current.model as (typeof OPENAI_MODELS)[number]["value"])
+            ? "qwen2.5:14b"
+            : current.model,
+    }));
+  };
+
+  useEffect(() => {
+    saveDesktopLlmConfig(llmConfig);
+  }, [llmConfig]);
+
+  useEffect(() => {
+    setDesktopLlmApiKey(llmApiKey);
+  }, [llmApiKey]);
 
   // When switching between single and multi modes, reset the expansion state
   // so the UI starts in the canonical "single expanded / multi all collapsed"
@@ -207,6 +260,106 @@ export function AiOpponentConfig({
           />
         ))}
       </div>
+
+      {llmSelected && (
+        <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 px-3 py-2.5">
+          <div>
+            <div className="text-xs font-semibold text-cyan-100">{t("aiOpponent.llm.title")}</div>
+            <div className="text-[10px] text-slate-400">{t("aiOpponent.llm.hint")}</div>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-400">{t("aiOpponent.llm.provider")}</span>
+            <select
+              value={llmConfig.provider}
+              onChange={(event) => selectLlmProvider(event.target.value as DesktopLlmProvider)}
+              className={`${AI_MENU_CLASS} text-white`}
+            >
+              <option value="local">{t("aiOpponent.llm.providers.local")}</option>
+              <option value="openai">{t("aiOpponent.llm.providers.openai")}</option>
+            </select>
+          </label>
+          {!openAiSelected && (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-slate-400">{t("aiOpponent.llm.endpoint")}</span>
+              <input
+                type="url"
+                value={llmConfig.endpoint}
+                onChange={(event) =>
+                  setLlmConfig((current) => ({ ...current, endpoint: event.target.value }))
+                }
+                className={`${AI_MENU_CLASS} text-white`}
+                placeholder="http://127.0.0.1:11434/v1/chat/completions"
+              />
+            </label>
+          )}
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-400">{t("aiOpponent.llm.model")}</span>
+            {openAiSelected ? (
+              <select
+                value={llmConfig.model}
+                onChange={(event) =>
+                  setLlmConfig((current) => ({ ...current, model: event.target.value }))
+                }
+                className={`${AI_MENU_CLASS} text-white`}
+              >
+                {OPENAI_MODELS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={llmConfig.model}
+                onChange={(event) =>
+                  setLlmConfig((current) => ({ ...current, model: event.target.value }))
+                }
+                className={`${AI_MENU_CLASS} text-white`}
+                placeholder="qwen2.5:14b"
+              />
+            )}
+          </label>
+          {openAiSelected && (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-slate-400">{t("aiOpponent.llm.reasoning")}</span>
+              <select
+                value={llmConfig.reasoningEffort}
+                onChange={(event) =>
+                  setLlmConfig((current) => ({
+                    ...current,
+                    reasoningEffort: event.target.value as DesktopLlmReasoningEffort,
+                  }))
+                }
+                className={`${AI_MENU_CLASS} text-white`}
+              >
+                {REASONING_EFFORTS.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {t(`aiOpponent.llm.reasoningEfforts.${effort}`)}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500">
+                {t("aiOpponent.llm.reasoningHint")}
+              </span>
+            </label>
+          )}
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-400">
+              {t(openAiSelected ? "aiOpponent.llm.apiKeyRequired" : "aiOpponent.llm.apiKey")}
+            </span>
+            <input
+              type="password"
+              value={llmApiKey}
+              onChange={(event) => setLlmApiKey(event.target.value)}
+              className={`${AI_MENU_CLASS} text-white`}
+              autoComplete="off"
+              placeholder={t("aiOpponent.llm.apiKeyPlaceholder")}
+            />
+            {openAiSelected && (
+              <span className="text-[10px] text-slate-500">{t("aiOpponent.llm.openAiKeyHint")}</span>
+            )}
+          </label>
+        </div>
+      )}
 
       {!loading && candidates.length === 0 && !suppliesDeck && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -281,7 +434,7 @@ export function AiOpponentConfig({
 
 interface AiSeatPanelProps {
   index: number;
-  seat: { difficulty: AIDifficulty; deckId: AiDeckSelection };
+  seat: { difficulty: LocalAiOpponent; deckId: AiDeckSelection };
   /** Table-wide cEDH mode. When on, the per-seat difficulty is overridden by
    *  cEDH, so the dropdown is disabled and badged (the remembered value is kept
    *  for when cEDH is turned back off). */
@@ -295,7 +448,7 @@ interface AiSeatPanelProps {
   collapsible: boolean;
   onToggle: () => void;
   onDeckChange: (name: AiDeckSelection) => void;
-  onDifficultyChange: (d: AIDifficulty) => void;
+  onDifficultyChange: (d: LocalAiOpponent) => void;
 }
 
 function AiSeatPanel({
@@ -361,7 +514,7 @@ function AiSeatPanel({
 
   const difficultyItems = useMemo(
     () =>
-      AI_DIFFICULTIES.map((item) => ({
+      (isTauri() ? LOCAL_AI_OPPONENT_OPTIONS : AI_DIFFICULTIES).map((item) => ({
         value: item.id,
         label: t(`aiDifficulty.levels.${item.id}`),
       })),
@@ -398,7 +551,7 @@ function AiSeatPanel({
             label={selectedDifficultyLabel}
             selectedValue={seat.difficulty}
             items={difficultyItems}
-            onSelect={(value) => onDifficultyChange(value as AIDifficulty)}
+            onSelect={(value) => onDifficultyChange(value as LocalAiOpponent)}
             disabled={cedhMode}
             menuLayout={AI_MENU_LAYOUT}
             fitContainer

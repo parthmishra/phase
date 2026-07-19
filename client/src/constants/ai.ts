@@ -15,11 +15,23 @@ export const AI_DIFFICULTIES = [
   { id: "VeryHard" },
 ] as const;
 
+/** Desktop solo-play choices. LLM is an opponent controller mode, not an
+ * engine difficulty, so multiplayer/server protocol pickers continue to use
+ * `AI_DIFFICULTIES` while the local setup screen uses this wider list. */
+export const LOCAL_AI_OPPONENT_OPTIONS = [
+  ...AI_DIFFICULTIES,
+  { id: "LLM" },
+] as const;
+
 /** The user-selectable per-seat difficulty levels (excludes table-wide cEDH). */
 export type SelectableAiDifficulty = (typeof AI_DIFFICULTIES)[number]["id"];
 
 /** Engine difficulty contract: the selectable levels plus the table-wide "CEDH"
  *  value every seat receives when cEDH mode is enabled. */
 export type AIDifficulty = SelectableAiDifficulty | "CEDH";
+
+/** Local solo opponent selection. `LLM` delegates supported decisions to the
+ * bundled native sidecar and uses VeryHard as its fail-safe local policy. */
+export type LocalAiOpponent = AIDifficulty | "LLM";
 
 export const DEFAULT_AI_DIFFICULTY: AIDifficulty = "Medium";

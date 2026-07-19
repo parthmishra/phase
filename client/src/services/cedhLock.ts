@@ -1,4 +1,4 @@
-import type { AIDifficulty } from "../constants/ai";
+import type { AIDifficulty, LocalAiOpponent } from "../constants/ai";
 import type { CommanderBracket } from "../types/bracket";
 
 /**
@@ -32,9 +32,9 @@ export const CEDH_BRACKET: CommanderBracket = 5;
  * seat snapshot and when building the deck list at game start.
  */
 export function effectiveAiDifficulty(
-  difficulty: AIDifficulty,
+  difficulty: LocalAiOpponent,
   cedhMode: boolean,
-): AIDifficulty {
+): LocalAiOpponent {
   return cedhMode ? CEDH_DIFFICULTY : difficulty;
 }
 

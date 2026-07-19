@@ -11,6 +11,7 @@
       "Medium": "Medium",
       "Hard": "Hard",
       "VeryHard": "Very Hard",
+      "LLM": "LLM (Experimental)",
       "CEDH": "cEDH"
     }
   },
@@ -120,6 +121,31 @@
     "difficulty": "Difficulty",
     "deckRandom": "Random",
     "deckRandomCount": "Random ({{count}})",
+    "llm": {
+      "title": "LLM opponent",
+      "hint": "Choose an OpenAI model or an OpenAI-compatible local endpoint. Unsupported decisions and provider failures use the built-in Very Hard AI.",
+      "provider": "Provider",
+      "providers": {
+        "local": "Local / compatible endpoint",
+        "openai": "OpenAI API"
+      },
+      "endpoint": "Chat completions endpoint",
+      "model": "Model",
+      "reasoning": "Reasoning strength",
+      "reasoningHint": "Higher strengths can play more deliberately, but take longer and use more tokens.",
+      "reasoningEfforts": {
+        "none": "None — fastest",
+        "low": "Low",
+        "medium": "Medium — recommended",
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Maximum — slowest"
+      },
+      "apiKey": "API key (optional)",
+      "apiKeyRequired": "OpenAI API key",
+      "apiKeyPlaceholder": "Kept in memory only",
+      "openAiKeyHint": "Requires OpenAI API access and billing; a ChatGPT subscription alone is not used."
+    },
     "cedhToggle": {
       "label": "cEDH mode",
       "hint": "All opponents play cEDH. Every deck must be bracket 5.",
