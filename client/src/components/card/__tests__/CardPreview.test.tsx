@@ -52,7 +52,7 @@ afterEach(() => {
   Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
   useGameStore.setState({ gameState: null, spellCosts: {}, legalActionsByObject: {} });
   usePreferencesStore.setState({ animationSpeedMultiplier: 1, showCardPreviewFooter: true });
-  useUiStore.setState({ inspectedObjectId: null, altHeld: false });
+  useUiStore.getState().dismissPreview();
 });
 
 describe("CardPreview chosen attributes", () => {

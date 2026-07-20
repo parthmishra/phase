@@ -31,6 +31,7 @@ describe("uiStore inspectObject hover latency", () => {
   });
 
   afterEach(() => {
+    useUiStore.getState().dismissPreview();
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
