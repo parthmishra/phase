@@ -34,8 +34,13 @@ import { ZONE_THEME, type ZoneTheme } from "../../viewmodel/zoneAffordance.ts";
 import { useCardOrganizer } from "../modal/cardChoice/useCardOrganizer.ts";
 import { CardOrganizerToolbar } from "../modal/cardChoice/CardOrganizerToolbar.tsx";
 import { PopoverMenu } from "../menu/PopoverMenu.tsx";
-import { fanGeometry } from "../card/fanGeometry.ts";
 import { CompanionFanCard } from "./CompanionFanCard.tsx";
+import {
+  handFanGeometry,
+  handFanManaPipSize,
+  handFanVerticalMetrics,
+  playerHandFanSizingStyle,
+} from "./handFanPresentation.ts";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -43,8 +48,11 @@ const EMPTY_OBJECTS: Record<string, GameObject> = {};
 
 // The whole-row fan geometry — the overlap / tilt / arc that lays hand cards
 // (plus the castable exile / graveyard "wings") out as one held hand — now
-// lives in the shared `card/fanGeometry` module so the attachment fan curves
-// identically. `k` is a card's absolute position across the row: exile cards
+// lives in the shared `card/fanGeometry` module. Every viewport uses the same
+// wider, flatter profile so the hand silhouette stays consistent; responsive
+// sizing caps the whole fan to the viewport, while mobile keeps its drawer as
+// the interaction surface. `k` is a card's absolute position across the row:
+// exile cards
 // occupy [0, E), hand cards [E, E + H), graveyard [E + H, N). With no wings
 // (E === 0, N === H) a hand card at index i sits at k === i, so the hand keeps
 // its familiar standalone fan; wings only shift the shared center, never the
@@ -265,7 +273,9 @@ export function PlayerHand() {
       let angle = 0;
       if (slot != null) {
         const { left, right } = flankingHandIndices(slot, fromIdx, rects.length);
-        const fan = fanGeometry(exileCards.length + rects.length + graveyardCards.length + companionCount);
+        const fan = handFanGeometry(
+          exileCards.length + rects.length + graveyardCards.length + companionCount,
+        );
         const rotations = [left, right]
           .filter((idx): idx is number => idx != null)
           .map((idx) => fan.rotation(exileCards.length + idx));
@@ -474,7 +484,7 @@ export function PlayerHand() {
     insertionSlotMV.set(-1);
     draggingIndexMV.set(-1);
   }, [arrowOpacity, arrowRotateRaw, insertionSlotMV, draggingIndexMV]);
-  const handleMouseEnter = useCallback((id: number) => { setExpanded(true); inspectObject(id); }, [inspectObject]);
+  const handleMouseEnter = useCallback((id: number) => inspectObject(id), [inspectObject]);
   const handleMouseLeave = useCallback(() => inspectObject(null), [inspectObject]);
 
   if (!player || !objects) return null;
@@ -495,7 +505,10 @@ export function PlayerHand() {
   // visually groups the colored wings apart from the white hand cards.
   const handSize = handObjects.length;
   const exileCount = exileCards.length;
-  const fan = fanGeometry(exileCount + handSize + graveyardCards.length + companionCount);
+  const totalFanCards = exileCount + handSize + graveyardCards.length + companionCount;
+  const verticalMetrics = handFanVerticalMetrics(isCompactHeight);
+  const fan = handFanGeometry(totalFanCards, "--hand-card-w", verticalMetrics.arcScale);
+  const manaPipSize = handFanManaPipSize(isMobile);
 
   return (
     <div
@@ -503,7 +516,11 @@ export function PlayerHand() {
       className={`relative flex items-end justify-center overflow-visible px-4 py-1 ${
         isCompactHeight ? "min-h-[40px]" : "min-h-[calc(var(--card-h)*0.7)]"
       }`}
-      style={{ perspective: "800px", zIndex: draggingCardId != null || expanded ? 40 : undefined }}
+      style={{
+        perspective: "800px",
+        ...playerHandFanSizingStyle(totalFanCards),
+        zIndex: draggingCardId != null || expanded ? 40 : undefined,
+      }}
       onClick={handleContainerClick}
       onMouseLeave={() => {
         setExpanded(false);
@@ -541,7 +558,10 @@ export function PlayerHand() {
           </PopoverMenu>
         </div>
       )}
-      {/* The whole hand lifts as one unit on hover. Keeping this uniform -50px
+      {/* The whole hand lifts as one unit only when the player deliberately
+          clicks its empty area. Hovering a card must leave the hand's hit areas
+          stable so moving between neighboring cards does not collapse previews.
+          Keeping this uniform -50px
           lift on a container — rather than baking `expanded` into each card's
           animate target — lets the memoized HandCards skip re-rendering when the
           hand expands/collapses. The lift lives on an inner wrapper so the outer
@@ -569,10 +589,13 @@ export function PlayerHand() {
                 unimplementedMechanics={obj.unimplemented_mechanics}
                 rotation={fan.rotation(j)}
                 arcOffset={fan.arc(j)}
+                restingY={verticalMetrics.restingY}
+                hoverY={verticalMetrics.hoverY}
                 marginLeft={j === 0 ? 0 : fan.overlap}
                 zIndex={j - exileCount}
                 theme={ZONE_THEME.exile}
                 hasPriority={hasPriority}
+                manaPipSize={manaPipSize}
                 isSelected={selectedCardId === obj.id}
                 onPlay={playCard}
                 onDragStart={previewManaPayment}
@@ -603,11 +626,14 @@ export function PlayerHand() {
               gapPxMV={gapPxMV}
               rotation={fan.rotation(k)}
               arcOffset={fan.arc(k)}
+              restingY={verticalMetrics.restingY}
+              hoverY={verticalMetrics.hoverY}
               marginLeft={i === 0 ? 0 : fan.overlap}
               isPlayable={isPlayable}
               isSelected={selectedCardId === obj.id}
               hasPriority={hasPriority}
               isMobile={isMobile}
+              manaPipSize={manaPipSize}
               onDragEnd={handleDragEnd}
               onDrag={handleDrag}
               onClick={handleCardClick}
@@ -633,10 +659,13 @@ export function PlayerHand() {
                 unimplementedMechanics={obj.unimplemented_mechanics}
                 rotation={fan.rotation(k)}
                 arcOffset={fan.arc(k)}
+                restingY={verticalMetrics.restingY}
+                hoverY={verticalMetrics.hoverY}
                 marginLeft={j === 0 ? 0 : fan.overlap}
                 zIndex={handSize + j}
                 theme={ZONE_THEME.graveyard}
                 hasPriority={hasPriority}
+                manaPipSize={manaPipSize}
                 isSelected={selectedCardId === obj.id}
                 onPlay={playCard}
                 onDragStart={previewManaPayment}
@@ -660,6 +689,8 @@ export function PlayerHand() {
               theme={ZONE_THEME.companion}
               rotation={fan.rotation(exileCount + handSize + graveyardCards.length)}
               arcOffset={fan.arc(exileCount + handSize + graveyardCards.length)}
+              restingY={verticalMetrics.restingY}
+              hoverY={verticalMetrics.hoverY}
               marginLeft={0}
               zIndex={handSize + graveyardCards.length}
             />
@@ -733,12 +764,15 @@ interface HandCardProps {
   gapPxMV: MotionValue<number>;
   rotation: number;
   arcOffset: number;
+  restingY: number;
+  hoverY: number;
   marginLeft: string | number;
   isPlayable: boolean;
   isSelected: boolean;
   isDragging: boolean;
   hasPriority: boolean;
   isMobile: boolean;
+  manaPipSize: "compact" | "md";
   onDragStart: (id: number) => void;
   onDragStop: () => void;
   onDragEnd: (objectId: number, event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => boolean;
@@ -761,12 +795,15 @@ const HandCard = memo(function HandCard({
   gapPxMV,
   rotation,
   arcOffset,
+  restingY,
+  hoverY,
   marginLeft,
   isPlayable,
   isSelected,
   isDragging,
   hasPriority,
   isMobile,
+  manaPipSize,
   onDragStart: onDragStartProp,
   onDragStop,
   onDragEnd,
@@ -833,7 +870,7 @@ const HandCard = memo(function HandCard({
   const glowClass = hasPriority
     ? isPlayable
       ? "shadow-[0_0_16px_4px_rgba(34,211,238,0.6)] ring-2 ring-cyan-400"
-      : "opacity-90"
+      : ""
     : "";
 
   // `rotation`, `arcOffset` and `marginLeft` come from the parent's whole-row
@@ -843,16 +880,18 @@ const HandCard = memo(function HandCard({
   return (
     <motion.div
       data-card-hover
+      data-hand-card
+      data-hand-rotation={rotation}
       data-object-id={objectId}
       layout
-      initial={{ opacity: 0, y: 40 }}
+      initial={{ opacity: 0, y: restingY + 10 }}
       animate={{
         opacity: 1,
-        y: 30 + arcOffset,
+        y: restingY + arcOffset,
         rotate: rotation,
       }}
       exit={{ opacity: 0, scale: 0.8 }}
-      whileHover={{ y: 20 + arcOffset, scale: 1.08, zIndex: 30 }}
+      whileHover={{ y: hoverY + arcOffset, scale: 1.08, zIndex: 30 }}
       whileDrag={{ scale: 1.05, zIndex: 9999 }}
       transition={{
         delay: index * 0.03,
@@ -925,7 +964,12 @@ const HandCard = memo(function HandCard({
           className="pointer-events-none absolute inset-y-0 right-0 w-[3px] rounded-full bg-ember-bright shadow-[0_0_10px_3px_rgba(251,146,60,0.85)]"
           style={{ opacity: rightEdgeOpacity }}
         />
-        <ManaCostPips cost={displayCost} isReduced={isReduced} className="absolute right-[4%] top-[2%]" />
+        <ManaCostPips
+          cost={displayCost}
+          isReduced={isReduced}
+          size={manaPipSize}
+          className="absolute right-[4%] top-[2%]"
+        />
       </motion.div>
     </motion.div>
   );
@@ -938,10 +982,13 @@ interface ZoneFanCardProps {
   unimplementedMechanics?: string[];
   rotation: number;
   arcOffset: number;
+  restingY: number;
+  hoverY: number;
   marginLeft: string | number;
   zIndex: number;
   theme: ZoneTheme;
   hasPriority: boolean;
+  manaPipSize: "compact" | "md";
   isSelected: boolean;
   onPlay: (objectId: number) => void;
   onDragStart: (objectId: number) => void;
@@ -966,10 +1013,13 @@ const ZoneFanCard = memo(function ZoneFanCard({
   unimplementedMechanics,
   rotation,
   arcOffset,
+  restingY,
+  hoverY,
   marginLeft,
   zIndex,
   theme,
   hasPriority,
+  manaPipSize,
   isSelected,
   onPlay,
   onDragStart,
@@ -998,10 +1048,10 @@ const ZoneFanCard = memo(function ZoneFanCard({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 40 }}
-      animate={{ opacity: 1, y: 30 + arcOffset, rotate: rotation }}
+      initial={{ opacity: 0, y: restingY + 10 }}
+      animate={{ opacity: 1, y: restingY + arcOffset, rotate: rotation }}
       exit={{ opacity: 0, scale: 0.8 }}
-      whileHover={{ y: 20 + arcOffset, scale: 1.08, zIndex: 30 }}
+      whileHover={{ y: hoverY + arcOffset, scale: 1.08, zIndex: 30 }}
       whileDrag={{ scale: 1.05, zIndex: 9999 }}
       transition={{ duration: 0.25, layout: { duration: 0.15, delay: 0 } }}
       drag
@@ -1055,7 +1105,12 @@ const ZoneFanCard = memo(function ZoneFanCard({
       </div>
       {/* Per-zone castable glow ring (sibling of the clipped image so it isn't cropped). */}
       <div className={`pointer-events-none absolute inset-0 rounded-lg ${theme.ring}`} />
-      <ManaCostPips cost={displayCost} isReduced={isReduced} className="absolute right-[4%] top-[2%]" />
+      <ManaCostPips
+        cost={displayCost}
+        isReduced={isReduced}
+        size={manaPipSize}
+        className="absolute right-[4%] top-[2%]"
+      />
     </motion.div>
   );
 });

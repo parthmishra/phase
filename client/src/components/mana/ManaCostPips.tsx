@@ -2,11 +2,12 @@ import type { ManaCost } from "../../adapter/types.ts";
 import { manaCostToShards } from "../../viewmodel/costLabel.ts";
 import { ManaSymbol } from "./ManaSymbol.tsx";
 
-type PipSize = "2xs" | "xs" | "sm" | "md" | "lg";
+type PipSize = "2xs" | "xs" | "compact" | "sm" | "md" | "lg";
 
 const PIP_SIZES: Record<PipSize, { container: string; gap: string; backdrop: string }> = {
   "2xs": { container: "w-[10px] h-[10px] p-[0px]", gap: "gap-[0.5px]", backdrop: "-inset-x-[1px] top-[2px] -bottom-[3px]" },
   xs: { container: "w-[12px] h-[12px] p-[0px]", gap: "gap-[0.5px]", backdrop: "-inset-x-[1px] top-[2px] -bottom-[4px]" },
+  compact: { container: "w-[12px] h-[12px] p-[0px]", gap: "gap-[0.5px]", backdrop: "-inset-x-[1px] -top-[1px] -bottom-[1px]" },
   sm: { container: "w-[18px] h-[18px] p-[0px]", gap: "gap-[1px]", backdrop: "-inset-x-[2px] top-[4px] -bottom-[8px]" },
   md: { container: "w-[22px] h-[22px] p-[2px]", gap: "gap-[1px]", backdrop: "-inset-x-[3px] -top-[2px] -bottom-[4px]" },
   lg: { container: "w-[28px] h-[28px] py-[2px] px-[2.5px]", gap: "gap-[0.5px]", backdrop: "-inset-x-[3px] -top-[2px] -bottom-[4px]" },
@@ -31,7 +32,10 @@ export function ManaCostPips({ cost, isReduced, size = "md", className = "" }: M
   return (
     <div className={`pointer-events-none ${className}`}>
       <div className={`relative flex ${s.gap}`}>
-        <div className={`absolute ${s.backdrop} rounded-full bg-gray-900/70`} />
+        <div
+          data-mana-cost-backdrop
+          className={`absolute ${s.backdrop} rounded-full bg-gray-900/70`}
+        />
         {shards.map((shard, i) => (
           <div
             key={i}

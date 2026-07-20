@@ -15,6 +15,7 @@ describe("preferencesStore", () => {
         boardBackground: "auto-wubrg",
         vfxQuality: "full",
         animationSpeedMultiplier: 1.0,
+        showCardPreviewFooter: true,
         pacingMultipliers: { effects: 1.0, combat: 1.0, banners: 1.0 },
         priorityPassingMode: "Standard",
         masterVolume: 100,
@@ -148,6 +149,18 @@ describe("preferencesStore", () => {
     });
 
     expect(usePreferencesStore.getState().vfxQuality).toBe("minimal");
+  });
+
+  it("shows the card preview footer by default and persists changes", () => {
+    expect(usePreferencesStore.getState().showCardPreviewFooter).toBe(true);
+
+    act(() => {
+      usePreferencesStore.getState().setShowCardPreviewFooter(false);
+    });
+
+    expect(usePreferencesStore.getState().showCardPreviewFooter).toBe(false);
+    const stored = JSON.parse(localStorage.getItem("phase-preferences")!);
+    expect(stored.state.showCardPreviewFooter).toBe(false);
   });
 
   it("setAnimationSpeedMultiplier updates the value", () => {
