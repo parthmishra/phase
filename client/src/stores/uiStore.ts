@@ -394,6 +394,11 @@ export const useUiStore = create<UiStore>()((set, get) => ({
       if (pendingClearTimer != null) return; // already scheduled
       pendingClearTimer = setTimeout(() => {
         pendingClearTimer = null;
+        // Alt PINS the preview (frozen in place — see CardPreview's cursor-follow
+        // effect). While pinned, a mouseleave must not dismiss it, so the user can
+        // traverse the gap from the card to the panel and click "Report a Problem"
+        // or scroll rulings. Toggling Alt off (or a click outside) still dismisses.
+        if (get().altHeld) return;
         const el = document.elementFromPoint(lastPointer.x, lastPointer.y);
         // Keep the preview (and finish a delay that already elapsed) when the
         // pointer is still over an inspectable card or the preview panel. This

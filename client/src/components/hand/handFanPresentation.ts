@@ -50,12 +50,6 @@ export function handFanGeometry(
   };
 }
 
-/** The resting mobile fan is a compact summary surface, so its mana symbols
- *  scale down with the cards. The full mobile drawer remains medium-sized. */
-export function handFanManaPipSize(isMobile: boolean): "compact" | "md" {
-  return isMobile ? "compact" : "md";
-}
-
 /** Preserve the normal responsive hand-card size until the complete wide fan
  *  would exceed 92vw, then shrink cards just enough to fit smaller screens. */
 export function playerHandFanSizingStyle(totalCards: number): CSSProperties {

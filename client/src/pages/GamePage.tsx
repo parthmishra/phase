@@ -52,6 +52,7 @@ import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
 import { ActionButton } from "../components/board/ActionButton.tsx";
 import { FullControlToggle } from "../components/controls/FullControlToggle.tsx";
 import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
+import { MobilePhaseChip } from "../components/controls/MobilePhaseChip.tsx";
 import { MayTriggerAutoChoiceList } from "../components/board/MayTriggerAutoChoiceList.tsx";
 import { PriorityYieldList } from "../components/board/PriorityYieldList.tsx";
 import { OpponentHand } from "../components/hand/OpponentHand.tsx";
@@ -305,6 +306,7 @@ export function GamePage() {
               : rawMode === "ai"
                 ? "ai"
                 : "local";
+  const isOnlineMode = mode === "online" || mode === "spectate";
 
   const [showCardDataMissing, setShowCardDataMissing] = useState(false);
 
@@ -490,6 +492,11 @@ export function GamePage() {
         break;
       case "error":
         useMultiplayerStore.getState().showToast(event.message);
+        // Native engine sockets emit an error before close; the provider disposes
+        // that terminal adapter, so no reconnectFailed event follows.
+        if (!isOnlineMode) {
+          setReconnectState({ status: "failed" });
+        }
         break;
       case "deckRejected":
         navigate("/multiplayer", {
@@ -501,7 +508,7 @@ export function GamePage() {
         });
         break;
     }
-  }, [gameId, navigate, joinCode, t]);
+  }, [gameId, navigate, joinCode, isOnlineMode, t]);
 
   const handleP2PEvent = useCallback((event: P2PAdapterEvent) => {
     switch (event.type) {
@@ -695,7 +702,7 @@ export function GamePage() {
       roomName={roomNameParam ?? undefined}
       source={sourceParam}
       draftId={draftIdParam}
-      onWsEvent={mode === "online" || mode === "spectate" ? handleWsEvent : undefined}
+      onWsEvent={mode === "ai" || mode === "online" || mode === "spectate" ? handleWsEvent : undefined}
       onP2PEvent={
         mode === "p2p-host" || mode === "p2p-join" ? handleP2PEvent : undefined
       }
@@ -711,7 +718,7 @@ export function GamePage() {
       <GamePageContent
         gameId={gameId}
         mode={rawMode}
-        isOnlineMode={mode === "online" || mode === "spectate"}
+        isOnlineMode={isOnlineMode}
         hostGameCode={hostGameCode}
         waitingForOpponent={waitingForOpponent}
         opponentDisconnected={opponentDisconnected}
@@ -1445,7 +1452,7 @@ function GamePageContent({
             className="hidden flex-col gap-1 max-lg:portrait:flex max-lg:portrait:min-w-0"
           >
             <div className="flex flex-col gap-1 max-lg:gap-1">
-              <CombatPhaseIndicator />
+              <MobilePhaseChip className="w-full" />
               <HandBadge className="w-full" />
             </div>
             <div className="flex items-center gap-1.5">
@@ -1473,6 +1480,9 @@ function GamePageContent({
                 <TurnStatusLine />
               </div>
               <div className="hidden flex-row items-center gap-1.5 max-lg:landscape:flex lg:flex">
+                {/* <lg only: desktop conveys phase via the PhaseDot strips in
+                    PlayerHud, which are hidden on mobile. */}
+                <MobilePhaseChip className="lg:hidden" />
                 <TurnStatusLine />
                 <HandBadge />
                 {/* CR 117.3d: standing priority-yield summary chip, beside the

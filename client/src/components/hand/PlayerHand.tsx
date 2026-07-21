@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { CardImage } from "../card/CardImage.tsx";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
+import { spellCostDisplay } from "../../viewmodel/costLabel.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
@@ -37,7 +38,6 @@ import { PopoverMenu } from "../menu/PopoverMenu.tsx";
 import { CompanionFanCard } from "./CompanionFanCard.tsx";
 import {
   handFanGeometry,
-  handFanManaPipSize,
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
 } from "./handFanPresentation.ts";
@@ -508,7 +508,6 @@ export function PlayerHand() {
   const totalFanCards = exileCount + handSize + graveyardCards.length + companionCount;
   const verticalMetrics = handFanVerticalMetrics(isCompactHeight);
   const fan = handFanGeometry(totalFanCards, "--hand-card-w", verticalMetrics.arcScale);
-  const manaPipSize = handFanManaPipSize(isMobile);
 
   return (
     <div
@@ -595,7 +594,6 @@ export function PlayerHand() {
                 zIndex={j - exileCount}
                 theme={ZONE_THEME.exile}
                 hasPriority={hasPriority}
-                manaPipSize={manaPipSize}
                 isSelected={selectedCardId === obj.id}
                 onPlay={playCard}
                 onDragStart={previewManaPayment}
@@ -633,7 +631,6 @@ export function PlayerHand() {
               isSelected={selectedCardId === obj.id}
               hasPriority={hasPriority}
               isMobile={isMobile}
-              manaPipSize={manaPipSize}
               onDragEnd={handleDragEnd}
               onDrag={handleDrag}
               onClick={handleCardClick}
@@ -665,7 +662,6 @@ export function PlayerHand() {
                 zIndex={handSize + j}
                 theme={ZONE_THEME.graveyard}
                 hasPriority={hasPriority}
-                manaPipSize={manaPipSize}
                 isSelected={selectedCardId === obj.id}
                 onPlay={playCard}
                 onDragStart={previewManaPayment}
@@ -772,7 +768,6 @@ interface HandCardProps {
   isDragging: boolean;
   hasPriority: boolean;
   isMobile: boolean;
-  manaPipSize: "compact" | "md";
   onDragStart: (id: number) => void;
   onDragStop: () => void;
   onDragEnd: (objectId: number, event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => boolean;
@@ -803,7 +798,6 @@ const HandCard = memo(function HandCard({
   isDragging,
   hasPriority,
   isMobile,
-  manaPipSize,
   onDragStart: onDragStartProp,
   onDragStop,
   onDragEnd,
@@ -852,13 +846,10 @@ const HandCard = memo(function HandCard({
         : 0,
   );
 
-  // Use effective spell cost from engine if available (reflects reductions),
-  // otherwise fall back to printed mana cost.
+  // Effective spell cost from the engine (reflects cost reductions and
+  // free-cast permissions such as Omniscience); falls back to the printed cost.
   const effectiveCost = useGameStore((s) => s.spellCosts[String(objectId)]);
-  const displayCost = effectiveCost ?? manaCost;
-  // Detect cost reduction by comparing effective vs printed generic mana
-  const isReduced = effectiveCost?.type === "Cost" && manaCost.type === "Cost"
-    && (effectiveCost.generic < manaCost.generic || effectiveCost.shards.length < manaCost.shards.length);
+  const { displayCost, isReduced } = spellCostDisplay(effectiveCost, manaCost);
   const playedRef = useRef(false);
 
   const setPreviewSticky = useUiStore((s) => s.setPreviewSticky);
@@ -964,12 +955,12 @@ const HandCard = memo(function HandCard({
           className="pointer-events-none absolute inset-y-0 right-0 w-[3px] rounded-full bg-ember-bright shadow-[0_0_10px_3px_rgba(251,146,60,0.85)]"
           style={{ opacity: rightEdgeOpacity }}
         />
-        <ManaCostPips
-          cost={displayCost}
-          isReduced={isReduced}
-          size={manaPipSize}
-          className="absolute right-[4%] top-[2%]"
-        />
+        {/* @container overlay sized to the card (absolute inset-0 takes width
+            from the card wrapper, so container-type can't collapse it); lets the
+            pips scale in cqi with --hand-card-w instead of a fixed px size. */}
+        <div className="pointer-events-none absolute inset-0 @container">
+          <ManaCostPips cost={displayCost} isReduced={isReduced} size="fluid" className="absolute right-[4%] top-[2%]" />
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -988,7 +979,6 @@ interface ZoneFanCardProps {
   zIndex: number;
   theme: ZoneTheme;
   hasPriority: boolean;
-  manaPipSize: "compact" | "md";
   isSelected: boolean;
   onPlay: (objectId: number) => void;
   onDragStart: (objectId: number) => void;
@@ -1019,7 +1009,6 @@ const ZoneFanCard = memo(function ZoneFanCard({
   zIndex,
   theme,
   hasPriority,
-  manaPipSize,
   isSelected,
   onPlay,
   onDragStart,
@@ -1038,9 +1027,7 @@ const ZoneFanCard = memo(function ZoneFanCard({
   });
 
   const effectiveCost = useGameStore((s) => s.spellCosts[String(objectId)]);
-  const displayCost = effectiveCost ?? manaCost;
-  const isReduced = effectiveCost?.type === "Cost" && manaCost.type === "Cost"
-    && (effectiveCost.generic < manaCost.generic || effectiveCost.shards.length < manaCost.shards.length);
+  const { displayCost, isReduced } = spellCostDisplay(effectiveCost, manaCost);
   // Suppress dragSnapToOrigin only when the flick actually cast the card, so a
   // short/sideways drag springs back into the wing instead of flying off.
   const playedRef = useRef(false);
@@ -1105,12 +1092,11 @@ const ZoneFanCard = memo(function ZoneFanCard({
       </div>
       {/* Per-zone castable glow ring (sibling of the clipped image so it isn't cropped). */}
       <div className={`pointer-events-none absolute inset-0 rounded-lg ${theme.ring}`} />
-      <ManaCostPips
-        cost={displayCost}
-        isReduced={isReduced}
-        size={manaPipSize}
-        className="absolute right-[4%] top-[2%]"
-      />
+      {/* @container overlay sized to the card so the pips scale in cqi with
+          --hand-card-w (see the hand-card render above). */}
+      <div className="pointer-events-none absolute inset-0 @container">
+        <ManaCostPips cost={displayCost} isReduced={isReduced} size="fluid" className="absolute right-[4%] top-[2%]" />
+      </div>
     </motion.div>
   );
 });

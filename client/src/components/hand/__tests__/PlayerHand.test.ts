@@ -14,7 +14,6 @@ import {
   HAND_FAN_HOVER_Y,
   HAND_FAN_RESTING_Y,
   handFanGeometry,
-  handFanManaPipSize,
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
 } from "../handFanPresentation.ts";
@@ -46,11 +45,6 @@ describe("player hand fan presentation", () => {
     expect(compactMetrics.restingY).toBe(24);
     expect(compactMetrics.hoverY).toBe(19);
     expect(compactFan.arc(0)).toBeCloseTo(16);
-  });
-
-  it("uses smaller mana pips only for the resting mobile fan", () => {
-    expect(handFanManaPipSize(true)).toBe("compact");
-    expect(handFanManaPipSize(false)).toBe("md");
   });
 });
 
