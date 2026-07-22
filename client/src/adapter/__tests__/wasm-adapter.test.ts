@@ -97,6 +97,29 @@ describe("WasmAdapter", () => {
       expect(ensureWasmInit).toHaveBeenCalledOnce();
       expect(adapter.getEngineClient()).toBeNull();
     });
+
+    it("does not reactivate after disposal while initialization is pending", async () => {
+      let finishInitialization!: () => void;
+      mockWorkerClient.initialize.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishInitialization = resolve;
+          }),
+      );
+
+      const staleInitialization = adapter.initialize();
+      adapter.dispose();
+      finishInitialization();
+      await staleInitialization;
+
+      await expect(adapter.ping()).rejects.toMatchObject({
+        code: AdapterErrorCode.NOT_INITIALIZED,
+      });
+
+      await adapter.initialize();
+      expect(vi.mocked(EngineWorkerClient)).toHaveBeenCalledTimes(2);
+      await expect(adapter.ping()).resolves.toBe("phase-rs engine ready");
+    });
   });
 
   describe("warmCardDatabase", () => {
