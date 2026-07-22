@@ -115,6 +115,43 @@ describe("CardPreview chosen attributes", () => {
     source.remove();
   });
 
+  it("uses the bottom-anchored hand animation for an active mobile scrub", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 500 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 440 });
+    const source = document.createElement("div");
+    source.dataset.handCard = "";
+    source.dataset.handTouchActive = "true";
+    source.dataset.handRotation = "5";
+    source.dataset.objectId = "101";
+    Object.defineProperty(source, "offsetWidth", { configurable: true, value: 90 });
+    source.matches = vi.fn(() => false);
+    source.getBoundingClientRect = () => ({
+      bottom: 432,
+      height: 126,
+      left: 180,
+      right: 270,
+      top: 306,
+      width: 90,
+      x: 180,
+      y: 306,
+      toJSON: () => ({}),
+    });
+    document.body.appendChild(source);
+
+    const { container } = render(
+      <CardPreview cardName="Pithing Needle" handSourceObjectId={101} />,
+    );
+
+    const preview = container.querySelector<HTMLElement>("[data-card-preview]");
+    expect(preview).not.toBeNull();
+    expect(preview?.style.bottom).toBe("0px");
+    expect(preview).toHaveClass("pointer-events-none");
+    expect(screen.getByAltText("Pithing Needle")).toHaveClass(
+      "w-[clamp(190px,18vw,300px)]",
+    );
+    source.remove();
+  });
+
   it("uses the normal preview when the matching board hand card is not hovered", () => {
     const source = document.createElement("div");
     source.dataset.handCard = "";

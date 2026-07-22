@@ -128,9 +128,12 @@ export function CardPreview({
     );
     // The same hand object can also render inside an overlay (most notably the
     // mulligan screen) while the board's resting PlayerHand remains mounted
-    // underneath. Require the resting source to be hovered so overlays retain
-    // their normal preview instead of inheriting the hand-origin animation.
-    if (!source || !source.matches(":hover")) {
+    // underneath. Require either desktop hover or the explicit mobile scrub
+    // marker so overlays retain their normal preview instead of inheriting the
+    // hand-origin animation.
+    const isActiveHandSource =
+      source?.matches(":hover") || source?.dataset.handTouchActive === "true";
+    if (!source || !isActiveHandSource) {
       setMeasuredHandOrigin({ objectId: handSourceObjectId, origin: null });
       return;
     }
@@ -453,7 +456,10 @@ function CardPreviewInner({
         }
       : undefined;
 
-  if (isMobile) {
+  // Generic mobile inspections use the blocking modal. A held hand card is the
+  // exception: it uses the same bottom-anchored Arena animation as desktop so
+  // the player can keep their finger down and scrub the stable fan beneath it.
+  if (isMobile && !handPreview) {
     return (
       <MobilePreviewOverlay
         cardName={cardName}

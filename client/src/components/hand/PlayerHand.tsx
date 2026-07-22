@@ -41,6 +41,7 @@ import {
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
 } from "./handFanPresentation.ts";
+import { useHandScrubPreview } from "./useHandScrubPreview.ts";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -82,6 +83,10 @@ export function PlayerHand() {
   const setMobileHandOpen = useUiStore((s) => s.setMobileHandOpen);
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
+  const {
+    handlers: handScrubHandlers,
+    consumeClick: consumeHandScrubClick,
+  } = useHandScrubPreview(handContainerRef, isMobile);
 
   const [expanded, setExpanded] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
@@ -431,6 +436,9 @@ export function PlayerHand() {
 
   const handleContainerClick = useCallback(
     (e: React.MouseEvent) => {
+      // A completed hold-and-scrub produces a synthetic click after pointerup.
+      // Consume only that click; ordinary short taps still open the drawer.
+      if (consumeHandScrubClick()) return;
       // On mobile the fanned cards are `pointer-events-none` (the drawer is the
       // interaction surface), so every tap in the hand area falls through to this
       // container — or to the inner lift wrapper, which bubbles here. Any such tap
@@ -448,7 +456,7 @@ export function PlayerHand() {
         setExpanded((prev) => !prev);
       }
     },
-    [isMobile, setMobileHandOpen],
+    [consumeHandScrubClick, isMobile, setMobileHandOpen],
   );
 
   const handleDragStart = useCallback(
@@ -514,12 +522,13 @@ export function PlayerHand() {
       ref={handContainerRef}
       className={`relative flex items-end justify-center overflow-visible px-4 py-1 ${
         isCompactHeight ? "min-h-[40px]" : "min-h-[calc(var(--card-h)*0.7)]"
-      }`}
+      } ${isMobile ? "touch-none" : ""}`}
       style={{
         perspective: "800px",
         ...playerHandFanSizingStyle(totalFanCards),
         zIndex: draggingCardId != null || expanded ? 40 : undefined,
       }}
+      {...handScrubHandlers}
       onClick={handleContainerClick}
       onMouseLeave={() => {
         setExpanded(false);
