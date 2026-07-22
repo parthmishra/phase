@@ -200,6 +200,14 @@ describe("WasmAdapter AI-pool subset lifecycle", () => {
     expect(vi.mocked(EngineWorkerClient).mock.calls.length).toBe(workersAfterFailure);
     expect(mockWorkerClient.getAiScoredCandidates).not.toHaveBeenCalled();
     expect(mockWorkerClient.getAiAction).toHaveBeenCalledTimes(2);
+
+    await adapter.resetGameState();
+    await adapter.getAiAction("VeryHard", 0, "Priority");
+
+    expect(vi.mocked(EngineWorkerClient).mock.calls.length).toBeGreaterThan(
+      workersAfterFailure,
+    );
+    expect(mockWorkerClient.getAiScoredCandidates).toHaveBeenCalled();
   });
 
   it("shares one pool initialization between concurrent decisions", async () => {
@@ -313,6 +321,98 @@ describe("WasmAdapter AI-pool subset lifecycle", () => {
     const calls = mockWorkerClient.loadCardDb.mock.calls;
     expect(calls[calls.length - 1][0] as string).toContain("Retry Card");
   });
+
+  it.each([
+    [
+      "bounded",
+      JSON.stringify({
+        kind: "subset",
+        json: '{"Stale Game Card":{}}',
+        count: 1,
+      }),
+    ],
+    ["unbounded", JSON.stringify({ kind: "full" })],
+  ])(
+    "ignores a stale %s preserved-pool reload after reset",
+    async (_staleKind, stalePlan) => {
+      const { WasmAdapter } = await import("../wasm-adapter");
+
+      let resolveStalePlan!: (plan: string) => void;
+      const stalePlanPromise = new Promise<string>((resolve) => {
+        resolveStalePlan = resolve;
+      });
+      let resolveCurrentPlan!: (plan: string) => void;
+      const currentPlanPromise = new Promise<string>((resolve) => {
+        resolveCurrentPlan = resolve;
+      });
+
+      mockWorkerClient.buildAiCardSubset
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            kind: "subset",
+            json: '{"Initial Game Card":{}}',
+            count: 1,
+          }),
+        )
+        .mockReturnValueOnce(stalePlanPromise)
+        .mockReturnValueOnce(currentPlanPromise);
+      mockWorkerClient.getAiAction.mockResolvedValue({ type: "PassPriority" });
+
+      const adapter = new WasmAdapter();
+      await adapter.initialize();
+      await adapter.warmCardDatabase();
+      await adapter.getAiAction("VeryHard", 0, "Priority");
+
+      await adapter.resetGameState();
+      const staleDecision = adapter.getAiAction("VeryHard", 0, "Priority");
+      await vi.waitFor(() => {
+        expect(mockWorkerClient.buildAiCardSubset).toHaveBeenCalledTimes(2);
+      });
+      const concurrentStaleDecision = adapter.getAiAction(
+        "VeryHard",
+        0,
+        "Priority",
+      );
+      await Promise.resolve();
+      expect(mockWorkerClient.buildAiCardSubset).toHaveBeenCalledTimes(2);
+
+      await adapter.resetGameState();
+      const currentDecision = adapter.getAiAction("VeryHard", 0, "Priority");
+      await vi.waitFor(() => {
+        expect(mockWorkerClient.buildAiCardSubset).toHaveBeenCalledTimes(3);
+      });
+
+      resolveStalePlan(stalePlan);
+      resolveCurrentPlan(
+        JSON.stringify({
+          kind: "subset",
+          json: '{"Current Game Card":{}}',
+          count: 1,
+        }),
+      );
+      await Promise.all([
+        staleDecision,
+        concurrentStaleDecision,
+        currentDecision,
+      ]);
+
+      const loadedSubsets = mockWorkerClient.loadCardDb.mock.calls.map(
+        ([text]) => text as string,
+      );
+      expect(loadedSubsets.some((text) => text.includes("Stale Game Card"))).toBe(
+        false,
+      );
+      expect(loadedSubsets[loadedSubsets.length - 1]).toContain("Current Game Card");
+
+      const scoredBeforeFollowUp = mockWorkerClient.getAiScoredCandidates.mock.calls.length;
+      await adapter.getAiAction("VeryHard", 0, "Priority");
+
+      expect(mockWorkerClient.buildAiCardSubset).toHaveBeenCalledTimes(3);
+      expect(mockWorkerClient.getAiScoredCandidates.mock.calls.length).toBeGreaterThan(
+        scoredBeforeFollowUp,
+      );
+    },
+  );
 
   it("drops the pool for an unbounded game (Momir) and restores it next game", async () => {
     const { WasmAdapter } = await import("../wasm-adapter");

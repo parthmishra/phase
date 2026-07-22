@@ -233,7 +233,7 @@ export class WasmAdapter implements EngineAdapter {
         // get the game-scoped subset (built on the main engine), not the full
         // corpus; an unbounded universe (e.g. Momir) disposes the pool instead.
         if (this.engine && this.aiPool && !this.aiPool.isCardDbLoaded) {
-          await this.loadAiPoolGameDb(this.engine, this.aiPool);
+          await this.ensureAiPool();
         }
       } catch (err) {
         console.warn("Failed to load card database:", err);
@@ -445,19 +445,37 @@ export class WasmAdapter implements EngineAdapter {
    * spawning workers (see `ensureAiPool`); this handles the cross-game case
    * where a pool from a bounded game meets an unbounded one. Returns the
    * surviving pool or null. */
-  private async loadAiPoolGameDb(
+  private async reloadAiPoolGameDb(
     engine: EngineWorkerClient,
     aiPool: AiWorkerPool,
+    generation: number,
   ): Promise<AiWorkerPool | null> {
-    const plan = await resolveAiPoolCardDbPlan(this.aiCardDataMode, engine);
-    if (plan.kind === "unbounded") {
-      aiPool.dispose();
-      this.aiPool = null;
-      this.aiPoolUnboundedGame = true;
+    try {
+      const plan = await resolveAiPoolCardDbPlan(this.aiCardDataMode, engine);
+      if (this.aiPoolGeneration !== generation || this.aiPool !== aiPool) {
+        return null;
+      }
+      if (plan.kind === "unbounded") {
+        aiPool.dispose();
+        this.aiPool = null;
+        this.aiPoolUnboundedGame = true;
+        return null;
+      }
+      await applyAiPoolCardDbPlan(plan, aiPool);
+      if (this.aiPoolGeneration !== generation || this.aiPool !== aiPool) {
+        aiPool.invalidateCardDb();
+        return null;
+      }
+      return aiPool;
+    } catch (err) {
+      if (this.aiPoolGeneration === generation && this.aiPool === aiPool) {
+        // Degrade to the single-worker path for this decision instead of
+        // crashing the AI flow. The pool stays invalid so a transient failure
+        // retries on the next decision.
+        console.warn("Failed to load game DB into AI pool:", err);
+      }
       return null;
     }
-    await applyAiPoolCardDbPlan(plan, aiPool);
-    return aiPool;
   }
 
   /** Lazy AI pool init — only created on first VeryHard request. */
@@ -466,11 +484,15 @@ export class WasmAdapter implements EngineAdapter {
     // this game — don't recreate it just to escalate and drop it again on
     // every AI decision.
     if (this.aiPoolUnboundedGame) return Promise.resolve(null);
+    if (this.aiPoolPromise) return this.aiPoolPromise;
     if (this.aiPool) {
       // The pool's subset is game-scoped: after `resetGameState` invalidated it,
       // rebuild this game's subset (the pool instance is preserved across games).
       if (this.cardDbLoaded && this.engine && !this.aiPool.isCardDbLoaded) {
-        return this.loadExistingAiPoolGameDb(this.engine, this.aiPool);
+        const generation = this.aiPoolGeneration;
+        return this.trackAiPoolWork(
+          this.reloadAiPoolGameDb(this.engine, this.aiPool, generation),
+        );
       }
       return Promise.resolve(this.aiPool);
     }
@@ -482,33 +504,20 @@ export class WasmAdapter implements EngineAdapter {
     // path below (getAiAction), which runs the same fixed-budget beam search;
     // the pool only adds cross-seed rollout-variance averaging, not search depth.
     if (isMemoryConstrainedDevice()) return Promise.resolve(null);
-    if (this.aiPoolPromise) return this.aiPoolPromise;
 
     const generation = this.aiPoolGeneration;
-    const pending = this.createAiPool(generation);
+    return this.trackAiPoolWork(this.createAiPool(generation));
+  }
+
+  private trackAiPoolWork(
+    pending: Promise<AiWorkerPool | null>,
+  ): Promise<AiWorkerPool | null> {
     this.aiPoolPromise = pending;
     const clearPending = () => {
       if (this.aiPoolPromise === pending) this.aiPoolPromise = null;
     };
     void pending.then(clearPending, clearPending);
     return pending;
-  }
-
-  private async loadExistingAiPoolGameDb(
-    engine: EngineWorkerClient,
-    aiPool: AiWorkerPool,
-  ): Promise<AiWorkerPool | null> {
-    try {
-      return await this.loadAiPoolGameDb(engine, aiPool);
-    } catch (err) {
-      // Degrade to the single-worker path for this decision instead of
-      // crashing the AI flow (`getAiAction` calls ensureAiPool outside its
-      // try block). `isCardDbLoaded` stays false, so a transient failure
-      // retries on the next decision. A dead engine worker surfaces
-      // properly downstream via the single-worker path's classifier.
-      console.warn("Failed to load game DB into AI pool:", err);
-      return null;
-    }
   }
 
   private async createAiPool(generation: number): Promise<AiWorkerPool | null> {
@@ -673,6 +682,7 @@ export class WasmAdapter implements EngineAdapter {
     // the newer one.
     this.aiPoolGeneration += 1;
     this.aiPoolPromise = null;
+    this.aiPoolFailed = false;
     if (this.aiCardDataMode !== "full") {
       this.aiPool?.invalidateCardDb();
     }
