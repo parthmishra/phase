@@ -36,6 +36,15 @@ type EngineResponse =
 const ENGINE_REQUEST_TIMEOUT_MS = 60_000;
 
 /**
+ * Hard deadline for the initial WASM worker handshake. Unlike gameplay
+ * watchdogs, initialization has no useful late-response path: rejecting lets
+ * WasmAdapter dispose the stalled worker and activate its main-thread fallback.
+ */
+const ENGINE_INITIALIZATION_TIMEOUT_MS = 30_000;
+
+type RequestTimeoutBehavior = "notify" | "reject";
+
+/**
  * Watchdog timeout for AI search round-trips (getAiAction /
  * getAiScoredCandidates / selectActionFromScores). Deliberately much larger
  * than ENGINE_REQUEST_TIMEOUT_MS: AI search legitimately exceeds 60s on
@@ -110,21 +119,32 @@ export class EngineWorkerClient {
   /**
    * Post a typed message to the worker and resolve when it replies.
    *
-   * `timeoutMs` arms a watchdog: if the worker doesn't reply within the
-   * window, the pending entry stays alive and the UI is notified that the
-   * request is slow. This is applied ONLY to gameplay round-trips (see call
-   * sites below) — never to bulk/long setup calls (card-DB load, game init,
-   * batch resolve, restore), where a long runtime is expected. A late worker
-   * reply still resolves the original promise and clears the dispatch mutex.
+   * `timeoutMs` arms a watchdog. The default `notify` behavior keeps a slow
+   * gameplay request alive and informs the UI, allowing a late reply to resolve
+   * normally. The initialization-only `reject` behavior removes and rejects a
+   * stalled request so the adapter can fall back. Bulk setup calls (card-DB
+   * load, game init, batch resolve, restore) deliberately have no timeout.
    */
-  private request<T>(message: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  private request<T>(
+    message: Record<string, unknown>,
+    timeoutMs?: number,
+    timeoutBehavior: RequestTimeoutBehavior = "notify",
+  ): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       const timer =
         timeoutMs !== undefined
           ? setTimeout(() => {
               const entry = this.pending.get(id);
-              if (entry && !entry.slowNotified) {
+              if (!entry) return;
+              if (timeoutBehavior === "reject") {
+                this.pending.delete(id);
+                entry.reject(
+                  new Error(
+                    `Engine worker ${String(message.type)} timed out after ${timeoutMs}ms`,
+                  ),
+                );
+              } else if (!entry.slowNotified) {
                 entry.slowNotified = true;
                 notifyEngineSlow(`${String(message.type)}-timeout`);
               }
@@ -140,7 +160,11 @@ export class EngineWorkerClient {
   }
 
   async initialize(): Promise<void> {
-    await this.request<null>({ type: "init" });
+    await this.request<null>(
+      { type: "init" },
+      ENGINE_INITIALIZATION_TIMEOUT_MS,
+      "reject",
+    );
   }
 
   async loadCardDb(text: string): Promise<number> {

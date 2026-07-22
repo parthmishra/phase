@@ -57,6 +57,19 @@ beforeEach(() => {
 });
 
 describe("EngineWorkerClient initialization", () => {
+  it("resolves normally when the worker initializes before the deadline", async () => {
+    vi.useFakeTimers();
+    const client = new EngineWorkerClient();
+    const promise = client.initialize();
+    const worker = currentWorker();
+    const reqId = worker.posted[0].id as number;
+
+    worker.replyResult(reqId, null);
+
+    await expect(promise).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+
   it("rejects when WASM initialization returns a typed worker error", async () => {
     const client = new EngineWorkerClient();
     const promise = client.initialize();
@@ -75,6 +88,19 @@ describe("EngineWorkerClient initialization", () => {
     currentWorker().emitError("Worker script failed to load");
 
     await expect(promise).rejects.toThrow("Worker script failed to load");
+  });
+
+  it("rejects when the worker never responds to initialization", async () => {
+    vi.useFakeTimers();
+    const client = new EngineWorkerClient();
+    const promise = client.initialize();
+    const rejection = expect(promise).rejects.toThrow(
+      "Engine worker init timed out after 30000ms",
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await rejection;
   });
 });
 
