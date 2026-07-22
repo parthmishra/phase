@@ -5,6 +5,13 @@ import type { EngineAdapter, SubmitResult } from "../types";
 import { AdapterError, AdapterErrorCode } from "../types";
 import { buildGameState } from "../../test/factories/gameStateFactory";
 
+const ensureWasmInit = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../../services/cardData", () => ({
+  ensureWasmInit,
+  ensureCardDatabase: vi.fn().mockResolvedValue(100),
+}));
+
 // Mock EngineWorkerClient to avoid actual Worker creation in tests
 const mockWorkerClient = {
   initialize: vi.fn().mockResolvedValue(undefined),
@@ -77,6 +84,18 @@ describe("WasmAdapter", () => {
       await Promise.all([adapter.initialize(), adapter.initialize()]);
       expect(vi.mocked(EngineWorkerClient)).toHaveBeenCalledOnce();
       expect(mockWorkerClient.initialize).toHaveBeenCalledOnce();
+    });
+
+    it("disposes a worker that fails initialization and falls back to main-thread WASM", async () => {
+      mockWorkerClient.initialize.mockRejectedValueOnce(
+        new Error("WASM initialization failed"),
+      );
+
+      await expect(adapter.initialize()).resolves.toBeUndefined();
+
+      expect(mockWorkerClient.dispose).toHaveBeenCalledOnce();
+      expect(ensureWasmInit).toHaveBeenCalledOnce();
+      expect(adapter.getEngineClient()).toBeNull();
     });
   });
 

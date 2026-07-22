@@ -35,6 +35,16 @@ class MockWorker {
   replyResult(id: number, data: unknown): void {
     this.onmessage?.({ data: { type: "result", id, data } } as MessageEvent);
   }
+
+  /** Simulate a typed failure reply for a previously-posted request id. */
+  replyError(id: number, message: string): void {
+    this.onmessage?.({ data: { type: "error", id, message } } as MessageEvent);
+  }
+
+  /** Simulate failure to load or execute the worker script itself. */
+  emitError(message: string): void {
+    this.onerror?.({ message } as ErrorEvent);
+  }
 }
 
 function currentWorker(): MockWorker {
@@ -44,6 +54,28 @@ function currentWorker(): MockWorker {
 
 beforeEach(() => {
   vi.stubGlobal("Worker", MockWorker);
+});
+
+describe("EngineWorkerClient initialization", () => {
+  it("rejects when WASM initialization returns a typed worker error", async () => {
+    const client = new EngineWorkerClient();
+    const promise = client.initialize();
+    const worker = currentWorker();
+    const reqId = worker.posted[0].id as number;
+
+    worker.replyError(reqId, "WASM initialization failed");
+
+    await expect(promise).rejects.toThrow("WASM initialization failed");
+  });
+
+  it("rejects when the worker script fails during initialization", async () => {
+    const client = new EngineWorkerClient();
+    const promise = client.initialize();
+
+    currentWorker().emitError("Worker script failed to load");
+
+    await expect(promise).rejects.toThrow("Worker script failed to load");
+  });
 });
 
 afterEach(() => {

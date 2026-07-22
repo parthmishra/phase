@@ -171,11 +171,13 @@ export class WasmAdapter implements EngineAdapter {
       try {
         this.engine = new EngineWorkerClient();
         await this.engine.initialize();
-      } catch {
-        // Worker creation failed — fall back to main-thread WASM
+      } catch (error) {
+        // Worker creation or initialization failed — fall back to main-thread WASM
         console.warn(
-          "Web Worker creation failed, falling back to main-thread WASM",
+          "Web Worker initialization failed, falling back to main-thread WASM",
+          error,
         );
+        this.engine?.dispose();
         this.engine = null;
         this.fallback = await createMainThreadFallback();
       }

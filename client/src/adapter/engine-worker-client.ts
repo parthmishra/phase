@@ -21,7 +21,6 @@ import { debugLog } from "../game/debugLog";
 import { notifyEngineSlow } from "../game/engineRecovery";
 
 type EngineResponse =
-  | { type: "ready" }
   | { type: "result"; id: number; data: unknown }
   | { type: "error"; id: number; message: string; bracketViolation?: true };
 
@@ -61,25 +60,15 @@ export class EngineWorkerClient {
       slowNotified?: boolean;
     }
   >();
-  private readyPromise: Promise<void>;
-  private readyResolve!: () => void;
-
   constructor() {
     this.worker = new Worker(
       new URL("./engine-worker.ts", import.meta.url),
       { type: "module" },
     );
 
-    this.readyPromise = new Promise<void>((resolve) => {
-      this.readyResolve = resolve;
-    });
-
     this.worker.onmessage = (e: MessageEvent<EngineResponse>) => {
       const msg = e.data;
       switch (msg.type) {
-        case "ready":
-          this.readyResolve();
-          break;
         case "result": {
           const entry = this.pending.get(msg.id);
           if (entry) {
@@ -151,8 +140,7 @@ export class EngineWorkerClient {
   }
 
   async initialize(): Promise<void> {
-    this.worker.postMessage({ type: "init" });
-    await this.readyPromise;
+    await this.request<null>({ type: "init" });
   }
 
   async loadCardDb(text: string): Promise<number> {
