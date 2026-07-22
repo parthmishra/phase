@@ -18,9 +18,13 @@ import { previewAutomaticManaPayment } from "../../game/manaPaymentPreview.ts";
 import type { GameObject, ManaCost, ObjectId } from "../../adapter/types.ts";
 import {
   collectObjectActions,
+  resolveDirectPlayOrCastAction,
   resolveSingleActionDispatch,
 } from "../../viewmodel/cardActionChoice.ts";
-import { DRAG_PLAY_THRESHOLD } from "../../hooks/useDragToCast.ts";
+import {
+  DRAG_PLAY_THRESHOLD,
+  HAND_DRAG_PLAY_THRESHOLD,
+} from "../../hooks/useDragToCast.ts";
 import {
   computeHandInsertionSlot,
   computeHandInsertionMarker,
@@ -42,6 +46,7 @@ import {
   playerHandFanSizingStyle,
 } from "./handFanPresentation.ts";
 import { useHandScrubPreview } from "./useHandScrubPreview.ts";
+import { MobileHeldHandCard } from "./MobileHeldHandCard.tsx";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -77,17 +82,13 @@ export function PlayerHand() {
   // otherwise rebuild the drag-end callback on every update.
   const hand = player?.hand;
   const objects = useGameStore((s) => s.gameState?.objects);
+  const mobileHandGesture = useUiStore((s) => s.mobileHandGesture);
   // Use dispatchAction (animation pipeline) instead of store dispatch
   const inspectObject = useUiStore((s) => s.inspectObject);
   const setPendingAbilityChoice = useUiStore((s) => s.setPendingAbilityChoice);
   const setMobileHandOpen = useUiStore((s) => s.setMobileHandOpen);
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
-  const {
-    handlers: handScrubHandlers,
-    consumeClick: consumeHandScrubClick,
-  } = useHandScrubPreview(handContainerRef, isMobile);
-
   const [expanded, setExpanded] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<number | null>(null);
@@ -175,6 +176,28 @@ export function PlayerHand() {
     },
     [hasPriority, objects, legalActionsByObject, inspectObject, setPendingAbilityChoice],
   );
+
+  const isMobileHandCardPlayable = useCallback(
+    (objectId: number) => hasPriority && playableObjectIds.has(objectId),
+    [hasPriority, playableObjectIds],
+  );
+  const canReleaseMobileHandCardToCast = useCallback(
+    (objectId: number) =>
+      hasPriority
+      && resolveDirectPlayOrCastAction(
+        legalActionsByObject,
+        objects?.[objectId],
+      ) != null,
+    [hasPriority, legalActionsByObject, objects],
+  );
+  const {
+    handlers: handScrubHandlers,
+    consumeClick: consumeHandScrubClick,
+  } = useHandScrubPreview(handContainerRef, isMobile, {
+    isPlayable: isMobileHandCardPlayable,
+    canReleaseToCast: canReleaseMobileHandCardToCast,
+    onReleaseToCast: playCard,
+  });
 
   const previewManaPayment = useCallback((objectId: number) => {
     const requestId = ++manaPaymentPreviewRequestId.current;
@@ -319,7 +342,7 @@ export function PlayerHand() {
         !organizeActive &&
         marker != null &&
         insideHand &&
-        info.offset.y >= DRAG_PLAY_THRESHOLD &&
+        info.offset.y >= HAND_DRAG_PLAY_THRESHOLD &&
         slot !== fromIdx;
       arrowOpacity.set(show ? 1 : 0);
 
@@ -338,12 +361,9 @@ export function PlayerHand() {
     [isMobile, pendingObjectId, organizeActive, arrowXRaw, arrowYRaw, arrowRotateRaw, arrowOpacity, insertionSlotMV, draggingIndexMV, cardHeightMV, exileCards.length, graveyardCards.length, companionCount],
   );
 
-  // Drag-to-play applies the same gesture rule as `useDragToCast` (the
-  // Commander-zone single-cast path): release above DRAG_PLAY_THRESHOLD
-  // while holding priority and outside the source zone. A React hook cannot
-  // be called once per hand card, so we inline the rule here but share the
-  // threshold constant with `useDragToCast` — there is exactly one
-  // definition of "how far up counts as a play."
+  // Hand drag-to-play deliberately requires more vertical commitment than
+  // the generic Commander/companion gesture. This preserves a broad lateral
+  // reorder band before a release can count as casting the card.
   const handleDragEnd = useCallback(
     (objectId: number, _event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
       arrowOpacity.set(0);
@@ -398,7 +418,7 @@ export function PlayerHand() {
 
       // Play branch (unchanged from the existing implementation).
       if (!hasPriority) return false;
-      if (info.offset.y >= DRAG_PLAY_THRESHOLD) return false;
+      if (info.offset.y >= HAND_DRAG_PLAY_THRESHOLD) return false;
       playCard(objectId);
       return true;
     },
@@ -518,7 +538,8 @@ export function PlayerHand() {
   const fan = handFanGeometry(totalFanCards, "--hand-card-w", verticalMetrics.arcScale);
 
   return (
-    <div
+    <>
+      <div
       ref={handContainerRef}
       className={`relative flex items-end justify-center overflow-visible px-4 py-1 ${
         isCompactHeight ? "min-h-[40px]" : "min-h-[calc(var(--card-h)*0.7)]"
@@ -624,6 +645,8 @@ export function PlayerHand() {
               key={obj.id}
               objectId={obj.id}
               cardName={obj.name}
+              oracleId={obj.printed_ref?.oracle_id}
+              faceName={obj.printed_ref?.face_name}
               manaCost={obj.mana_cost}
               unimplementedMechanics={obj.unimplemented_mechanics}
               index={i}
@@ -753,13 +776,24 @@ export function PlayerHand() {
           </motion.div>
         </motion.div>
       )}
-    </div>
+      </div>
+      <MobileHeldHandCard
+        gesture={mobileHandGesture}
+        object={
+          mobileHandGesture && objects[mobileHandGesture.objectId]
+            ? objects[mobileHandGesture.objectId]
+            : null
+        }
+      />
+    </>
   );
 }
 
 interface HandCardProps {
   objectId: number;
   cardName: string;
+  oracleId?: string;
+  faceName?: string;
   manaCost: ManaCost;
   unimplementedMechanics?: string[];
   index: number;
@@ -790,6 +824,8 @@ interface HandCardProps {
 const HandCard = memo(function HandCard({
   objectId,
   cardName,
+  oracleId,
+  faceName,
   manaCost,
   unimplementedMechanics,
   index,
@@ -818,6 +854,11 @@ const HandCard = memo(function HandCard({
 }: HandCardProps) {
   const inspectObject = useUiStore((s) => s.inspectObject);
   const setDragging = useUiStore((s) => s.setDragging);
+  const isMobileDragged = useUiStore(
+    (s) =>
+      s.mobileHandGesture?.phase === "drag"
+      && s.mobileHandGesture.objectId === objectId,
+  );
 
   // Slide-apart displacement: derive this card's signed x offset from the shared
   // insertion signal. useTransform updates imperatively when the MotionValues
@@ -928,11 +969,15 @@ const HandCard = memo(function HandCard({
       }}
       onMouseEnter={() => onMouseEnter(objectId)}
       onMouseLeave={onMouseLeave}
+      data-hand-held-source={isMobileDragged || undefined}
+      aria-hidden={isMobileDragged || undefined}
       className={`relative cursor-pointer leading-[0] select-none ${
+        isMobileDragged ? "w-0 overflow-hidden opacity-0" : ""
+      } ${
         isMobile ? "pointer-events-none" : ""
       }`}
       style={{
-        marginLeft,
+        marginLeft: isMobileDragged ? 0 : marginLeft,
         // Selected card sits above every non-selected hand card. Offset by
         // handSize (not a fixed 20) so it still wins in a Commander-sized hand
         // whose plain indices can exceed 20.
@@ -947,6 +992,8 @@ const HandCard = memo(function HandCard({
         <CardImage
           cardName={cardName}
           size="normal"
+          oracleId={oracleId}
+          faceName={faceName}
           unimplementedMechanics={unimplementedMechanics}
           className="!w-[var(--hand-card-w)] !h-[var(--hand-card-h)]"
         />
@@ -1002,8 +1049,8 @@ interface ZoneFanCardProps {
 // HandCard's resting animation (arc + tilt + hover lift) for visual continuity
 // but is deliberately NOT part of the reorder system: no `data-card-hover`, no
 // insertion-slot wiring, no displacement spring. Its sole drag gesture is
-// flick-up-to-cast (CR-agnostic UI gating, same DRAG_PLAY_THRESHOLD as the hand
-// and the commander zone). Per-source drag policy lives here — a zone card can
+// flick-up-to-cast (CR-agnostic UI gating, same generic DRAG_PLAY_THRESHOLD as
+// the commander zone). Per-source drag policy lives here — a zone card can
 // be flung up to cast but can never be dropped into the middle of the hand.
 const ZoneFanCard = memo(function ZoneFanCard({
   objectId,

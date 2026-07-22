@@ -1329,20 +1329,23 @@ function GamePageContent({
           gridTemplateColumns: "1fr",
         }}
       >
-        {/* Row 1: Opponent hand + zone piles (flow layout — piles take real space) */}
+        {/* Row 1: Opponent hand + zone piles. Equal flexible side tracks keep
+            the focused hand centered on the viewport while the piles remain
+            right-aligned; split layouts render their hands inside seat panes. */}
         <div
-          className={`relative z-20 min-w-0 flex w-full ${splitBoardActive ? "overflow-hidden" : "overflow-visible"}`}
+          className={`relative z-20 min-w-0 w-full ${renderFocusedOpponentTopRow ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]" : "flex"} ${splitBoardActive ? "overflow-hidden" : "overflow-visible"}`}
           data-flex-zone="opp-row"
         >
           {renderFocusedOpponentTopRow && (
             <>
-              <div className="min-w-0 flex-1">
+              <div aria-hidden />
+              <div className="min-w-0">
                 <OpponentHand showCards={showAiHand} />
               </div>
               <DraggableWidget
                 target={{ kind: "widget", key: "opponentPiles" }}
                 flexZone="opponentPiles"
-                className="flex shrink-0 items-start gap-1.5 px-1 py-1"
+                className="flex items-start justify-self-end gap-1.5 px-1 py-1"
                 style={playerZoneRailStyle}
               >
                 {activeOpponentId != null ? (
