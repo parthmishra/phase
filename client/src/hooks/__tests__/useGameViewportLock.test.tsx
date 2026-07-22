@@ -34,4 +34,19 @@ describe("useGameViewportLock", () => {
     expect(document.documentElement).toHaveClass(LOCK_CLASS);
     expect(document.body).toHaveClass(LOCK_CLASS);
   });
+
+  it("keeps the document locked until the last overlapping hook unmounts", () => {
+    const first = renderHook(() => useGameViewportLock());
+    const second = renderHook(() => useGameViewportLock());
+
+    first.unmount();
+
+    expect(document.documentElement).toHaveClass(LOCK_CLASS);
+    expect(document.body).toHaveClass(LOCK_CLASS);
+
+    second.unmount();
+
+    expect(document.documentElement).not.toHaveClass(LOCK_CLASS);
+    expect(document.body).not.toHaveClass(LOCK_CLASS);
+  });
 });

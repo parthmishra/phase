@@ -47,6 +47,7 @@ function gameStateWithObject(object: GameObject) {
 
 afterEach(() => {
   cleanup();
+  document.querySelectorAll("[data-hand-card]").forEach((node) => node.remove());
   vi.clearAllMocks();
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
   Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });

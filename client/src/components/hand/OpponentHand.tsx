@@ -12,6 +12,7 @@ import { usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
 import type { ObjectId, PlayerId } from "../../adapter/types.ts";
 import { getOpponentIds, isPrivatelyLookedAtByViewer, resolveFocusedOpponent } from "../../viewmodel/gameStateView.ts";
 import {
+  OPPONENT_CARD_SCALE,
   OPPONENT_HAND_VERTICAL_SCALE,
   handFanGeometry,
   handFanVerticalMetrics,
@@ -67,8 +68,8 @@ export function OpponentHand({ playerId, showCards = false, layout = "default" }
       style={
         {
           perspective: "800px",
-          "--opponent-hand-card-w": "calc(var(--card-w) * 0.78)",
-          "--opponent-hand-card-h": "calc(var(--card-h) * 0.78)",
+          "--opponent-hand-card-w": `calc(var(--card-w) * ${OPPONENT_CARD_SCALE})`,
+          "--opponent-hand-card-h": `calc(var(--card-h) * ${OPPONENT_CARD_SCALE})`,
         } as React.CSSProperties
       }
     >

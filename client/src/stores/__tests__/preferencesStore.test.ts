@@ -152,7 +152,9 @@ describe("preferencesStore", () => {
   });
 
   it("shows the card preview footer by default and persists changes", () => {
-    expect(usePreferencesStore.getState().showCardPreviewFooter).toBe(true);
+    // Read the store's actual initialization snapshot so the shared beforeEach
+    // reset cannot mask a regression in buildDefaultPreferences().
+    expect(usePreferencesStore.getInitialState().showCardPreviewFooter).toBe(true);
 
     act(() => {
       usePreferencesStore.getState().setShowCardPreviewFooter(false);
