@@ -480,6 +480,7 @@ export class WasmAdapter implements EngineAdapter {
     // path below (getAiAction), which runs the same fixed-budget beam search;
     // the pool only adds cross-seed rollout-variance averaging, not search depth.
     if (isMemoryConstrainedDevice()) return null;
+    let candidatePool: AiWorkerPool | null = null;
     try {
       // Resolve this game's card-data plan BEFORE paying to spawn workers:
       // an unbounded-universe game (e.g. Momir) never creates a pool at all.
@@ -493,13 +494,18 @@ export class WasmAdapter implements EngineAdapter {
       }
       const cores = navigator.hardwareConcurrency ?? 0;
       const count = Math.max(2, Math.min(cores - 1, 4));
-      this.aiPool = new AiWorkerPool(count);
-      await this.aiPool.initialize();
+      candidatePool = new AiWorkerPool(count);
+      await candidatePool.initialize();
       if (plan) {
-        await applyAiPoolCardDbPlan(plan, this.aiPool);
+        await applyAiPoolCardDbPlan(plan, candidatePool);
       }
-      return this.aiPool;
+      // Publish only a fully initialized, game-data-ready pool. A partially
+      // initialized pool must never become observable to later AI decisions.
+      this.aiPool = candidatePool;
+      return candidatePool;
     } catch {
+      candidatePool?.dispose();
+      this.aiPool = null;
       this.aiPoolFailed = true;
       return null;
     }
