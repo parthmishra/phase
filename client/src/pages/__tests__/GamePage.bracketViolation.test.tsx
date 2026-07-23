@@ -28,8 +28,9 @@ let capturedFormatConfig: FormatConfig | undefined;
 let capturedOnWsEvent: ((event: WsAdapterEvent) => void) | undefined;
 let capturedOnP2PEvent: ((event: P2PAdapterEvent) => void) | undefined;
 
-const { mockClearPromptOverlayState } = vi.hoisted(() => ({
+const { mockClearPromptOverlayState, mockSetGameState } = vi.hoisted(() => ({
   mockClearPromptOverlayState: vi.fn(),
+  mockSetGameState: vi.fn(),
 }));
 
 const { mockMultiplayerState: _mockMultiplayerState, mockUseMultiplayerStore } = vi.hoisted(() => {
@@ -112,20 +113,23 @@ vi.mock("../../game/dispatch.ts", () => ({
 }));
 
 vi.mock("../../stores/gameStore", () => ({
-  useGameStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
-    selector({
-      gameState: null,
-      waitingFor: null,
-      legalActions: [],
-      autoPassRecommended: false,
-      spellCosts: {},
-      legalActionsByObject: {},
-      events: [],
-      eventHistory: [],
-      logHistory: [],
-      adapter: null,
-      lobbyProgress: null,
-    }),
+  useGameStore: Object.assign(
+    vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
+      selector({
+        gameState: null,
+        waitingFor: null,
+        legalActions: [],
+        autoPassRecommended: false,
+        spellCosts: {},
+        legalActionsByObject: {},
+        events: [],
+        eventHistory: [],
+        logHistory: [],
+        adapter: null,
+        lobbyProgress: null,
+      }),
+    ),
+    { setState: mockSetGameState },
   ),
   clearGame: vi.fn(),
   loadActiveGame: vi.fn(() => null),
@@ -261,7 +265,7 @@ afterEach(() => {
 
 describe("GamePage — cEDH bracket-violation blocking modal", () => {
   it("clears prompt overlays before websocket and P2P game-over displays", () => {
-    renderGamePage("/game/test-game-123?mode=online");
+    renderGamePage("/game/test-game-123?mode=host");
 
     act(() => {
       capturedOnWsEvent?.({ type: "gameOver", winner: 0, reason: "conceded" });
@@ -275,6 +279,12 @@ describe("GamePage — cEDH bracket-violation blocking modal", () => {
     });
 
     expect(mockClearPromptOverlayState).toHaveBeenCalledTimes(2);
+    expect(mockSetGameState).toHaveBeenNthCalledWith(1, {
+      waitingFor: { type: "GameOver", data: { winner: 0 } },
+    });
+    expect(mockSetGameState).toHaveBeenNthCalledWith(2, {
+      waitingFor: { type: "GameOver", data: { winner: 0 } },
+    });
   });
 
   it("renders the connection-lost banner when a native engine error arrives before close", () => {
