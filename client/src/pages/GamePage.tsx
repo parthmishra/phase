@@ -411,6 +411,7 @@ export function GamePage() {
         if (hasConcededRef.current) break;
         // Server-initiated game end (concede, disconnect timeout, etc.)
         // Map the server's authoritative winner into the store so GameOverScreen renders.
+        clearPromptOverlayState();
         if (gameId) clearGame(gameId);
         useGameStore.setState({
           waitingFor: { type: "GameOver", data: { winner: event.winner } },
@@ -618,6 +619,7 @@ export function GamePage() {
         useMultiplayerStore.setState({ playerSlots: event.slots });
         break;
       case "gameOver":
+        clearPromptOverlayState();
         if (gameId) clearGame(gameId);
         useGameStore.setState({
           waitingFor: { type: "GameOver", data: { winner: event.winner } },
