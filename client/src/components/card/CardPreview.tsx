@@ -28,7 +28,14 @@ import { ReportCardButton, type CardReportContext } from "./ReportCardButton.tsx
 import { GameplayTooltip } from "../ui/GameplayTooltip.tsx";
 import { LoyaltyBadge } from "../ui/LoyaltyBadge.tsx";
 import { CounterTooltip } from "../ui/CounterTooltip.tsx";
-import { computePTDisplay, formatCounterType, formatTypeLine, toRoman } from "../../viewmodel/cardProps.ts";
+import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import {
+  computePTDisplay,
+  formatCounterType,
+  formatTypeLine,
+  publicName,
+  toRoman,
+} from "../../viewmodel/cardProps.ts";
 import {
   getKeywordDisplayText,
   getKeywordName,
@@ -1069,12 +1076,17 @@ function CardImagePreview({
     showCastManaCost && obj ? spellCostDisplay(effectiveCost, obj.mana_cost) : null;
   const displayCost = showOtherFace ? otherFaceCost : (castCostDisplay?.displayCost ?? null);
   const displayCostReduced = castCostDisplay?.isReduced ?? false;
+  const showLiveArenaFace =
+    obj != null
+    && !showOtherFace
+    && !isRotated
+    && cardName === publicName(obj);
 
   // Only a genuinely in-flight lookup pulses. A finished lookup with no art
   // (issue #6156) falls through to the named placeholder below — previously it
   // was collapsed in here, which left this component's own placeholder dead
   // code for artless tokens and pulsed forever in the hover preview.
-  if (isLoading) {
+  if (isLoading && !showLiveArenaFace) {
     return (
       <div
         className={`${frameClass} ${isRotated ? "" : "aspect-[5/7]"} rounded-[4%] border border-gray-600 bg-gray-700 shadow-2xl animate-pulse`}
@@ -1084,8 +1096,17 @@ function CardImagePreview({
 
   return (
     <div className={`${containerClass} border border-gray-600 overflow-hidden shadow-2xl ${renderInfoPanel ? "rounded-t-[4%] rounded-b-lg bg-gray-900" : "rounded-[4%]"}`}>
-      <div className={`${frameClass} relative rounded-[4%] overflow-hidden`}>
-        {imgError || !src ? (
+      <div className={`${frameClass} ${showLiveArenaFace ? "aspect-[5/7]" : ""} relative rounded-[4%] overflow-hidden`}>
+        {showLiveArenaFace ? (
+          <ArenaCardFace
+            objectId={obj.id}
+            displayCost={displayCost ?? obj.mana_cost}
+            isCostReduced={displayCostReduced}
+            mode="inspection"
+            className="!h-full !w-full"
+            style={{ height: "100%", width: "100%" }}
+          />
+        ) : imgError || !src ? (
           <div
             // `frameClass` is width-only when upright — the <img> normally
             // supplies the height, so without an aspect ratio this placeholder
@@ -1107,7 +1128,7 @@ function CardImagePreview({
             onError={() => setImgError(true)}
           />
         )}
-        {displayCost && (
+        {displayCost && !showLiveArenaFace && (
           // @container overlay sized to the frame so the pips scale with the
           // preview's own width, which varies from a 300px hand hover to a
           // 472px docked preview — a fixed px size can only be right at one end.

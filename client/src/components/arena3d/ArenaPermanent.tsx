@@ -25,6 +25,8 @@ export function ArenaPermanent({
   const texture = useArenaCardTexture(objectId, pileCount);
   const interaction = useArenaPermanentInteraction(objectId);
   const groupRef = useRef<THREE.Group>(null);
+  const arrivalRingRef = useRef<THREE.Mesh>(null);
+  const arrivalAgeRef = useRef(0);
   const initialPlacementRef = useRef({
     attackDirection,
     faceAngle,
@@ -64,6 +66,20 @@ export function ArenaPermanent({
     const group = groupRef.current;
     if (!group) return;
 
+    const arrivalDuration = 0.52;
+    arrivalAgeRef.current = Math.min(
+      arrivalDuration,
+      arrivalAgeRef.current + delta,
+    );
+    const arrivalProgress = arrivalAgeRef.current / arrivalDuration;
+    const arrivalRing = arrivalRingRef.current;
+    if (arrivalRing) {
+      const ringScale = THREE.MathUtils.lerp(0.68, 1.46, arrivalProgress);
+      arrivalRing.scale.setScalar(ringScale);
+      const ringMaterial = arrivalRing.material as THREE.MeshBasicMaterial;
+      ringMaterial.opacity = 0.46 * (1 - arrivalProgress) ** 2;
+    }
+
     const response = 1 - Math.exp(-delta * 14);
     const targetX = position[0];
     const targetZ =
@@ -93,7 +109,7 @@ export function ArenaPermanent({
       || Math.abs(group.position.z - targetZ) > 0.001
       || Math.abs(angleDelta(group.rotation.y, targetRotation)) > 0.001
       || Math.abs(group.scale.x - targetScale) > 0.001;
-    if (unsettled) invalidate();
+    if (unsettled || arrivalProgress < 1) invalidate();
   });
 
   if (!object) return null;
@@ -122,6 +138,22 @@ export function ArenaPermanent({
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
     >
+      <mesh
+        ref={arrivalRingRef}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.01, 0]}
+      >
+        <ringGeometry args={[0.62, 0.72, 72]} />
+        <meshBasicMaterial
+          color="#f1cf83"
+          transparent
+          opacity={0.46}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+
       {glow && (
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}

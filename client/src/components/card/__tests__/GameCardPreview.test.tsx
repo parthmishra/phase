@@ -14,9 +14,8 @@ import { buildGameState, gameStateFactory } from "../../../test/factories/gameSt
 import { PlayerHand } from "../../hand/PlayerHand.tsx";
 import { GameCardPreview } from "../GameCardPreview.tsx";
 
-// CardPreview renders <img alt={cardName} …>; mocking the image hook lets us
-// assert the forwarded name without loading Scryfall assets. Mirrors the mocks
-// in CardPreview.test.tsx.
+// Static alternate faces still render an image, while the active in-game face
+// is the live Arena composition. Mocking the image hook keeps both paths local.
 vi.mock("../../../hooks/useCardImage.ts", () => ({
   useCardImage: () => ({
     src: "card.png",
@@ -78,7 +77,28 @@ describe("GameCardPreview", () => {
 
     render(<GameCardPreview />);
 
-    expect(screen.getAllByAltText("Pithing Needle").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("article", { name: "Pithing Needle" }),
+    ).toHaveAttribute("data-arena-live-card-mode", "inspection");
+  });
+
+  it("shows the engine-current combat stats on the live inspection face", () => {
+    inspect(
+      battlefieldObject({
+        card_types: {
+          supertypes: [],
+          core_types: ["Creature"],
+          subtypes: ["Squirrel"],
+        },
+        power: 5,
+        toughness: 4,
+      }),
+    );
+
+    render(<GameCardPreview />);
+
+    const liveCard = screen.getByRole("article", { name: "Pithing Needle" });
+    expect(within(liveCard).getByText("5/4")).toBeInTheDocument();
   });
 
   it("anchors the preview to the hand card hovered through PlayerHand", async () => {
@@ -140,7 +160,9 @@ describe("GameCardPreview", () => {
       const preview = container.querySelector<HTMLElement>("[data-card-preview]");
       expect(preview).not.toBeNull();
       expect(preview).toHaveStyle({ bottom: "0px" });
-      expect(within(preview!).getByAltText("Hovered Card")).toBeInTheDocument();
+      expect(
+        within(preview!).getByRole("article", { name: "Hovered Card" }),
+      ).toHaveAttribute("data-arena-live-card-mode", "inspection");
     });
   });
 
@@ -208,7 +230,9 @@ describe("GameCardPreview", () => {
     const { container } = render(<GameCardPreview />);
 
     expect(container.firstChild).toBeNull();
-    expect(screen.queryByAltText("Pithing Needle")).toBeNull();
+    expect(
+      screen.queryByRole("article", { name: "Pithing Needle" }),
+    ).toBeNull();
   });
 
   it("suppresses the preview in shift mode when Shift is not held", () => {
@@ -224,7 +248,9 @@ describe("GameCardPreview", () => {
     cleanup();
     useUiStore.setState({ shiftHeld: true });
     render(<GameCardPreview />);
-    expect(screen.getAllByAltText("Pithing Needle").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("article", { name: "Pithing Needle" }),
+    ).toHaveAttribute("data-arena-live-card-mode", "inspection");
   });
 
   it("shows the back-face name when inspecting face index 1", () => {

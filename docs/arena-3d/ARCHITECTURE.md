@@ -64,6 +64,20 @@ events, stack projection anchors, and a full semantic rules-text document are
 the next milestones. Portrait is not a scaled-down desktop camera; it will
 receive a separate composition after desktop interaction density is proven.
 
+## Second vertical slice
+
+The in-game desktop inspection surface now uses `ArenaCardFace` for the
+engine-current active face. This preserves the existing preview's cursor
+tracking, hand-origin animation, Shift/side preferences, Alt parse view,
+attribution footer, and reporting controls while replacing the printing image
+with readable live characteristics. Alternate-face inspection remains on the
+printing renderer until the engine exposes a renderer-neutral projection for
+the inactive face.
+
+New battlefield permanents also arrive with a restrained lift, scale settle,
+and one-shot brass resolve ring. The effect is deliberately attached to the
+object mount rather than guessed from card text or zone names.
+
 ## Visual language
 
 - Deep green-black stone/felt surface: quiet enough for multicolor art.
@@ -98,9 +112,6 @@ What currently earns its place:
 
 What should be rejected or changed in the next slice:
 
-- A static printing image still takes over the large hover inspection. That
-  breaks the live-card illusion precisely where a player expects authoritative
-  detail.
 - Permanents resolve directly into a lane; they need projected zone-to-table
   travel and impact timing before spell resolution has Master Duel-like weight.
 - The focused-opponent layout is usable for 1v1 but is not a four-player
@@ -137,7 +148,6 @@ What should be rejected or changed in the next slice:
   characteristics and an attribution signal. Arbitrary phrase-level changes
   require a future engine-authored structured rules-text projection.
 - Zone piles and the stack remain existing DOM surfaces.
-- The existing large hover preview still uses a printing image. The dynamic
-  face should replace that inspection surface next so modified text and
-  characteristics remain visible at reading size, not only in the hand and
-  battlefield badges.
+- Mobile and inactive-face inspection still use printing images. They should
+  adopt the live face once their renderer-neutral face projections are
+  available without reconstructing characteristics in React.
