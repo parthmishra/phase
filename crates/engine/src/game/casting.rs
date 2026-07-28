@@ -14230,6 +14230,39 @@ pub(super) enum ManaCostPayment<T> {
     },
 }
 
+/// CR 107.4f + CR 118.3b + CR 119.4 + CR 616.1: Pay the selected life
+/// components in order and return the suffix that remains after either kind of
+/// replacement pause. The caller owns the surrounding mana-payment root.
+fn pay_life_components(
+    state: &mut GameState,
+    player: PlayerId,
+    amounts: &[u32],
+    events: &mut Vec<GameEvent>,
+    pay_life: fn(
+        &mut GameState,
+        PlayerId,
+        u32,
+        &mut Vec<GameEvent>,
+    ) -> super::life_costs::PayLifeCostResult,
+) -> Result<Option<Vec<u32>>, EngineError> {
+    for (index, amount) in amounts.iter().copied().enumerate() {
+        match pay_life(state, player, amount, events) {
+            super::life_costs::PayLifeCostResult::Paid { .. } => {}
+            super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. }
+            | super::life_costs::PayLifeCostResult::DeferredReplacementChoice { .. } => {
+                return Ok(Some(amounts[index + 1..].to_vec()));
+            }
+            super::life_costs::PayLifeCostResult::InsufficientLife
+            | super::life_costs::PayLifeCostResult::Prohibited => {
+                return Err(EngineError::ActionNotAllowed(
+                    "Cannot pay Phyrexian life cost".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// CR 107.4f + CR 601.2f-h + CR 605.3b + CR 616.1: A submitted Phyrexian
 /// payment can be interrupted by a costed auto-tapped mana source. Preserve
 /// the finalization root rather than deriving a generic priority resume.
@@ -14397,29 +14430,17 @@ pub(super) fn pay_mana_cost_from_pool_with_choices(
         state.layers_dirty.mark_full();
     }
 
-    let mut remaining_life_payments = None;
-    for (index, payment) in life_payments.iter().enumerate() {
-        let amount = u32::try_from(payment.amount).unwrap_or(0);
-        match super::life_costs::pay_life_as_cast_or_activation_cost(state, player, amount, events)
-        {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
-            super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
-                remaining_life_payments = Some(
-                    life_payments[index + 1..]
-                        .iter()
-                        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
-                        .collect(),
-                );
-                break;
-            }
-            super::life_costs::PayLifeCostResult::InsufficientLife
-            | super::life_costs::PayLifeCostResult::Prohibited => {
-                return Err(EngineError::ActionNotAllowed(
-                    "Cannot pay Phyrexian life cost".to_string(),
-                ));
-            }
-        }
-    }
+    let life_amounts = life_payments
+        .iter()
+        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
+        .collect::<Vec<_>>();
+    let remaining_life_payments = pay_life_components(
+        state,
+        player,
+        &life_amounts,
+        events,
+        super::life_costs::pay_life_as_cast_or_activation_cost,
+    )?;
 
     let spent_convoke_sources = spent_units
         .iter()
@@ -14554,7 +14575,7 @@ pub(super) fn pay_ability_mana_cost(
     ability_index: Option<usize>,
     cost: &crate::types::mana::ManaCost,
     events: &mut Vec<GameEvent>,
-) -> Result<(), EngineError> {
+) -> Result<ManaCostPayment<()>, EngineError> {
     pay_ability_mana_cost_excluding(
         state,
         player,
@@ -14581,8 +14602,8 @@ pub(super) fn pay_ability_mana_cost_excluding(
     // demand is threaded so the sub-cost's generic pips are funded from
     // non-demanded mana. `None` for ordinary top-level ability activations.
     sub_cost_demand: Option<&mana_payment::ColorDemand>,
-) -> Result<(), EngineError> {
-    match pay_ability_mana_cost_excluding_with_parent(
+) -> Result<ManaCostPayment<()>, EngineError> {
+    pay_ability_mana_cost_excluding_with_parent(
         state,
         player,
         source_id,
@@ -14592,12 +14613,7 @@ pub(super) fn pay_ability_mana_cost_excluding(
         excluded_sources,
         sub_cost_demand,
         None,
-    )? {
-        ManaCostPayment::Paid(()) => Ok(()),
-        ManaCostPayment::Paused { .. } => Err(EngineError::InvalidAction(
-            "Mana payment is awaiting a replacement continuation".to_string(),
-        )),
-    }
+    )
 }
 
 /// CR 605.3b + CR 605.3c: The nested mana-source path carries the exact
@@ -14951,28 +14967,17 @@ fn pay_non_cast_mana_cost(
         state.layers_dirty.mark_full();
     }
 
-    let mut remaining_life_payments = None;
-    for (index, payment) in life_payments.iter().enumerate() {
-        let amount = u32::try_from(payment.amount).unwrap_or(0);
-        match super::life_costs::pay_life_as_cost(state, player, amount, events) {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
-            super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
-                remaining_life_payments = Some(
-                    life_payments[index + 1..]
-                        .iter()
-                        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
-                        .collect(),
-                );
-                break;
-            }
-            super::life_costs::PayLifeCostResult::InsufficientLife
-            | super::life_costs::PayLifeCostResult::Prohibited => {
-                return Err(EngineError::ActionNotAllowed(
-                    "Cannot pay Phyrexian life cost".to_string(),
-                ));
-            }
-        }
-    }
+    let life_amounts = life_payments
+        .iter()
+        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
+        .collect::<Vec<_>>();
+    let remaining_life_payments = pay_life_components(
+        state,
+        player,
+        &life_amounts,
+        events,
+        super::life_costs::pay_life_as_cost,
+    )?;
 
     Ok(match remaining_life_payments {
         Some(remaining_life_payments) => ManaCostPayment::Paused {
@@ -15132,29 +15137,17 @@ fn auto_tap_and_pay_cost_excluding(
     // with life routes through the single-authority life-cost helper so the
     // deduction IS a life-loss event (replacement pipeline + CantLoseLife
     // short-circuit apply consistently).
-    let mut remaining_life_payments = None;
-    for (index, payment) in life_payments.iter().enumerate() {
-        let amount = u32::try_from(payment.amount).unwrap_or(0);
-        match super::life_costs::pay_life_as_cast_or_activation_cost(state, player, amount, events)
-        {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
-            super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
-                remaining_life_payments = Some(
-                    life_payments[index + 1..]
-                        .iter()
-                        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
-                        .collect(),
-                );
-                break;
-            }
-            super::life_costs::PayLifeCostResult::InsufficientLife
-            | super::life_costs::PayLifeCostResult::Prohibited => {
-                return Err(EngineError::ActionNotAllowed(
-                    "Cannot pay Phyrexian life cost".to_string(),
-                ));
-            }
-        }
-    }
+    let life_amounts = life_payments
+        .iter()
+        .map(|payment| u32::try_from(payment.amount).unwrap_or(0))
+        .collect::<Vec<_>>();
+    let remaining_life_payments = pay_life_components(
+        state,
+        player,
+        &life_amounts,
+        events,
+        super::life_costs::pay_life_as_cast_or_activation_cost,
+    )?;
 
     Ok(match remaining_life_payments {
         Some(remaining_life_payments) => ManaCostPayment::Paused {

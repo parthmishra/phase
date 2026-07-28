@@ -89,6 +89,10 @@ pub fn filter_state_for_viewer(state: &GameState, viewer: PlayerId) -> GameState
     // The replacement-resume cursor is server authority and can retain private
     // object IDs and last-known snapshots from a cost payment.
     filtered.pending_cost_move_resume = None;
+    // Deferred life-cost owners can embed a complete PendingCast, including
+    // hidden card and target context. The projected WaitingFor is the only
+    // viewer-facing interaction surface.
+    filtered.pending_deferred_life_cost_resume = None;
     // Resolution frames are server-authoritative continuations. They can carry
     // private object identities, trigger source contexts, and resolved ability
     // payloads; the separately projected `WaitingFor` prompt is the complete
@@ -5122,6 +5126,13 @@ mod tests {
             },
             mana_resume,
         ];
+        state.pending_deferred_life_cost_resume =
+            Some(crate::types::game_state::DeferredLifeCostResume::Cast {
+                player: PlayerId(0),
+                pending: Some(dummy_pending_cast(hidden, CardId(70_001), PlayerId(0))),
+                remaining_life_payments: vec![2],
+                resume_at_resolution_depth: 0,
+            });
 
         for resume in resumes {
             state.pending_cost_move_resume = Some(resume);
@@ -5146,11 +5157,17 @@ mod tests {
                 opponent_view.pending_cost_move_resume.is_none(),
                 "a non-acting opponent must not receive a paused cost continuation"
             );
+            assert!(
+                opponent_view.pending_deferred_life_cost_resume.is_none(),
+                "a viewer must not receive a deferred life-cost continuation"
+            );
             let wire = serde_json::to_string(&opponent_view)
                 .expect("the filtered multiplayer snapshot serializes");
             assert!(
                 !wire.contains("\"pendingCostMoveResume\":{\"type\"")
-                    && !wire.contains("\"pending_cost_move_resume\":{\"type\""),
+                    && !wire.contains("\"pending_cost_move_resume\":{\"type\"")
+                    && !wire.contains("\"pendingDeferredLifeCostResume\":{\"type\"")
+                    && !wire.contains("\"pending_deferred_life_cost_resume\":{\"type\""),
                 "the viewer snapshot must not serialize a paused continuation's IDs or LKI"
             );
         }
@@ -5158,6 +5175,10 @@ mod tests {
         assert!(
             state.pending_cost_move_resume.is_some(),
             "filtering must not alter the authoritative server continuation"
+        );
+        assert!(
+            state.pending_deferred_life_cost_resume.is_some(),
+            "filtering must not alter the authoritative deferred life-cost continuation"
         );
     }
 

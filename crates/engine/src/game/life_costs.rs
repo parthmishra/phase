@@ -24,7 +24,7 @@
 use crate::game::effects::life::{apply_life_loss, ReplacementDeferred};
 use crate::game::static_abilities::{player_cant_pay_life_as_cost, player_has_cant_lose_life};
 use crate::types::events::GameEvent;
-use crate::types::game_state::GameState;
+use crate::types::game_state::{GameState, WaitingFor};
 use crate::types::player::PlayerId;
 
 /// Outcome of attempting to pay life as a cost.
@@ -39,6 +39,14 @@ pub enum PayLifeCostResult {
     /// modified its life-loss action, and that replacement's substitute has
     /// paused for player input. `state.waiting_for` owns the continuation.
     PaidWithDeferredSubstitution { amount: u32 },
+    /// CR 118.3b + CR 119.4 + CR 616.1: The life-payment event is awaiting
+    /// replacement ordering before it can be applied. No payment failure has
+    /// occurred; the caller must park its typed outer action until the chosen
+    /// replacement finishes.
+    DeferredReplacementChoice {
+        amount: u32,
+        choice_player: PlayerId,
+    },
     /// CR 118.3: Player's life total is below `amount` — cost can't be paid.
     InsufficientLife,
     /// CR 119.8 / CR 118.3: A static prohibition makes the cost unpayable.
@@ -56,7 +64,10 @@ impl PayLifeCostResult {
 
     /// Returns `true` if the cost was NOT paid (insufficient life or prohibited).
     pub fn is_unpayable(self) -> bool {
-        !self.is_paid()
+        matches!(
+            self,
+            PayLifeCostResult::InsufficientLife | PayLifeCostResult::Prohibited
+        )
     }
 }
 
@@ -145,7 +156,19 @@ pub fn pay_life_as_cost(
     // cost whose replacement is still resolving with insufficient life.
     match apply_life_loss(state, player, amount, events) {
         Ok(_) => PayLifeCostResult::Paid { amount },
-        Err(ReplacementDeferred::ReplacementChoice) => PayLifeCostResult::InsufficientLife,
+        Err(ReplacementDeferred::ReplacementChoice) => {
+            let WaitingFor::ReplacementChoice {
+                player: choice_player,
+                ..
+            } = &state.waiting_for
+            else {
+                unreachable!("replacement deferral must expose its ordering player")
+            };
+            PayLifeCostResult::DeferredReplacementChoice {
+                amount,
+                choice_player: *choice_player,
+            }
+        }
         Err(ReplacementDeferred::SubstitutionContinuation) => {
             PayLifeCostResult::PaidWithDeferredSubstitution { amount }
         }
@@ -270,6 +293,55 @@ mod tests {
             state.waiting_for,
             crate::types::game_state::WaitingFor::ChooseOneOfBranch { .. }
         ));
+    }
+
+    /// CR 118.3b + CR 119.4 + CR 616.1: Competing replacements suspend a
+    /// life payment; they do not turn it into an insufficient-life failure.
+    #[test]
+    fn competing_life_loss_replacements_return_typed_deferred_choice() {
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(903),
+            PlayerId(0),
+            "Competing Life-Loss Modifiers".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .replacement_definitions = vec![
+            ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                .quantity_modification(QuantityModification::DOUBLE)
+                .description("Double".to_string()),
+            ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                .quantity_modification(QuantityModification::Plus { value: 1 })
+                .description("Plus one".to_string()),
+        ]
+        .into();
+        let life_before = state.players[0].life;
+        let mut events = Vec::new();
+
+        let result = pay_life_as_cost(&mut state, PlayerId(0), 3, &mut events);
+
+        assert_eq!(
+            result,
+            PayLifeCostResult::DeferredReplacementChoice {
+                amount: 3,
+                choice_player: PlayerId(0),
+            }
+        );
+        assert_eq!(state.players[0].life, life_before);
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::ReplacementChoice {
+                player: PlayerId(0),
+                ..
+            }
+        ));
+        assert!(state.pending_replacement.is_some());
+        assert!(events.is_empty());
     }
 
     /// CR 119.4b: Paying 0 life always succeeds, even under CantLoseLife.

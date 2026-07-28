@@ -306,10 +306,10 @@ pub(super) enum EmptyManaPoolApplyOutcome {
     Deferred,
 }
 
-/// CR 106.4 + CR 119.3 + CR 500.5: Apply the final replacement-ordered mana
-/// dispositions, then apply one aggregate Yurlok-class life-loss event for the
-/// mana units that were actually removed. Retained or transformed units are
-/// not lost and therefore do not contribute.
+/// CR 106.4 + CR 703.4q: Apply the final replacement-ordered mana dispositions
+/// as the step or phase ends, then apply one aggregate Yurlok-class life-loss
+/// event for the mana units that were actually removed. Retained or transformed
+/// units are not lost and therefore do not contribute.
 pub(super) fn apply_empty_mana_pool_event(
     state: &mut GameState,
     event: ProposedEvent,
@@ -354,7 +354,7 @@ pub(super) fn mark_phase_transition_awaiting_post_replacement(state: &mut GameSt
     }
 }
 
-/// CR 614.6 + CR 500.5: Resume the typed APNAP phase owner only after the
+/// CR 614.6: Resume the typed APNAP phase owner only after the
 /// interactive substitute that suspended it has terminally left the resolution
 /// stack. Merely having a pending phase cursor is insufficient: ordinary
 /// empty-mana replacement choices and loop-collapse prompts have distinct

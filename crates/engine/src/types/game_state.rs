@@ -5608,7 +5608,11 @@ pub enum DeferredLifeCostResume {
     /// the amount already spent in `prepaid_actual_mana_spent`.
     Cast {
         player: PlayerId,
-        pending: Box<PendingCast>,
+        /// The announcing caller attaches its complete cast/activation root
+        /// before state returns to a player. `None` exists only during that
+        /// synchronous handoff from the shared payment authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pending: Option<Box<PendingCast>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         remaining_life_payments: Vec<u32>,
         /// Resolution-stack depth that existed before the life-loss event.
@@ -6047,11 +6051,11 @@ pub enum ManaAbilityResume {
         /// from the controller of a helper mana source activated while paying.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outer_player: Option<PlayerId>,
-        /// CR 118.12: Carried-through cost from `WaitingFor::UnlessPayment`.
-        /// See the matching `WaitingFor::UnlessPayment.cost` doc-comment for
-        /// the legacy-shape deserialization contract. Boxed so the
-        /// enclosing `ManaAbilityResume` enum stays compact (other variants
-        /// are zero-sized or carry only an `Option`).
+        /// CR 118.12 + CR 605.3b: Exact concrete outer payment root. A
+        /// mana-source cost pause retries it in full; a deferred Phyrexian
+        /// life replacement removes its already-paid leading mana component
+        /// before resuming any suffix. Boxed so the enclosing enum stays
+        /// compact.
         #[serde(deserialize_with = "crate::types::ability::deserialize_ability_cost_compat_boxed")]
         cost: Box<AbilityCost>,
         pending_effect: Box<ResolvedAbility>,

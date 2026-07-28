@@ -1999,6 +1999,14 @@ pub(crate) fn attach_pending_cast_to_cost_move(
     state: &mut GameState,
     pending: Box<PendingCast>,
 ) -> Option<Box<PendingCast>> {
+    if let Some(crate::types::game_state::DeferredLifeCostResume::Cast {
+        pending: slot @ None,
+        ..
+    }) = state.pending_deferred_life_cost_resume.as_mut()
+    {
+        *slot = Some(pending);
+        return None;
+    }
     let Some(PendingCostMoveResume::Cast {
         pending: slot @ None,
         ..
@@ -2398,7 +2406,7 @@ fn pay_spell_mana_before_deferred_sacrifice(
             state.pending_deferred_life_cost_resume =
                 Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                     player,
-                    pending: Box::new(pending),
+                    pending: Some(Box::new(pending)),
                     remaining_life_payments,
                     resume_at_resolution_depth,
                 });
@@ -6031,14 +6039,15 @@ pub(crate) fn handle_defiler_payment(
         );
         match payment {
             PayLifeCostResult::Paid { .. } => {}
-            PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
+            PayLifeCostResult::PaidWithDeferredSubstitution { .. }
+            | PayLifeCostResult::DeferredReplacementChoice { .. } => {
                 apply_defiler_mana_reduction(&mut cost, mana_reduction);
                 let mut pending = pending;
                 pending.cost = cost;
                 state.pending_deferred_life_cost_resume =
                     Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                         player,
-                        pending: Box::new(pending),
+                        pending: Some(Box::new(pending)),
                         remaining_life_payments: Vec::new(),
                         resume_at_resolution_depth,
                     });
@@ -6108,7 +6117,10 @@ fn apply_defiler_mana_reduction(
     };
 
     for shard in reduction_shards {
-        if let Some(pos) = spell_shards.iter().position(|candidate| candidate == shard) {
+        if let Some(pos) = spell_shards
+            .iter()
+            .position(|candidate| super::casting::cost_shard_matches_reduction(*candidate, *shard))
+        {
             spell_shards.remove(pos);
         }
     }
@@ -6206,11 +6218,12 @@ fn pay_additional_cost_with_source(
                 state, player, resolved, events,
             ) {
                 PayLifeCostResult::Paid { .. } => {}
-                PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
+                PayLifeCostResult::PaidWithDeferredSubstitution { .. }
+                | PayLifeCostResult::DeferredReplacementChoice { .. } => {
                     state.pending_deferred_life_cost_resume =
                         Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                             player,
-                            pending: Box::new(pending),
+                            pending: Some(Box::new(pending)),
                             remaining_life_payments: Vec::new(),
                             resume_at_resolution_depth,
                         });
@@ -8323,16 +8336,11 @@ fn finalize_cast_with_phyrexian_choices_inner(
                 remaining_life_payments,
                 ..
             } => {
-                let mut pending = deferred_life_resume_pending.cloned().unwrap_or_else(|| {
-                    let mut pending =
-                        PendingCast::new(object_id, card_id, ability.clone(), ManaCost::NoCost);
-                    pending.casting_variant = casting_variant;
-                    pending.casting_permission_index = casting_permission_index;
-                    pending.cast_timing_permission = cast_timing_permission;
-                    pending.origin_zone = origin_zone;
-                    pending.additional_cost_decided = true;
-                    pending
-                });
+                let mut pending = deferred_life_resume_pending.cloned().ok_or_else(|| {
+                    EngineError::InvalidAction(
+                        "Deferred life payment is missing its pending cast".to_string(),
+                    )
+                })?;
                 pending.cost = ManaCost::NoCost;
                 let pool_after = state
                     .players
@@ -8345,7 +8353,7 @@ fn finalize_cast_with_phyrexian_choices_inner(
                 state.pending_deferred_life_cost_resume =
                     Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                         player,
-                        pending: Box::new(pending),
+                        pending: Some(Box::new(pending)),
                         remaining_life_payments,
                         resume_at_resolution_depth,
                     });
@@ -11410,7 +11418,7 @@ fn finalize_mana_payment_with_resume(
                         state.pending_deferred_life_cost_resume =
                             Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                                 player,
-                                pending,
+                                pending: Some(pending),
                                 remaining_life_payments,
                                 resume_at_resolution_depth,
                             });
@@ -11477,6 +11485,7 @@ fn finalize_mana_payment_with_resume(
         if state.pending_deferred_life_cost_resume.is_some() {
             return Ok(state.waiting_for.clone());
         }
+        validate_deferred_spell_sacrifices_at_commit(state, player, &pending)?;
         let deferred_sacrifice_events =
             pay_deferred_spell_sacrifices_at_commit(state, player, &pending, events)?;
         let final_cast_cost = if prepaid_actual_mana_spent.is_some() {
@@ -11545,7 +11554,7 @@ fn finalize_mana_payment_with_resume(
                     state.pending_deferred_life_cost_resume =
                         Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                             player,
-                            pending,
+                            pending: Some(pending),
                             remaining_life_payments,
                             resume_at_resolution_depth,
                         });
@@ -11789,7 +11798,7 @@ pub fn finalize_mana_payment_with_phyrexian_choices(
                         state.pending_deferred_life_cost_resume =
                             Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                                 player,
-                                pending,
+                                pending: Some(pending),
                                 remaining_life_payments,
                                 resume_at_resolution_depth,
                             });
@@ -11864,6 +11873,7 @@ pub fn finalize_mana_payment_with_phyrexian_choices(
         if state.pending_deferred_life_cost_resume.is_some() {
             return Ok(state.waiting_for.clone());
         }
+        validate_deferred_spell_sacrifices_at_commit(state, player, &pending)?;
         let deferred_sacrifice_events =
             pay_deferred_spell_sacrifices_at_commit(state, player, &pending, events)?;
         let final_cast_cost = if prepaid_actual_mana_spent.is_some() {
@@ -11933,7 +11943,7 @@ pub fn finalize_mana_payment_with_phyrexian_choices(
                     state.pending_deferred_life_cost_resume =
                         Some(crate::types::game_state::DeferredLifeCostResume::Cast {
                             player,
-                            pending,
+                            pending: Some(pending),
                             remaining_life_payments,
                             resume_at_resolution_depth,
                         });

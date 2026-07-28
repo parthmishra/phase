@@ -856,6 +856,111 @@ mod tests {
         assert_eq!(state.players[0].energy, 2);
     }
 
+    /// CR 107.4f + CR 118.12 + CR 119.4 + CR 616.1: A replacement pause
+    /// raised while paying a leading Phyrexian mana component must not let the
+    /// outer rider skip a later composite cost component.
+    #[test]
+    fn deferred_phyrexian_payment_resumes_composite_suffix_before_rider() {
+        use crate::game::effects::resolve_ability_chain;
+        use crate::types::ability::{
+            PlayerFilter, QuantityModification, ReplacementDefinition, SubAbilityLink,
+        };
+        use crate::types::actions::GameAction;
+        use crate::types::replacements::ReplacementEvent;
+
+        let mut state = GameState::new_two_player(42);
+        state.players[0].energy = 2;
+        let source = create_object(
+            &mut state,
+            CardId(904),
+            PlayerId(0),
+            "Interactive Phyrexian Payment".to_string(),
+            Zone::Battlefield,
+        );
+        let replacement_choice = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::ChooseOneOf {
+                chooser: PlayerFilter::Controller,
+                branches: vec![AbilityDefinition::new(
+                    AbilityKind::Spell,
+                    Effect::GainLife {
+                        amount: QuantityExpr::Fixed { value: 1 },
+                        player: TargetFilter::Controller,
+                    },
+                )],
+            },
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .replacement_definitions = vec![ReplacementDefinition::new(ReplacementEvent::LoseLife)
+            .quantity_modification(QuantityModification::Plus { value: 0 })
+            .execute(replacement_choice)]
+        .into();
+
+        let mut pay = ResolvedAbility::new(
+            Effect::PayCost {
+                cost: AbilityCost::Composite {
+                    costs: vec![
+                        AbilityCost::Mana {
+                            cost: ManaCost::Cost {
+                                shards: vec![ManaCostShard::PhyrexianBlack],
+                                generic: 0,
+                            },
+                        },
+                        AbilityCost::PayEnergy {
+                            amount: QuantityExpr::Fixed { value: 1 },
+                        },
+                    ],
+                },
+                scale: None,
+                payer: TargetFilter::Controller,
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        let mut rider = ResolvedAbility::new(
+            Effect::GainLife {
+                amount: QuantityExpr::Fixed { value: 7 },
+                player: TargetFilter::Controller,
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        rider.sub_link = SubAbilityLink::SequentialSibling;
+        pay.sub_ability = Some(Box::new(rider));
+
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &pay, &mut events, 0).unwrap();
+
+        assert_eq!(state.players[0].life, 18);
+        assert_eq!(
+            state.players[0].energy, 2,
+            "the later energy cost must remain unpaid during the replacement choice"
+        );
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::ChooseOneOfBranch { .. }
+        ));
+
+        crate::game::engine::apply_as_current(&mut state, GameAction::ChooseBranch { index: 0 })
+            .unwrap();
+
+        assert_eq!(
+            state.players[0].energy, 1,
+            "the suffix cost must be paid after the replacement settles"
+        );
+        assert_eq!(
+            state.players[0].life, 26,
+            "the replacement branch resolves before the parked +7-life rider"
+        );
+        assert!(state.pending_deferred_life_cost_resume.is_none());
+        assert!(matches!(state.waiting_for, WaitingFor::Priority { .. }));
+    }
+
     /// CR 118.3: Composite of `PayLife` + `PayEnergy` fails when the energy
     /// component is unaffordable, and the pre-flight check prevents the life
     /// portion from being committed (no partial payment).

@@ -1685,6 +1685,28 @@ pub(crate) fn prepend_remaining_pay_cost_continuation(
     prepend_to_pending_continuation(state, remaining_payment);
 }
 
+/// CR 118.12 + CR 608.2c: A deferred life-payment root resumes after the
+/// original chain walker has already parked the PayCost rider. Prepend only
+/// the unpaid cost suffix here so that parked rider remains exactly once.
+pub(crate) fn prepend_remaining_pay_cost_before_parked_rider(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    payer: PlayerId,
+    remaining_cost: AbilityCost,
+) {
+    let mut remaining_payment = ability.clone();
+    remaining_payment.controller = payer;
+    remaining_payment.optional = false;
+    remaining_payment.optional_for = None;
+    remaining_payment.effect = Effect::PayCost {
+        cost: remaining_cost,
+        scale: None,
+        payer: TargetFilter::Controller,
+    };
+    remaining_payment.sub_ability = None;
+    prepend_to_pending_continuation(state, remaining_payment);
+}
+
 pub(crate) fn parent_referent_context_from_events(
     state: &GameState,
     events: &[GameEvent],

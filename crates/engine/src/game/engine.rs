@@ -3263,6 +3263,10 @@ pub(super) fn resume_pending_continuation_if_priority(
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EngineError> {
     if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+        // CR 118.3b + CR 119.4 + CR 616.1: A life-payment replacement child
+        // drains to its recorded resolution boundary before the paid outer
+        // action resumes. Ordinary continuations then drain only if that
+        // deferred owner actually completed in this pass.
         let deferred_life_boundary = state
             .pending_deferred_life_cost_resume
             .as_ref()
@@ -3275,6 +3279,7 @@ pub(super) fn resume_pending_continuation_if_priority(
         {
             effects::resume_resolution_frames(state, events);
         }
+        let mut drained_deferred_life = false;
         if matches!(state.waiting_for, WaitingFor::Priority { .. })
             && state
                 .pending_deferred_life_cost_resume
@@ -3285,8 +3290,10 @@ pub(super) fn resume_pending_continuation_if_priority(
         {
             let waiting_for = drain_pending_deferred_life_cost_resume(state, events)?;
             state.waiting_for = waiting_for;
+            drained_deferred_life = true;
         }
         if matches!(state.waiting_for, WaitingFor::Priority { .. })
+            && drained_deferred_life
             && state.pending_deferred_life_cost_resume.is_none()
         {
             effects::drain_pending_continuation(state, events);
@@ -3326,86 +3333,106 @@ fn drain_pending_deferred_life_cost_resume(
     let Some(resume) = state.pending_deferred_life_cost_resume.take() else {
         return Ok(state.waiting_for.clone());
     };
-    match resume {
-        crate::types::game_state::DeferredLifeCostResume::Cast {
-            player,
-            pending,
-            remaining_life_payments,
-            resume_at_resolution_depth,
-        } => {
-            let mut remaining = remaining_life_payments.into_iter();
-            while let Some(amount) = remaining.next() {
-                match super::life_costs::pay_life_as_cast_or_activation_cost(
-                    state, player, amount, events,
-                ) {
-                    super::life_costs::PayLifeCostResult::Paid { .. } => {}
-                    super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
-                        ..
-                    } => {
-                        state.pending_deferred_life_cost_resume =
-                            Some(crate::types::game_state::DeferredLifeCostResume::Cast {
-                                player,
-                                pending,
-                                remaining_life_payments: remaining.collect(),
-                                resume_at_resolution_depth,
-                            });
-                        return Ok(state.waiting_for.clone());
-                    }
-                    super::life_costs::PayLifeCostResult::InsufficientLife
-                    | super::life_costs::PayLifeCostResult::Prohibited => {
-                        return Err(EngineError::ActionNotAllowed(
-                            "Cannot complete deferred life cost".to_string(),
-                        ));
+    let resume_for_restore = resume.clone();
+    let result = (|| -> Result<WaitingFor, EngineError> {
+        match resume {
+            crate::types::game_state::DeferredLifeCostResume::Cast {
+                player,
+                pending,
+                remaining_life_payments,
+                resume_at_resolution_depth,
+            } => {
+                let pending = pending.ok_or_else(|| {
+                    EngineError::InvalidAction(
+                        "Deferred life payment is missing its cast or activation root".to_string(),
+                    )
+                })?;
+                let mut remaining = remaining_life_payments.into_iter();
+                while let Some(amount) = remaining.next() {
+                    match super::life_costs::pay_life_as_cast_or_activation_cost(
+                        state, player, amount, events,
+                    ) {
+                        super::life_costs::PayLifeCostResult::Paid { .. } => {}
+                        super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
+                            ..
+                        }
+                        | super::life_costs::PayLifeCostResult::DeferredReplacementChoice {
+                            ..
+                        } => {
+                            state.pending_deferred_life_cost_resume =
+                                Some(crate::types::game_state::DeferredLifeCostResume::Cast {
+                                    player,
+                                    pending: Some(pending),
+                                    remaining_life_payments: remaining.collect(),
+                                    resume_at_resolution_depth,
+                                });
+                            return Ok(state.waiting_for.clone());
+                        }
+                        super::life_costs::PayLifeCostResult::InsufficientLife
+                        | super::life_costs::PayLifeCostResult::Prohibited => {
+                            return Err(EngineError::ActionNotAllowed(
+                                "Cannot complete deferred life cost".to_string(),
+                            ));
+                        }
                     }
                 }
+                if pending.prepaid_actual_mana_spent.is_some() {
+                    state.pending_cast = Some(pending);
+                    super::casting_costs::finalize_automatic_mana_payment(state, player, events)
+                } else {
+                    super::casting_costs::finish_pending_cost_or_cast(
+                        state, player, *pending, events,
+                    )
+                }
             }
-            if pending.prepaid_actual_mana_spent.is_some() {
-                state.pending_cast = Some(pending);
-                super::casting_costs::finalize_automatic_mana_payment(state, player, events)
-            } else {
-                super::casting_costs::finish_pending_cost_or_cast(state, player, *pending, events)
-            }
-        }
-        crate::types::game_state::DeferredLifeCostResume::PayAmount { player, total, .. } => {
-            Ok(super::engine_resolution_choices::finish_pay_amount_choice(
+            crate::types::game_state::DeferredLifeCostResume::PayAmount {
+                player, total, ..
+            } => Ok(super::engine_resolution_choices::finish_pay_amount_choice(
                 state, player, total, events,
-            ))
-        }
-        crate::types::game_state::DeferredLifeCostResume::ManaRoot {
-            player,
-            resume,
-            remaining_life_payments,
-            resume_at_resolution_depth,
-        } => {
-            let mut remaining = remaining_life_payments.into_iter();
-            while let Some(amount) = remaining.next() {
-                match super::life_costs::pay_life_as_cost(state, player, amount, events) {
-                    super::life_costs::PayLifeCostResult::Paid { .. } => {}
-                    super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
-                        ..
-                    } => {
-                        state.pending_deferred_life_cost_resume =
-                            Some(crate::types::game_state::DeferredLifeCostResume::ManaRoot {
-                                player,
-                                resume,
-                                remaining_life_payments: remaining.collect(),
-                                resume_at_resolution_depth,
-                            });
-                        return Ok(state.waiting_for.clone());
-                    }
-                    super::life_costs::PayLifeCostResult::InsufficientLife
-                    | super::life_costs::PayLifeCostResult::Prohibited => {
-                        return Err(EngineError::ActionNotAllowed(
-                            "Cannot complete deferred Phyrexian life payment".to_string(),
-                        ));
+            )),
+            crate::types::game_state::DeferredLifeCostResume::ManaRoot {
+                player,
+                resume,
+                remaining_life_payments,
+                resume_at_resolution_depth,
+            } => {
+                let mut remaining = remaining_life_payments.into_iter();
+                while let Some(amount) = remaining.next() {
+                    match super::life_costs::pay_life_as_cost(state, player, amount, events) {
+                        super::life_costs::PayLifeCostResult::Paid { .. } => {}
+                        super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
+                            ..
+                        }
+                        | super::life_costs::PayLifeCostResult::DeferredReplacementChoice {
+                            ..
+                        } => {
+                            state.pending_deferred_life_cost_resume =
+                                Some(crate::types::game_state::DeferredLifeCostResume::ManaRoot {
+                                    player,
+                                    resume,
+                                    remaining_life_payments: remaining.collect(),
+                                    resume_at_resolution_depth,
+                                });
+                            return Ok(state.waiting_for.clone());
+                        }
+                        super::life_costs::PayLifeCostResult::InsufficientLife
+                        | super::life_costs::PayLifeCostResult::Prohibited => {
+                            return Err(EngineError::ActionNotAllowed(
+                                "Cannot complete deferred Phyrexian life payment".to_string(),
+                            ));
+                        }
                     }
                 }
+                super::mana_abilities::finish_mana_root_after_deferred_life_payment(
+                    state, player, *resume, events,
+                )
             }
-            super::mana_abilities::finish_mana_root_after_deferred_life_payment(
-                state, player, *resume, events,
-            )
         }
+    })();
+    if result.is_err() && state.pending_deferred_life_cost_resume.is_none() {
+        state.pending_deferred_life_cost_resume = Some(resume_for_restore);
     }
+    result
 }
 
 /// CR 702.66a: Finish one Delve payment after its graveyard-to-exile cost move

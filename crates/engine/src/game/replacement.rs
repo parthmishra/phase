@@ -1439,6 +1439,9 @@ fn pay_replacement_may_cost(
                 crate::game::life_costs::PayLifeCostResult::Paid { .. } => true,
                 crate::game::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
                     ..
+                }
+                | crate::game::life_costs::PayLifeCostResult::DeferredReplacementChoice {
+                    ..
                 } => {
                     return MayCostOutcome::PausedForChoice {
                         remaining_cost: None,

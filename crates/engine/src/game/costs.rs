@@ -313,6 +313,26 @@ fn resume_cost_with_concrete_mana(
     combine_remaining_costs(None, &flattened).expect("a concrete mana suffix is never empty")
 }
 
+/// CR 118.12 + CR 605.3b + CR 616.1: A deferred Phyrexian-style life
+/// replacement begins only after the leading mana component was spent. Remove
+/// that committed prefix while retaining every later composite component.
+pub(crate) fn remaining_cost_after_paid_mana_prefix(cost: &AbilityCost) -> Option<AbilityCost> {
+    let mut flattened = Vec::new();
+    flatten_cost_components(cost, &mut flattened);
+    let first = flattened
+        .first()
+        .expect("a deferred mana-payment root is never empty");
+    assert!(
+        matches!(
+            first,
+            AbilityCost::Mana { .. } | AbilityCost::ManaDynamic { .. }
+        ),
+        "a deferred mana-payment root must begin with mana"
+    );
+    flattened.remove(0);
+    combine_remaining_costs(None, &flattened)
+}
+
 /// Flatten nested Composite nodes only while constructing a serialized payment
 /// suffix. The runtime payment order is unchanged; this makes every later leaf
 /// explicit so an interrupted nested Composite cannot drop an outer sibling.
@@ -416,7 +436,7 @@ fn effect_pay_cost_mana_resume(
     // retry that would bypass the player's submitted unless-payment flow.
     if let WaitingFor::UnlessPayment {
         player,
-        cost,
+        cost: _,
         pending_effect,
         trigger_event,
         effect_description,
@@ -425,7 +445,7 @@ fn effect_pay_cost_mana_resume(
     {
         return Some(ManaAbilityResume::UnlessPayment {
             outer_player: Some(*player),
-            cost: Box::new(cost.clone()),
+            cost: Box::new(cost),
             pending_effect: pending_effect.clone(),
             trigger_event: trigger_event.clone(),
             effect_description: effect_description.clone(),
@@ -762,8 +782,9 @@ fn pay_ability_cost_inner(
                 ability_index,
                 ..
             } => {
-                if excluded_sources.is_empty() {
-                    pay_ability_mana_cost(state, player, source_id, *ability_index, cost, events)?;
+                let resume_at_resolution_depth = state.resolution_stack.len();
+                let payment = if excluded_sources.is_empty() {
+                    pay_ability_mana_cost(state, player, source_id, *ability_index, cost, events)?
                 } else {
                     pay_ability_mana_cost_excluding(
                         state,
@@ -775,7 +796,29 @@ fn pay_ability_cost_inner(
                         excluded_sources,
                         // Top-level ability cost payment: no outer cost on the stack.
                         None,
-                    )?;
+                    )?
+                };
+                match payment {
+                    super::casting::ManaCostPayment::Paid(()) => {}
+                    super::casting::ManaCostPayment::Paused {
+                        remaining_life_payments,
+                        ..
+                    } => {
+                        // CR 107.4f + CR 118.3b + CR 119.4 + CR 616.1: The
+                        // announcing caller attaches its complete activation
+                        // root before returning control to a player.
+                        state.pending_deferred_life_cost_resume = Some(
+                            crate::types::game_state::DeferredLifeCostResume::Cast {
+                                player,
+                                pending: None,
+                                remaining_life_payments,
+                                resume_at_resolution_depth,
+                            },
+                        );
+                        return Ok(PaymentOutcome::Paused {
+                            remaining_cost: None,
+                        });
+                    }
                 }
             }
             // CR 118.12: Resolution-time mana payment uses the effect-context
@@ -947,7 +990,8 @@ fn pay_ability_cost_inner(
             };
             match result {
                 super::life_costs::PayLifeCostResult::Paid { .. } => {}
-                super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
+                super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. }
+                | super::life_costs::PayLifeCostResult::DeferredReplacementChoice { .. } => {
                     return Ok(PaymentOutcome::Paused {
                         remaining_cost: None,
                     });

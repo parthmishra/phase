@@ -2343,14 +2343,18 @@ fn pay_mana_ability_cost_component(
                 Err(error) => return Err(error),
             };
             advance_mana_ability_selection_cursor(cursor, cost, paid_discard_count)?;
-            if let ManaAbilityCostComponentProgress::Paused {
-                remaining_life_payments,
-            } = &component_progress
-            {
-                cursor
-                    .remaining_life_payments
-                    .clone_from(remaining_life_payments);
-            }
+            let choice_player = match &component_progress {
+                ManaAbilityCostComponentProgress::Complete => None,
+                ManaAbilityCostComponentProgress::Paused {
+                    remaining_life_payments,
+                    choice_player,
+                } => {
+                    cursor
+                        .remaining_life_payments
+                        .clone_from(remaining_life_payments);
+                    *choice_player
+                }
+            };
             // CR 614.6: The cost itself may be paid while a replacement's
             // interactive substitute remains unresolved. Advance the cursor
             // exactly once, then park the mana ability until that substitute
@@ -2362,7 +2366,7 @@ fn pay_mana_ability_cost_component(
             {
                 pause_mana_ability_cost_payment(
                     state,
-                    None,
+                    choice_player,
                     pending,
                     cursor.clone(),
                     events,
@@ -2690,24 +2694,66 @@ pub(crate) fn finish_mana_root_after_deferred_life_payment(
             },
         )),
         ManaAbilityResume::UnlessPayment {
+            outer_player,
+            cost,
             pending_effect,
             trigger_event,
-            ..
-        } => super::engine_payment_choices::finish_successful_unless_payment(
-            state,
-            pending_effect.as_ref(),
-            &trigger_event,
-            events,
-        ),
-        ManaAbilityResume::EffectPayCost {
-            return_to, ability, ..
+            effect_description,
+            remaining,
         } => {
-            super::effects::resolve_effect_pay_cost_rider(state, ability.as_ref(), events)
-                .map_err(|error| EngineError::InvalidAction(error.to_string()))?;
-            if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+            let remaining_cost = super::costs::remaining_cost_after_paid_mana_prefix(cost.as_ref());
+            match remaining_cost {
+                Some(cost) => {
+                    // CR 118.12 + CR 605.3b + CR 616.1: Only the leading mana
+                    // component was committed before the life-replacement
+                    // pause. Resume the exact suffix before suppressing the
+                    // unless effect.
+                    super::engine_payment_choices::continue_unless_payment_after_paid_mana_prefix(
+                        state,
+                        outer_player.unwrap_or(player),
+                        cost,
+                        pending_effect,
+                        trigger_event,
+                        effect_description,
+                        remaining,
+                        events,
+                    )
+                }
+                None => super::engine_payment_choices::finish_successful_unless_payment(
+                    state,
+                    pending_effect.as_ref(),
+                    &trigger_event,
+                    events,
+                ),
+            }
+        }
+        ManaAbilityResume::EffectPayCost {
+            payer,
+            return_to,
+            ability,
+            cost,
+        } => {
+            if let Some(remaining_cost) =
+                super::costs::remaining_cost_after_paid_mana_prefix(cost.as_ref())
+            {
+                // CR 118.12 + CR 608.2c: Re-enter resolution through the
+                // remaining PayCost suffix. The ordinary continuation authority
+                // then pays it before handing off to the original rider.
+                super::effects::prepend_remaining_pay_cost_before_parked_rider(
+                    state,
+                    ability.as_ref(),
+                    payer,
+                    remaining_cost,
+                );
                 Ok(WaitingFor::Priority { player: return_to })
             } else {
-                Ok(state.waiting_for.clone())
+                super::effects::resolve_effect_pay_cost_rider(state, ability.as_ref(), events)
+                    .map_err(|error| EngineError::InvalidAction(error.to_string()))?;
+                if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+                    Ok(WaitingFor::Priority { player: return_to })
+                } else {
+                    Ok(state.waiting_for.clone())
+                }
             }
         }
         ManaAbilityResume::CompanionToHand { player, .. } => Ok(
@@ -2755,6 +2801,9 @@ fn continue_mana_ability_cost_payment_in_node(
     }
     while let Some(amount) = cursor.remaining_life_payments.first().copied() {
         cursor.remaining_life_payments.remove(0);
+        // CR 118.3b + CR 119.4 + CR 616.1: Paying life is a life-loss event,
+        // so competing replacements may pause this activation before the
+        // payment is applied. Preserve its exact suffix and ordering player.
         match life_costs::pay_life_as_cast_or_activation_cost(state, pending.player, amount, events)
         {
             PayLifeCostResult::Paid { .. } => {}
@@ -2762,6 +2811,17 @@ fn continue_mana_ability_cost_payment_in_node(
                 pause_mana_ability_cost_payment(
                     state,
                     None,
+                    pending,
+                    cursor,
+                    events,
+                    cost_event_start,
+                );
+                return Ok(state.waiting_for.clone());
+            }
+            PayLifeCostResult::DeferredReplacementChoice { choice_player, .. } => {
+                pause_mana_ability_cost_payment(
+                    state,
+                    Some(choice_player),
                     pending,
                     cursor,
                     events,
@@ -2885,9 +2945,11 @@ where
                 ManaAbilityCostComponentProgress::Complete => {}
                 ManaAbilityCostComponentProgress::Paused {
                     remaining_life_payments,
+                    choice_player,
                 } => {
                     return Ok(ManaAbilityCostComponentProgress::Paused {
                         remaining_life_payments,
+                        choice_player,
                     });
                 }
             }
@@ -2905,9 +2967,11 @@ where
                 ManaAbilityCostComponentProgress::Complete => {}
                 ManaAbilityCostComponentProgress::Paused {
                     remaining_life_payments,
+                    choice_player,
                 } => {
                     return Ok(ManaAbilityCostComponentProgress::Paused {
                         remaining_life_payments,
+                        choice_player,
                     });
                 }
             }
@@ -3132,7 +3196,10 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ManaAbilityCostComponentProgress {
     Complete,
-    Paused { remaining_life_payments: Vec<u32> },
+    Paused {
+        remaining_life_payments: Vec<u32>,
+        choice_player: Option<PlayerId>,
+    },
 }
 
 fn cost_sacrifices_reserved_source(
@@ -3254,6 +3321,13 @@ fn pay_life_cost(
         PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {
             Ok(ManaAbilityCostComponentProgress::Paused {
                 remaining_life_payments: Vec::new(),
+                choice_player: None,
+            })
+        }
+        PayLifeCostResult::DeferredReplacementChoice { choice_player, .. } => {
+            Ok(ManaAbilityCostComponentProgress::Paused {
+                remaining_life_payments: Vec::new(),
+                choice_player: Some(choice_player),
             })
         }
         PayLifeCostResult::InsufficientLife | PayLifeCostResult::Prohibited => Err(
@@ -3545,7 +3619,7 @@ fn pay_mana_sub_cost(
         // chain, or a self-loop terminate instead of recursing infinitely.
         let mut excluded_sources = excluded_sources.clone();
         excluded_sources.insert(source_id);
-        return super::casting::pay_ability_mana_cost_excluding_with_parent(
+        let payment = super::casting::pay_ability_mana_cost_excluding_with_parent(
             state,
             player,
             source_id,
@@ -3555,14 +3629,20 @@ fn pay_mana_sub_cost(
             &excluded_sources,
             sub_cost_demand,
             parent,
-        )
-        .map(|payment| match payment {
+        )?;
+        let choice_player = state
+            .pending_replacement
+            .is_some()
+            .then(|| state.waiting_for.acting_player())
+            .flatten();
+        return Ok(match payment {
             super::casting::ManaCostPayment::Paid(()) => ManaAbilityCostComponentProgress::Complete,
             super::casting::ManaCostPayment::Paused {
                 remaining_life_payments,
                 ..
             } => ManaAbilityCostComponentProgress::Paused {
                 remaining_life_payments,
+                choice_player,
             },
         });
     };

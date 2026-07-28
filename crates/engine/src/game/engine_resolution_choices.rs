@@ -2494,6 +2494,9 @@ pub(super) fn handle_resolution_choice(
                         crate::game::life_costs::PayLifeCostResult::Paid { .. } => {}
                         crate::game::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
                             ..
+                        }
+                        | crate::game::life_costs::PayLifeCostResult::DeferredReplacementChoice {
+                            ..
                         } => {
                             state.pending_deferred_life_cost_resume = Some(
                                 crate::types::game_state::DeferredLifeCostResume::PayAmount {
@@ -2506,7 +2509,8 @@ pub(super) fn handle_resolution_choice(
                                 state.waiting_for.clone(),
                             ));
                         }
-                        _ => {
+                        crate::game::life_costs::PayLifeCostResult::InsufficientLife
+                        | crate::game::life_costs::PayLifeCostResult::Prohibited => {
                             return Err(EngineError::InvalidAction(format!(
                                 "Player {player:?} cannot pay {amount} life"
                             )))
