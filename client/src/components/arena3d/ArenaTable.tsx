@@ -1,22 +1,48 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
-export const ARENA_TABLE_WIDTH = 20;
-export const ARENA_TABLE_DEPTH = 18;
+const ARENA_TABLE_WIDTH = 17.2;
+const ARENA_TABLE_DEPTH = 18;
+const ARENA_TABLE_CORNER_RADIUS = 1.08;
+const ARENA_TABLE_THICKNESS = 0.36;
 
 export function ArenaTable() {
   const surfaceTexture = useMemo(makeSurfaceTexture, []);
+  const surfaceGeometry = useMemo(
+    () => makeRoundedSurfaceGeometry(
+      ARENA_TABLE_WIDTH,
+      ARENA_TABLE_DEPTH,
+      ARENA_TABLE_CORNER_RADIUS,
+    ),
+    [],
+  );
+  const baseGeometry = useMemo(
+    () => makeRoundedBaseGeometry(
+      ARENA_TABLE_WIDTH + 0.18,
+      ARENA_TABLE_DEPTH + 0.18,
+      ARENA_TABLE_CORNER_RADIUS + 0.08,
+      ARENA_TABLE_THICKNESS,
+    ),
+    [],
+  );
 
-  useEffect(() => () => surfaceTexture.dispose(), [surfaceTexture]);
+  useEffect(
+    () => () => {
+      surfaceTexture.dispose();
+      surfaceGeometry.dispose();
+      baseGeometry.dispose();
+    },
+    [baseGeometry, surfaceGeometry, surfaceTexture],
+  );
 
   return (
     <group>
       <mesh
+        geometry={surfaceGeometry}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.035, 0]}
+        position={[0, 0, 0]}
         receiveShadow
       >
-        <planeGeometry args={[ARENA_TABLE_WIDTH, ARENA_TABLE_DEPTH]} />
         <meshStandardMaterial
           map={surfaceTexture}
           color="#ffffff"
@@ -25,13 +51,79 @@ export function ArenaTable() {
         />
       </mesh>
 
-      <mesh position={[0, -0.22, 0]} receiveShadow>
-        <boxGeometry
-          args={[ARENA_TABLE_WIDTH + 0.18, 0.36, ARENA_TABLE_DEPTH + 0.18]}
-        />
+      <mesh
+        geometry={baseGeometry}
+        rotation={[Math.PI / 2, 0, 0]}
+        position={[0, -0.045, 0]}
+        castShadow
+        receiveShadow
+      >
         <meshStandardMaterial color="#0b1018" roughness={0.64} metalness={0.16} />
       </mesh>
     </group>
+  );
+}
+
+function makeRoundedRectangleShape(
+  width: number,
+  depth: number,
+  radius: number,
+): THREE.Shape {
+  const x = -width / 2;
+  const y = -depth / 2;
+  const shape = new THREE.Shape();
+  shape.moveTo(x + radius, y);
+  shape.lineTo(x + width - radius, y);
+  shape.quadraticCurveTo(x + width, y, x + width, y + radius);
+  shape.lineTo(x + width, y + depth - radius);
+  shape.quadraticCurveTo(
+    x + width,
+    y + depth,
+    x + width - radius,
+    y + depth,
+  );
+  shape.lineTo(x + radius, y + depth);
+  shape.quadraticCurveTo(x, y + depth, x, y + depth - radius);
+  shape.lineTo(x, y + radius);
+  shape.quadraticCurveTo(x, y, x + radius, y);
+  return shape;
+}
+
+function makeRoundedSurfaceGeometry(
+  width: number,
+  depth: number,
+  radius: number,
+): THREE.ShapeGeometry {
+  const geometry = new THREE.ShapeGeometry(
+    makeRoundedRectangleShape(width, depth, radius),
+    12,
+  );
+  const positions = geometry.getAttribute("position");
+  const uvs = new Float32Array(positions.count * 2);
+  for (let index = 0; index < positions.count; index += 1) {
+    uvs[index * 2] = (positions.getX(index) + width / 2) / width;
+    uvs[index * 2 + 1] = (positions.getY(index) + depth / 2) / depth;
+  }
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  return geometry;
+}
+
+function makeRoundedBaseGeometry(
+  width: number,
+  depth: number,
+  radius: number,
+  thickness: number,
+): THREE.ExtrudeGeometry {
+  return new THREE.ExtrudeGeometry(
+    makeRoundedRectangleShape(width, depth, radius),
+    {
+      depth: thickness,
+      bevelEnabled: true,
+      bevelSegments: 3,
+      bevelSize: 0.045,
+      bevelThickness: 0.035,
+      curveSegments: 12,
+    },
   );
 }
 
@@ -50,9 +142,9 @@ function makeSurfaceTexture(): THREE.CanvasTexture {
     canvas.height / 2,
     canvas.width * 0.74,
   );
-  base.addColorStop(0, "#33445c");
-  base.addColorStop(0.52, "#243247");
-  base.addColorStop(1, "#111927");
+  base.addColorStop(0, "#3a4b63");
+  base.addColorStop(0.52, "#29384d");
+  base.addColorStop(1, "#172235");
   context.fillStyle = base;
   context.fillRect(0, 0, canvas.width, canvas.height);
 

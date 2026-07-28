@@ -9,6 +9,7 @@ import {
   getOpponentIds,
   resolveFocusedOpponent,
 } from "../../viewmodel/gameStateView.ts";
+import { OPPONENT_CARD_SCALE } from "../hand/handFanPresentation.ts";
 import { CommanderCardZone } from "../zone/CommanderCardZone.tsx";
 
 interface ArenaHandCommandZoneProps {
@@ -33,32 +34,26 @@ export function ArenaHandCommandZone({
 
   if (leaders.length === 0) return null;
 
-  const scale = seat === "player" ? 0.78 : 0.66;
-  const cardStyle = {
-    "--card-w": `calc(var(--card-base) * var(--card-size-scale) * ${scale})`,
-    "--card-h": `calc(var(--card-base) * var(--card-size-scale) * ${scale} * 1.4)`,
-  } as React.CSSProperties;
+  const cardStyle = seat === "opponent"
+    ? {
+        "--hand-card-w": `calc(var(--card-w) * ${OPPONENT_CARD_SCALE})`,
+        "--hand-card-h": `calc(var(--hand-card-w) * 1.4)`,
+      } as React.CSSProperties
+    : undefined;
 
   return (
     <div
       className={`relative flex shrink-0 items-end overflow-visible ${
-        seat === "player"
-          ? "mr-4 border-r border-amber-200/22 pr-4"
-          : "ml-4 border-l border-amber-200/18 pl-4"
+        seat === "player" ? "mr-2" : "ml-2"
       }`}
       style={cardStyle}
       data-arena-hand-command-zone={seat}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-[12%] w-px bg-gradient-to-b from-transparent via-amber-200/35 to-transparent"
-        style={seat === "player" ? { right: "-1px" } : { left: "-1px" }}
-      />
       <div className={seat === "opponent" ? "rotate-180" : undefined}>
         <CommanderCardZone
           playerId={playerId}
           splitOverview={seat === "opponent"}
-          immersiveGlow={seat === "player"}
+          handPresentation
         />
       </div>
     </div>

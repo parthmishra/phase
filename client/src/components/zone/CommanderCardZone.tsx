@@ -18,7 +18,9 @@ import {
   resolveSingleActionDispatch,
 } from "../../viewmodel/cardActionChoice.ts";
 import { CASTABLE_AFFORDANCE_ACTIVE } from "../../viewmodel/castableAffordance.ts";
+import { spellCostDisplay } from "../../viewmodel/costLabel.ts";
 import { commandZoneLeaders } from "../../viewmodel/commanderColumn.ts";
+import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 
 interface CommanderCardZoneProps {
@@ -28,19 +30,19 @@ interface CommanderCardZoneProps {
    *  the wordmark (the amber frame + dock position + tooltip still mark the
    *  commander) and shrink the pips so the cost reads instead. */
   splitOverview?: boolean;
-  /** Adds a restrained animated gold aura in the immersive Arena hand dock. */
-  immersiveGlow?: boolean;
+  /** Uses the same live card renderer, scale, and motion as the Arena hand. */
+  handPresentation?: boolean;
 }
 
 /**
- * Renders commander cards in the command zone as full card images in the
- * right-side zone rail. Shows castability glow when legal to cast and
- * displays effective cost (including commander tax).
+ * Renders commander cards in the command zone. The standard command dock uses
+ * printing images; the Arena hand dock uses the same live composed face and
+ * motion as hand cards. Both share the interaction and commander-tax behavior.
  */
 export function CommanderCardZone({
   playerId,
   splitOverview = false,
-  immersiveGlow = false,
+  handPresentation = false,
 }: CommanderCardZoneProps) {
   const gameState = useGameStore((s) => s.gameState);
 
@@ -63,7 +65,7 @@ export function CommanderCardZone({
           key={cmd.id}
           commander={cmd}
           splitOverview={splitOverview}
-          immersiveGlow={immersiveGlow}
+          handPresentation={handPresentation}
         />
       ))}
     </div>
@@ -73,11 +75,11 @@ export function CommanderCardZone({
 function CommanderCard({
   commander,
   splitOverview,
-  immersiveGlow,
+  handPresentation,
 }: {
   commander: GameObject;
   splitOverview: boolean;
-  immersiveGlow: boolean;
+  handPresentation: boolean;
 }) {
   const { t } = useTranslation("game");
   const isSignatureSpell = commander.signature_spell != null;
@@ -88,7 +90,6 @@ function CommanderCard({
   );
   const inspectObject = useUiStore((s) => s.inspectObject);
   const setPendingAbilityChoice = useUiStore((s) => s.setPendingAbilityChoice);
-  const { src } = useCardImage(commander.name, { size: "normal" });
   const { handlers: hoverHandlers, firedRef } = useCardHover(commander.id);
   const tax = commander.commander_tax ?? 0;
 
@@ -125,7 +126,10 @@ function CommanderCard({
       setPendingAbilityChoice({ objectId: commander.id, actions: ninjutsuActions });
     }
   };
-  const displayCost = effectiveCost ?? commander.mana_cost;
+  const { displayCost, isReduced } = spellCostDisplay(
+    effectiveCost,
+    commander.mana_cost,
+  );
   // canCast is engine-authoritative: the action is in legalActions only when
   // priority + mana + timing all permit the cast. Reuse it as the drag gate
   // rather than threading a separate hasPriority check through.
@@ -197,6 +201,13 @@ function CommanderCard({
       dragSnapToOrigin
       onDragStart={startManaPaymentPreview}
       onDragEnd={onDragEnd}
+      initial={handPresentation ? { opacity: 0, y: 58 } : undefined}
+      animate={handPresentation ? { opacity: 1, y: 48 } : undefined}
+      whileHover={
+        handPresentation
+          ? { y: 38, scale: 1.08, zIndex: 30 }
+          : undefined
+      }
       whileDrag={{ cursor: "grabbing", scale: 1.04 }}
       className={`group relative isolate ${
         canCast ? "cursor-grab" : canNinjutsu ? "cursor-pointer" : "cursor-default"
@@ -220,44 +231,38 @@ function CommanderCard({
                 ? t("zone.commanderTitleTax", { name: commander.name, tax })
                 : t("zone.commanderTitle", { name: commander.name })
       }
-      style={{ width: "var(--card-w)", height: "var(--card-h)" }}
+      style={{
+        width: handPresentation ? "var(--hand-card-w)" : "var(--card-w)",
+        height: handPresentation ? "var(--hand-card-h)" : "var(--card-h)",
+      }}
+      data-hand-command-card={handPresentation || undefined}
     >
-      {immersiveGlow && (canCast || canNinjutsu) && (
+      {handPresentation && (canCast || canNinjutsu) && (
         <div
           aria-hidden
           className="arena-command-castable-aura absolute -inset-[8%] -z-10 rounded-[12%] opacity-80"
         />
       )}
 
-      {/* Card image */}
-      <div className="relative h-full w-full overflow-hidden rounded-lg border border-amber-400/60 shadow-md">
-        {src ? (
-          <img
-            src={src}
-            alt={commander.name}
-            className="h-full w-full object-cover"
-            draggable={false}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-gray-700 text-[10px] text-gray-400">
-            {commander.name}
-          </div>
-        )}
-
-        {/* Translucent overlay — amber tint, lighter when actionable (castable
-            or commander-ninjutsu available) */}
-        <div
-          className={`absolute inset-0 transition-colors ${
-            canCast || canNinjutsu
-              ? "bg-amber-600/20 group-hover:bg-amber-600/5"
-              : "bg-gray-900/50"
-          }`}
+      {handPresentation ? (
+        <ArenaCardFace
+          as="div"
+          objectId={commander.id}
+          displayCost={displayCost}
+          isCostReduced={isReduced}
+          className="h-full w-full shadow-[0_12px_28px_rgba(0,0,0,0.55)]"
+          style={{ height: "100%", width: "100%" }}
         />
-      </div>
+      ) : (
+        <LegacyCommanderFace
+          commander={commander}
+          actionable={canCast || canNinjutsu}
+        />
+      )}
 
       {/* Commander badge — omitted in split panes where it would blanket the
           card and hide the cost pips. */}
-      {!splitOverview && (
+      {!handPresentation && !splitOverview && (
         <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-sm bg-amber-700 px-1.5 py-px text-[8px] font-bold text-amber-100 shadow">
           {isSignatureSpell ? t("zone.signatureSpell") : t("zone.commander")}
         </div>
@@ -282,7 +287,7 @@ function CommanderCard({
       )}
 
       {/* Effective mana cost (includes tax) */}
-      {displayCost && (
+      {!handPresentation && displayCost && (
         <ManaCostPips
           cost={displayCost}
           isReduced={false}
@@ -291,5 +296,40 @@ function CommanderCard({
         />
       )}
     </motion.button>
+  );
+}
+
+function LegacyCommanderFace({
+  commander,
+  actionable,
+}: {
+  commander: GameObject;
+  actionable: boolean;
+}) {
+  const { src } = useCardImage(commander.name, { size: "normal" });
+
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-lg border border-amber-400/60 shadow-md">
+      {src ? (
+        <img
+          src={src}
+          alt={commander.name}
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-gray-700 text-[10px] text-gray-400">
+          {commander.name}
+        </div>
+      )}
+
+      <div
+        className={`absolute inset-0 transition-colors ${
+          actionable
+            ? "bg-amber-600/20 group-hover:bg-amber-600/5"
+            : "bg-gray-900/50"
+        }`}
+      />
+    </div>
   );
 }

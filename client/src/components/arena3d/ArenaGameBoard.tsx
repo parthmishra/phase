@@ -102,20 +102,20 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             args={["#c7d7ec", "#0b1018", 0.82]}
           />
           <directionalLight
-            position={[-4, 10, 7]}
-            intensity={1.58}
+            position={[-7, 12, -8]}
+            intensity={1.72}
             color="#fff1cf"
             castShadow
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}
-            shadow-camera-left={-9}
-            shadow-camera-right={9}
-            shadow-camera-top={9}
-            shadow-camera-bottom={-9}
+            shadow-camera-left={-10}
+            shadow-camera-right={10}
+            shadow-camera-top={11}
+            shadow-camera-bottom={-11}
           />
           <pointLight
             position={[0, 3.8, 0]}
-            intensity={7}
+            intensity={3.2}
             distance={12}
             color="#7596c7"
           />

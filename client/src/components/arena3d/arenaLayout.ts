@@ -53,16 +53,16 @@ export function arenaZoneLayout(seat: ArenaSeat): ArenaZoneLayout {
   if (seat === "local") {
     return {
       faceAngle: 0,
-      library: [-6.8, 0.08, 3.46],
-      graveyard: [-5.25, 0.08, 3.46],
-      exile: [-3.7, 0.08, 3.46],
+      library: [-5.55, 0.08, 3.46],
+      graveyard: [-4.1, 0.08, 3.46],
+      exile: [-2.65, 0.08, 3.46],
     };
   }
   return {
     faceAngle: Math.PI,
-    library: [6.8, 0.08, -3.46],
-    graveyard: [5.25, 0.08, -3.46],
-    exile: [3.7, 0.08, -3.46],
+    library: [5.55, 0.08, -3.46],
+    graveyard: [4.1, 0.08, -3.46],
+    exile: [2.65, 0.08, -3.46],
   };
 }
 

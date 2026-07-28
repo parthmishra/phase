@@ -137,13 +137,14 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
     expect(useUiStore.getState().inspectedObjectId).toBe(COMMANDER_ID);
   });
 
-  it("adds the immersive gold aura only for an actionable hand-dock commander", () => {
+  it("uses the hand renderer and gold aura for an actionable hand-dock commander", () => {
     seedStores([castAction()]);
 
     const { container } = render(
-      <CommanderCardZone playerId={0} immersiveGlow />,
+      <CommanderCardZone playerId={0} handPresentation />,
     );
 
+    expect(container.querySelector("[data-hand-command-card]")).toBeInTheDocument();
     expect(
       container.querySelector(".arena-command-castable-aura"),
     ).toBeInTheDocument();
