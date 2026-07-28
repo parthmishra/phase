@@ -149,17 +149,15 @@ async function createArenaCardTexture(
   context.roundRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT, 28);
   context.clip();
 
-  const palette = cardPalette(presentation.colors);
-  const frame = context.createLinearGradient(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  frame.addColorStop(0, palette[0]);
-  frame.addColorStop(1, palette[1]);
-  context.fillStyle = frame;
+  // Battlefield cards use a neutral black silhouette so the frame remains
+  // legible over every tabletop and never inherits a muddy color from the art.
+  context.fillStyle = "#050606";
   context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
   const artX = 18;
   const artY = 70;
   const artW = TEXTURE_WIDTH - 36;
-  const artH = TEXTURE_HEIGHT - artY;
+  const artH = TEXTURE_HEIGHT - artY - 18;
   drawCover(context, art, artX, artY, artW, artH);
 
   const artShade = context.createLinearGradient(0, artY, 0, artY + artH);
@@ -343,24 +341,6 @@ function drawRoundBadge(
   context.textBaseline = "middle";
   context.fillText(text, centerX, centerY + 1);
   context.textAlign = "left";
-}
-
-function cardPalette(colors: string[]): [string, string] {
-  if (colors.length > 1) return ["#716246", "#272a26"];
-  switch (colors[0]) {
-    case "White":
-      return ["#8a8067", "#37352e"];
-    case "Blue":
-      return ["#315e78", "#172b37"];
-    case "Black":
-      return ["#504651", "#211f24"];
-    case "Red":
-      return ["#864638", "#361d1a"];
-    case "Green":
-      return ["#39664e", "#172e22"];
-    default:
-      return ["#62665f", "#282b29"];
-  }
 }
 
 function manaSymbolColor(symbol: string): string {
