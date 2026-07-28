@@ -945,7 +945,7 @@ fn end_of_combat_retention_expiry_counts_as_actual_mana_loss() {
 }
 
 #[test]
-fn end_of_turn_retention_expiry_counts_as_actual_mana_loss_at_cleanup() {
+fn end_of_turn_retention_survives_cleanup_entry_then_counts_loss_at_cleanup_exit() {
     let mut scenario = GameScenario::new_n_player(3, 52);
     scenario.at_phase(Phase::End);
     scenario.with_mana_pool(P1, {
@@ -958,13 +958,36 @@ fn end_of_turn_retention_expiry_counts_as_actual_mana_loss_at_cleanup() {
     add_yurlok(&mut scenario);
     let mut runner = scenario.build();
 
-    let events = advance_one_phase(&mut runner);
+    let entry_events = advance_one_phase(&mut runner);
 
     assert_eq!(runner.state().phase, Phase::Cleanup);
+    assert_eq!(runner.state().players[1].life, 20);
+    assert_eq!(runner.state().players[1].mana_pool.mana.len(), 2);
+    assert!(runner.state().players[1]
+        .mana_pool
+        .mana
+        .iter()
+        .all(|unit| unit.expiry == Some(ManaExpiry::EndOfTurn)));
+    assert!(!entry_events
+        .iter()
+        .any(|event| matches!(event, GameEvent::LifeChanged { player_id, amount: -2 } if *player_id == P1)));
+
+    let mut cleanup_events = Vec::new();
+    assert!(
+        engine::game::turns::execute_cleanup(runner.state_mut(), &mut cleanup_events).is_none()
+    );
+    assert!(runner.state().players[1]
+        .mana_pool
+        .mana
+        .iter()
+        .all(|unit| unit.expiry.is_none()));
+    cleanup_events.extend(advance_one_phase(&mut runner));
+
+    assert_eq!(runner.state().phase, Phase::Untap);
     assert_eq!(runner.state().players[1].life, 18);
     assert!(runner.state().players[1].mana_pool.mana.is_empty());
     assert_eq!(
-        events
+        cleanup_events
             .iter()
             .filter(|event| matches!(event, GameEvent::LifeChanged { player_id, amount: -2 } if *player_id == P1))
             .count(),

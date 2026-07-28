@@ -6009,7 +6009,8 @@ pub(crate) fn handle_defiler_payment(
         );
         let reduction_applied = payment.is_paid();
         match payment {
-            PayLifeCostResult::Paid { .. } => {}
+            PayLifeCostResult::Paid { .. }
+            | PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {}
             PayLifeCostResult::InsufficientLife | PayLifeCostResult::Prohibited => {
                 // Proceed with the original cost; no reduction.
             }
@@ -6171,7 +6172,8 @@ fn pay_additional_cost_with_source(
             match super::life_costs::pay_life_as_cast_or_activation_cost(
                 state, player, resolved, events,
             ) {
-                PayLifeCostResult::Paid { .. } => {}
+                PayLifeCostResult::Paid { .. }
+                | PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {}
                 PayLifeCostResult::InsufficientLife | PayLifeCostResult::Prohibited => {
                     return Err(EngineError::ActionNotAllowed(
                         "Cannot pay life cost".to_string(),

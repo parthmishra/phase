@@ -14369,7 +14369,8 @@ pub(super) fn pay_mana_cost_from_pool_with_choices(
         let amount = u32::try_from(payment.amount).unwrap_or(0);
         match super::life_costs::pay_life_as_cast_or_activation_cost(state, player, amount, events)
         {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
+            super::life_costs::PayLifeCostResult::Paid { .. }
+            | super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {}
             super::life_costs::PayLifeCostResult::InsufficientLife
             | super::life_costs::PayLifeCostResult::Prohibited => {
                 return Err(EngineError::ActionNotAllowed(
@@ -14849,7 +14850,8 @@ fn pay_non_cast_mana_cost(
     for payment in &life_payments {
         let amount = u32::try_from(payment.amount).unwrap_or(0);
         match super::life_costs::pay_life_as_cost(state, player, amount, events) {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
+            super::life_costs::PayLifeCostResult::Paid { .. }
+            | super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {}
             super::life_costs::PayLifeCostResult::InsufficientLife
             | super::life_costs::PayLifeCostResult::Prohibited => {
                 return Err(EngineError::ActionNotAllowed(
@@ -15015,7 +15017,8 @@ fn auto_tap_and_pay_cost_excluding(
         let amount = u32::try_from(payment.amount).unwrap_or(0);
         match super::life_costs::pay_life_as_cast_or_activation_cost(state, player, amount, events)
         {
-            super::life_costs::PayLifeCostResult::Paid { .. } => {}
+            super::life_costs::PayLifeCostResult::Paid { .. }
+            | super::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution { .. } => {}
             super::life_costs::PayLifeCostResult::InsufficientLife
             | super::life_costs::PayLifeCostResult::Prohibited => {
                 return Err(EngineError::ActionNotAllowed(

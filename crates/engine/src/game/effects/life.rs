@@ -89,7 +89,12 @@ pub fn resolve_gain(
             // the substitute effect (e.g., Draw) as a post-replacement
             // continuation. Drain it now so the replacement actually
             // runs in the same resolution step.
-            let _ = drain_substitution_continuation(state, events);
+            if matches!(
+                drain_substitution_continuation(state, events),
+                SubstitutionDrainOutcome::Deferred
+            ) {
+                return Ok(());
+            }
         }
         ReplacementResult::NeedsChoice(player) => {
             // TODO(CR 614.7): When multiple replacement effects apply to life gain, controller should choose which applies first. Currently falls through unconditionally.
@@ -142,14 +147,22 @@ pub fn apply_life_gain(
             // life gain and its substitute. Mirrors the drain pattern in
             // `effects/draw.rs::draw_through_replacement`. The `Prevented` arm
             // below already drains via `drain_substitution_continuation`.
-            let _ = drain_substitution_continuation(state, events);
-            Ok(gained)
+            match drain_substitution_continuation(state, events) {
+                SubstitutionDrainOutcome::Completed => Ok(gained),
+                SubstitutionDrainOutcome::Deferred => {
+                    Err(ReplacementDeferred::SubstitutionContinuation)
+                }
+            }
         }
         ReplacementResult::Prevented => {
             // CR 614.1a + CR 614.6 — Issue #317: Drain substitute effect
             // stashed by cross-event-type replacement (Lich-class).
-            let _ = drain_substitution_continuation(state, events);
-            Ok(0)
+            match drain_substitution_continuation(state, events) {
+                SubstitutionDrainOutcome::Completed => Ok(0),
+                SubstitutionDrainOutcome::Deferred => {
+                    Err(ReplacementDeferred::SubstitutionContinuation)
+                }
+            }
         }
         ReplacementResult::NeedsChoice(player) => {
             // CR 616.1: Multiple competing replacements — player must choose.
@@ -1603,6 +1616,116 @@ mod tests {
             !state.has_post_replacement_drain(),
             "post_replacement_continuation must be drained after life-gain replacement"
         );
+    }
+
+    #[test]
+    fn interactive_gain_life_substitution_defers_original_completion() {
+        use crate::types::ability::{
+            AbilityDefinition, AbilityKind, PlayerFilter, ReplacementDefinition,
+        };
+        use crate::types::replacements::ReplacementEvent;
+
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(700),
+            PlayerId(0),
+            "Interactive Lich".to_string(),
+            Zone::Battlefield,
+        );
+        let branch = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::GainLife {
+                amount: QuantityExpr::Fixed { value: 1 },
+                player: TargetFilter::Controller,
+            },
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .replacement_definitions = vec![ReplacementDefinition::new(ReplacementEvent::GainLife)
+            .execute(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::ChooseOneOf {
+                    chooser: PlayerFilter::Controller,
+                    branches: vec![branch],
+                },
+            ))]
+        .into();
+
+        let ability = ResolvedAbility::new(
+            Effect::GainLife {
+                amount: QuantityExpr::Fixed { value: 4 },
+                player: TargetFilter::Controller,
+            },
+            vec![],
+            ObjectId(701),
+            PlayerId(0),
+        );
+        let mut events = Vec::new();
+
+        resolve_gain(&mut state, &ability, &mut events).unwrap();
+
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::ChooseOneOfBranch { .. }
+        ));
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                GameEvent::EffectResolved {
+                    kind: EffectKind::GainLife,
+                    source_id: ObjectId(701),
+                    ..
+                }
+            )),
+            "the replaced GainLife must not complete before its substitute choice"
+        );
+    }
+
+    #[test]
+    fn apply_life_gain_reports_interactive_substitution_continuation() {
+        use crate::types::ability::{
+            AbilityDefinition, AbilityKind, PlayerFilter, ReplacementDefinition,
+        };
+        use crate::types::replacements::ReplacementEvent;
+
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(702),
+            PlayerId(0),
+            "Interactive Lich".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .replacement_definitions = vec![ReplacementDefinition::new(ReplacementEvent::GainLife)
+            .execute(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::ChooseOneOf {
+                    chooser: PlayerFilter::Controller,
+                    branches: vec![AbilityDefinition::new(
+                        AbilityKind::Spell,
+                        Effect::GainLife {
+                            amount: QuantityExpr::Fixed { value: 1 },
+                            player: TargetFilter::Controller,
+                        },
+                    )],
+                },
+            ))]
+        .into();
+
+        let outcome = apply_life_gain(&mut state, PlayerId(0), 4, &mut Vec::new());
+
+        assert_eq!(outcome, Err(ReplacementDeferred::SubstitutionContinuation));
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::ChooseOneOfBranch { .. }
+        ));
     }
 
     /// Issue #317: A scaling-shape replacement (`Effect::GainLife { amount:

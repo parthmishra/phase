@@ -2490,7 +2490,10 @@ pub(super) fn handle_resolution_choice(
                     // (replacement pipeline + CantLoseLife) — NOT inline life
                     // subtraction.
                     match crate::game::life_costs::pay_life_as_cost(state, player, amount, events) {
-                        crate::game::life_costs::PayLifeCostResult::Paid { .. } => {}
+                        crate::game::life_costs::PayLifeCostResult::Paid { .. }
+                        | crate::game::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
+                            ..
+                        } => {}
                         _ => {
                             return Err(EngineError::InvalidAction(format!(
                                 "Player {player:?} cannot pay {amount} life"

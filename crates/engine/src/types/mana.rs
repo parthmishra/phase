@@ -2070,24 +2070,30 @@ impl ManaPool {
         self.mana.clear();
     }
 
-    /// CR 500.5 + CR 703.4q: End reached retention durations before constructing
+    /// CR 500.5 + CR 703.4q: End-of-combat retention expires before constructing
     /// the ordinary "empty unspent mana" event. CR 500.5 orders these operations:
     /// effects lasting until this boundary expire first, then unspent mana empties.
     /// Clearing the reached marker makes the still-unspent unit eligible for the
     /// normal empty-pool pipeline, where another active retention or transformation
     /// effect may still apply.
     ///
-    /// - `EndOfTurn`: marker clears at cleanup (CR 514.2).
     /// - `EndOfCombat`: marker clears when leaving combat (CR 500.5a).
+    /// - `EndOfTurn`: marker remains until the cleanup action (CR 514.2).
     /// - `None`: already eligible for the ordinary empty-pool event.
-    pub fn clear_expired_retention_markers(&mut self, in_combat: bool, entering_cleanup: bool) {
+    pub fn clear_expired_end_of_combat_retention_markers(&mut self, in_combat: bool) {
         for unit in &mut self.mana {
-            let expired = match unit.expiry {
-                Some(ManaExpiry::EndOfTurn) => entering_cleanup,
-                Some(ManaExpiry::EndOfCombat) => !in_combat,
-                None => false,
-            };
-            if expired {
+            if matches!(unit.expiry, Some(ManaExpiry::EndOfCombat)) && !in_combat {
+                unit.expiry = None;
+            }
+        }
+    }
+
+    /// CR 514.2: “Until end of turn” effects end during the cleanup action.
+    /// Clearing only the marker leaves the unit for the next ordinary
+    /// CR 500.5 / CR 703.4q empty-pool boundary.
+    pub fn clear_expired_end_of_turn_retention_markers(&mut self) {
+        for unit in &mut self.mana {
+            if matches!(unit.expiry, Some(ManaExpiry::EndOfTurn)) {
                 unit.expiry = None;
             }
         }
@@ -2441,14 +2447,14 @@ mod tests {
 
         // Non-cleanup transition: EndOfTurn unit survives; non-expiry unit
         // is left in place (the pipeline drives Drop disposition elsewhere).
-        pool.clear_expired_retention_markers(false, false);
+        pool.clear_expired_end_of_combat_retention_markers(false);
         assert_eq!(pool.count_color(ManaType::Green), 1);
         assert_eq!(pool.count_color(ManaType::Red), 1);
         assert_eq!(pool.mana[0].expiry, Some(ManaExpiry::EndOfTurn));
 
         // Cleanup transition: the duration ends, but the still-unspent unit
         // remains for the ordinary empty-pool pipeline.
-        pool.clear_expired_retention_markers(false, true);
+        pool.clear_expired_end_of_turn_retention_markers();
         assert_eq!(pool.count_color(ManaType::Green), 1);
         assert_eq!(pool.count_color(ManaType::Red), 1);
         assert_eq!(pool.mana[0].expiry, None);
@@ -2463,13 +2469,13 @@ mod tests {
 
         // In-combat transition (e.g., DeclareAttackers → DeclareBlockers):
         // EndOfCombat unit survives.
-        pool.clear_expired_retention_markers(true, false);
+        pool.clear_expired_end_of_combat_retention_markers(true);
         assert_eq!(pool.count_color(ManaType::Red), 1);
         assert_eq!(pool.mana[0].expiry, Some(ManaExpiry::EndOfCombat));
 
         // Leaving combat ends the retention duration; ordinary empty-pool
         // processing decides the unit's final disposition.
-        pool.clear_expired_retention_markers(false, false);
+        pool.clear_expired_end_of_combat_retention_markers(false);
         assert_eq!(pool.total(), 1);
         assert_eq!(pool.mana[0].expiry, None);
     }

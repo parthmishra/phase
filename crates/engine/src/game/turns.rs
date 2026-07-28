@@ -383,7 +383,7 @@ pub(super) fn resume_phase_transition_after_post_replacement(
 }
 
 /// CR 703.4q + CR 616.1: Per-phase APNAP-queue drain. Pops players one at a
-/// time, runs `clear_expired_retention_markers` first so reached durations
+/// time, expires reached retention markers first so those durations
 /// become eligible for ordinary emptying, scans active
 /// step-end mana handlers for that player, builds and dispatches a
 /// `ProposedEvent::EmptyManaPool` through `replace_event`. On `Execute`,
@@ -477,8 +477,6 @@ pub(super) fn drain_pending_phase_transition_progress(
             return;
         };
         let in_combat = progress.in_combat;
-        let entering_cleanup = progress.entering_cleanup;
-
         // CR 500.5 + CR 703.4q: End reached retention durations first, then
         // route the still-unspent units through the ordinary empty-pool event.
         // Clearing only the marker preserves composition with any other active
@@ -486,7 +484,7 @@ pub(super) fn drain_pending_phase_transition_progress(
         if let Some(player) = state.players.iter_mut().find(|p| p.id == player_id) {
             player
                 .mana_pool
-                .clear_expired_retention_markers(in_combat, entering_cleanup);
+                .clear_expired_end_of_combat_retention_markers(in_combat);
         }
 
         // Scan active step-end mana handlers for this player. Inlines the
@@ -501,7 +499,7 @@ pub(super) fn drain_pending_phase_transition_progress(
         // CR 500.5 + CR 703.4q: expiry-bound units (e.g. Klauth's "you don't
         // lose this mana as steps and phases end", Firebending's "Until end of
         // combat..." — CR 702.189a) stay excluded while their duration remains
-        // active. Once it ends, `clear_expired_retention_markers` makes them
+        // active. Once it ends, the retention-expiry authority makes them
         // ordinary `None`-expiry units for this event.
         //
         // CR 614.17 + CR 614.17c: "you don't lose this mana …" is a "can't"
@@ -2028,6 +2026,14 @@ pub fn execute_cleanup(state: &mut GameState, events: &mut Vec<GameEvent>) -> Op
 
     // CR 514.2: Prune "until end of turn" transient continuous effects.
     super::layers::prune_end_of_turn_effects(state);
+    // CR 514.2: EndOfTurn mana retention survives the End → Cleanup phase
+    // boundary and expires as part of this cleanup action. The units remain in
+    // the pool until the ordinary CR 500.5 / CR 703.4q cleanup-exit drain.
+    for player in &mut state.players {
+        player
+            .mana_pool
+            .clear_expired_end_of_turn_retention_markers();
+    }
 
     // CR 613.1b: recompute layer-2 control now the effect is gone, then emit the
     // loss event for every object whose controller actually reverted.
@@ -3315,8 +3321,8 @@ mod tests {
         assert_eq!(state.players[0].mana_pool.count_color(ManaType::Red), 1);
         assert_eq!(state.players[0].mana_pool.count_color(ManaType::Blue), 0);
 
-        // Drive forward until cleanup; the EndOfTurn mana survives each
-        // intermediate step and only drains once the turn ends.
+        // Drive forward until cleanup; the EndOfTurn mana survives every
+        // phase boundary, including End → Cleanup.
         while state.phase != Phase::Cleanup {
             assert_eq!(
                 state.players[0].mana_pool.count_color(ManaType::Red),
@@ -3327,6 +3333,15 @@ mod tests {
             advance_phase(&mut state, &mut Vec::new());
         }
         assert_eq!(state.phase, Phase::Cleanup);
+        assert_eq!(state.players[0].mana_pool.count_color(ManaType::Red), 1);
+
+        // CR 514.2: the cleanup action expires the retention marker. The
+        // ordinary cleanup-exit boundary then empties the now-unretained mana.
+        execute_cleanup(&mut state, &mut Vec::new());
+        assert_eq!(state.players[0].mana_pool.count_color(ManaType::Red), 1);
+        assert_eq!(state.players[0].mana_pool.mana[0].expiry, None);
+        advance_phase(&mut state, &mut Vec::new());
+        assert_eq!(state.phase, Phase::Untap);
         assert_eq!(state.players[0].mana_pool.count_color(ManaType::Red), 0);
     }
 

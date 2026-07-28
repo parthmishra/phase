@@ -1435,10 +1435,18 @@ fn pay_replacement_may_cost(
             let amount =
                 crate::game::quantity::resolve_quantity(state, amount, player, source_id).max(0);
             let amount = u32::try_from(amount).unwrap_or(0);
-            matches!(
-                crate::game::life_costs::pay_life_as_cost(state, player, amount, events),
-                crate::game::life_costs::PayLifeCostResult::Paid { .. }
-            )
+            match crate::game::life_costs::pay_life_as_cost(state, player, amount, events) {
+                crate::game::life_costs::PayLifeCostResult::Paid { .. } => true,
+                crate::game::life_costs::PayLifeCostResult::PaidWithDeferredSubstitution {
+                    ..
+                } => {
+                    return MayCostOutcome::PausedForChoice {
+                        remaining_cost: None,
+                    };
+                }
+                crate::game::life_costs::PayLifeCostResult::InsufficientLife
+                | crate::game::life_costs::PayLifeCostResult::Prohibited => false,
+            }
         }
         AbilityCost::Composite { costs } => {
             // CR 614.12a: a composite accept-cost pays each sub-cost in order; a

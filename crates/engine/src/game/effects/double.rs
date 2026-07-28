@@ -149,20 +149,28 @@ fn resolve_double_life(
 
     if current_life > 0 {
         // CR 701.10d: Gain life equal to current total.
-        let _ = crate::game::effects::life::apply_life_gain(
+        if crate::game::effects::life::apply_life_gain(
             state,
             player_id,
             current_life as u32,
             events,
-        );
+        )
+        .is_err()
+        {
+            return Ok(());
+        }
     } else if current_life < 0 {
         // CR 701.10d: Lose |current_life| additional life so the new total is 2x.
-        let _ = crate::game::effects::life::apply_life_loss(
+        if crate::game::effects::life::apply_life_loss(
             state,
             player_id,
             (-current_life) as u32,
             events,
-        );
+        )
+        .is_err()
+        {
+            return Ok(());
+        }
     }
     // life == 0: no change.
 

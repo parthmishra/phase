@@ -662,10 +662,11 @@ pub enum ProposedEvent {
     /// affected player chooses ordering. The pipeline serializes choices in
     /// APNAP order across players via `pending_phase_transition_progress`.
     ///
-    /// CR 500.5: A unit whose `EndOfTurn` / `EndOfCombat` retention duration
-    /// reaches this boundary enters this event after its expiry marker is
-    /// cleared. This lets the ordinary empty-pool action count actual loss and
-    /// compose with any other retention or transformation effect still active.
+    /// CR 500.5 + CR 514.2: A unit whose `EndOfCombat` duration reaches this
+    /// boundary, or whose `EndOfTurn` duration ended during the cleanup action,
+    /// enters this event after its expiry marker is cleared. This lets the
+    /// ordinary empty-pool action count actual loss and compose with any other
+    /// retention or transformation effect still active.
     EmptyManaPool {
         player_id: PlayerId,
         units: Vec<UnitDecision>,
