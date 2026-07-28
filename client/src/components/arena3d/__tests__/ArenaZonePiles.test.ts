@@ -10,11 +10,9 @@ describe("arenaZoneLayout", () => {
     expect(local.library).toEqual([-6.8, 0.08, 3.46]);
     expect(local.graveyard[2]).toBe(local.library[2]);
     expect(local.exile[2]).toBe(local.library[2]);
-    expect(local.command).toEqual([6.35, 0.08, 3.46]);
     expect(opponent.library).toEqual([6.8, 0.08, -3.46]);
     expect(opponent.graveyard[2]).toBe(opponent.library[2]);
     expect(opponent.exile[2]).toBe(opponent.library[2]);
-    expect(opponent.command).toEqual([-6.35, 0.08, -3.46]);
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 });

@@ -19,7 +19,6 @@ export interface ArenaZoneLayout {
   library: [number, number, number];
   graveyard: [number, number, number];
   exile: [number, number, number];
-  command: [number, number, number];
 }
 
 const LANE_Z: Record<ArenaLane, number> = {
@@ -57,7 +56,6 @@ export function arenaZoneLayout(seat: ArenaSeat): ArenaZoneLayout {
       library: [-6.8, 0.08, 3.46],
       graveyard: [-5.25, 0.08, 3.46],
       exile: [-3.7, 0.08, 3.46],
-      command: [6.35, 0.08, 3.46],
     };
   }
   return {
@@ -65,7 +63,6 @@ export function arenaZoneLayout(seat: ArenaSeat): ArenaZoneLayout {
     library: [6.8, 0.08, -3.46],
     graveyard: [5.25, 0.08, -3.46],
     exile: [3.7, 0.08, -3.46],
-    command: [-6.35, 0.08, -3.46],
   };
 }
 

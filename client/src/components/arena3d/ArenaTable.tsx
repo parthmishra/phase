@@ -2,7 +2,7 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 export const ARENA_TABLE_WIDTH = 20;
-export const ARENA_TABLE_DEPTH = 14;
+export const ARENA_TABLE_DEPTH = 18;
 
 export function ArenaTable() {
   const surfaceTexture = useMemo(makeSurfaceTexture, []);

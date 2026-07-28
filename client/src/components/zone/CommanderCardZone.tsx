@@ -28,6 +28,8 @@ interface CommanderCardZoneProps {
    *  the wordmark (the amber frame + dock position + tooltip still mark the
    *  commander) and shrink the pips so the cost reads instead. */
   splitOverview?: boolean;
+  /** Adds a restrained animated gold aura in the immersive Arena hand dock. */
+  immersiveGlow?: boolean;
 }
 
 /**
@@ -35,7 +37,11 @@ interface CommanderCardZoneProps {
  * right-side zone rail. Shows castability glow when legal to cast and
  * displays effective cost (including commander tax).
  */
-export function CommanderCardZone({ playerId, splitOverview = false }: CommanderCardZoneProps) {
+export function CommanderCardZone({
+  playerId,
+  splitOverview = false,
+  immersiveGlow = false,
+}: CommanderCardZoneProps) {
   const gameState = useGameStore((s) => s.gameState);
 
   const commanders = useMemo(
@@ -53,7 +59,12 @@ export function CommanderCardZone({ playerId, splitOverview = false }: Commander
   return (
     <div className="flex flex-row items-end gap-1">
       {commanders.map((cmd) => (
-        <CommanderCard key={cmd.id} commander={cmd} splitOverview={splitOverview} />
+        <CommanderCard
+          key={cmd.id}
+          commander={cmd}
+          splitOverview={splitOverview}
+          immersiveGlow={immersiveGlow}
+        />
       ))}
     </div>
   );
@@ -62,9 +73,11 @@ export function CommanderCardZone({ playerId, splitOverview = false }: Commander
 function CommanderCard({
   commander,
   splitOverview,
+  immersiveGlow,
 }: {
   commander: GameObject;
   splitOverview: boolean;
+  immersiveGlow: boolean;
 }) {
   const { t } = useTranslation("game");
   const isSignatureSpell = commander.signature_spell != null;
@@ -185,7 +198,7 @@ function CommanderCard({
       onDragStart={startManaPaymentPreview}
       onDragEnd={onDragEnd}
       whileDrag={{ cursor: "grabbing", scale: 1.04 }}
-      className={`group relative ${
+      className={`group relative isolate ${
         canCast ? "cursor-grab" : canNinjutsu ? "cursor-pointer" : "cursor-default"
       }`}
       title={
@@ -209,6 +222,13 @@ function CommanderCard({
       }
       style={{ width: "var(--card-w)", height: "var(--card-h)" }}
     >
+      {immersiveGlow && (canCast || canNinjutsu) && (
+        <div
+          aria-hidden
+          className="arena-command-castable-aura absolute -inset-[8%] -z-10 rounded-[12%] opacity-80"
+        />
+      )}
+
       {/* Card image */}
       <div className="relative h-full w-full overflow-hidden rounded-lg border border-amber-400/60 shadow-md">
         {src ? (

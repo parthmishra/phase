@@ -11,11 +11,12 @@ import {
   getOpponentIds,
   resolveFocusedOpponent,
 } from "../../viewmodel/gameStateView.ts";
-import { ArenaCommandZone } from "./ArenaCommandZone.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import { layoutArenaSeat } from "./arenaLayout.ts";
+
+const ARENA_CAMERA_FOV = 34;
 
 interface ArenaGameBoardProps {
   oppHud?: React.ReactNode;
@@ -75,12 +76,18 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
         {props.playerHud}
       </div>
 
-      <div className="absolute inset-0 overflow-hidden">
+      <div
+        className="absolute inset-x-0 top-0 overflow-hidden"
+        style={{
+          bottom:
+            "calc(-1 * min(calc(0.18 * (100dvh - var(--game-top-overlay-offset, 0px))), 150px))",
+        }}
+      >
         <Canvas
           shadows
           frameloop="demand"
           dpr={[1, 1.5]}
-          camera={{ fov: 42, near: 0.1, far: 70 }}
+          camera={{ fov: ARENA_CAMERA_FOV, near: 0.1, far: 80 }}
           gl={{
             antialias: true,
             alpha: true,
@@ -119,22 +126,12 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             seat="local"
             onViewZone={props.onViewZone}
           />
-          <ArenaCommandZone
-            playerId={perspectivePlayerId}
-            seat="local"
-          />
           {opponentId != null && (
-            <>
-              <ArenaZonePiles
-                playerId={opponentId}
-                seat="opponent"
-                onViewZone={props.onViewZone}
-              />
-              <ArenaCommandZone
-                playerId={opponentId}
-                seat="opponent"
-              />
-            </>
+            <ArenaZonePiles
+              playerId={opponentId}
+              seat="opponent"
+              onViewZone={props.onViewZone}
+            />
           )}
           {placements.map((placement) => (
             <ArenaPermanent key={placement.objectId} {...placement} />
@@ -154,13 +151,13 @@ function ArenaCameraRig() {
     const aspect = Math.max(size.width / Math.max(size.height, 1), 0.4);
     const compact = aspect < 1.35;
     const target = compact
-      ? new THREE.Vector3(0, 0, 0.25)
-      : new THREE.Vector3(0, 0, 0.55);
+      ? new THREE.Vector3(0, 0, 0.65)
+      : new THREE.Vector3(0, 0, 1.15);
     const direction = compact
-      ? new THREE.Vector3(0, 0.73, 0.68).normalize()
-      : new THREE.Vector3(0, 0.62, 0.78).normalize();
-    const halfFov = (42 * Math.PI) / 360;
-    const fitRadius = compact ? 9.7 : 9.3;
+      ? new THREE.Vector3(0, 0.86, 0.51).normalize()
+      : new THREE.Vector3(0, 0.8, 0.6).normalize();
+    const halfFov = (ARENA_CAMERA_FOV * Math.PI) / 360;
+    const fitRadius = compact ? 9.2 : 8.25;
     const horizontalDistance = fitRadius / (Math.tan(halfFov) * aspect);
     const verticalDistance = fitRadius / Math.tan(halfFov);
     const distance = Math.max(
@@ -170,7 +167,7 @@ function ArenaCameraRig() {
     const cameraPosition = direction.multiplyScalar(distance).add(target);
 
     perspective.position.copy(cameraPosition);
-    perspective.fov = 42;
+    perspective.fov = ARENA_CAMERA_FOV;
     perspective.aspect = aspect;
     perspective.updateProjectionMatrix();
     perspective.lookAt(target);

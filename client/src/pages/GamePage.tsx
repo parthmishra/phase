@@ -51,6 +51,10 @@ import { BlockRequirementBadges } from "../components/combat/BlockRequirementBad
 import { AttackRequirementBadges } from "../components/combat/AttackRequirementBadges.tsx";
 import { BlockerConstraintBadges } from "../components/combat/BlockerConstraintBadges.tsx";
 import { ArenaGameBoard } from "../components/arena3d/ArenaGameBoard.tsx";
+import {
+  ArenaFocusedOpponentCommandZone,
+  ArenaHandCommandZone,
+} from "../components/arena3d/ArenaHandCommandZone.tsx";
 import { CardImage } from "../components/card/CardImage.tsx";
 import { GameCardPreview } from "../components/card/GameCardPreview.tsx";
 import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
@@ -1341,10 +1345,12 @@ function GamePageContent({
           {renderFocusedOpponentTopRow && (
             <>
               <div aria-hidden />
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-start justify-center">
                 <OpponentHand showCards={showAiHand} />
               </div>
-              <div aria-hidden />
+              <div className="flex min-w-0 items-start justify-start pt-1">
+                <ArenaFocusedOpponentCommandZone />
+              </div>
             </>
           )}
         </div>
@@ -1373,16 +1379,23 @@ function GamePageContent({
             band opens empty space ABOVE the row (trading with the battlefield)
             rather than shoving the hand up. */}
         <div
-          className="relative min-w-0 self-end overflow-visible"
+          className="relative z-30 min-w-0 self-end overflow-visible"
           style={{ height: "min(calc(0.18 * (100dvh - var(--game-top-overlay-offset, 0px))), 150px)" }}
           data-flex-zone="player-row"
         >
-          <div className="flex items-end justify-center" data-flex-zone="playerHandRow">
-            {/* Castable graveyard/exile cards now render as colored wings inside
-                PlayerHand's own fan (see ZoneFanCard), so the row is just the hand.
-                The `playerHandRow` flex-zone hook drives the mobile hand-lift
-                transform in index.css. */}
-            <PlayerHand />
+          <div
+            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end"
+            data-flex-zone="playerHandRow"
+          >
+            <div className="flex min-w-0 items-end justify-end pb-1">
+              <ArenaHandCommandZone playerId={playerId} seat="player" />
+            </div>
+            <div className="min-w-0">
+              {/* Castable graveyard/exile cards remain colored wings inside the
+                  main hand fan; the command zone has its own adjacent dock. */}
+              <PlayerHand />
+            </div>
+            <div aria-hidden />
           </div>
         </div>
       </div>
