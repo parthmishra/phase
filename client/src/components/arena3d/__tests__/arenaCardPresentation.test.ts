@@ -28,11 +28,29 @@ describe("buildArenaCardPresentation", () => {
       objectId: 17,
       name: "Live Test Card",
       manaSymbols: ["1", "G"],
+      manaCostReduced: false,
       power: 5,
       toughness: 4,
       rulesText: "Current rules surface",
     });
     expect(presentation.typeLine).toContain("Legendary Creature");
+  });
+
+  it("keeps a visible zero pip for an engine-reduced free cast", () => {
+    const object = gameObjectFactory.instant().withCost(["Green"], 1).build();
+
+    expect(
+      buildArenaCardPresentation(
+        object,
+        { type: "NoCost" },
+        undefined,
+        null,
+        true,
+      ),
+    ).toMatchObject({
+      manaSymbols: ["0"],
+      manaCostReduced: true,
+    });
   });
 
   it("uses the public identity for face-down objects", () => {

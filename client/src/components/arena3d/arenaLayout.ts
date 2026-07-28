@@ -21,9 +21,9 @@ const LANE_Z: Record<ArenaLane, number> = {
 };
 
 const LANE_WIDTH: Record<ArenaLane, number> = {
-  creatures: 9.8,
-  support: 8.9,
-  lands: 9.8,
+  creatures: 13.4,
+  support: 12.4,
+  lands: 13.4,
 };
 
 export function layoutArenaSeat(
@@ -63,7 +63,7 @@ function layoutLane(
 export function spreadPositions(count: number, availableWidth: number): number[] {
   if (count <= 0) return [];
   if (count === 1) return [0];
-  const gap = Math.min(1.72, availableWidth / (count - 1));
+  const gap = Math.min(2.02, availableWidth / (count - 1));
   const start = -((count - 1) * gap) / 2;
   return Array.from({ length: count }, (_, index) => start + index * gap);
 }

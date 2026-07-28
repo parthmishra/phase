@@ -77,7 +77,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
         shadows
         frameloop="demand"
         dpr={[1, 1.5]}
-        camera={{ fov: 38, near: 0.1, far: 60 }}
+        camera={{ fov: 42, near: 0.1, far: 70 }}
         gl={{
           antialias: true,
           alpha: true,
@@ -86,10 +86,10 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
         style={{ position: "absolute", inset: 0 }}
       >
         <ArenaCameraRig />
-        <fog attach="fog" args={["#07100e", 19, 35]} />
-        <ambientLight intensity={0.72} color="#d9ece4" />
+        <fog attach="fog" args={["#0d1420", 24, 42]} />
+        <ambientLight intensity={0.78} color="#dce7f5" />
         <hemisphereLight
-          args={["#b9d7dd", "#10140f", 0.82]}
+          args={["#c7d7ec", "#0b1018", 0.82]}
         />
         <directionalLight
           position={[-4, 10, 7]}
@@ -107,7 +107,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           position={[0, 3.8, 0]}
           intensity={7}
           distance={12}
-          color="#b88b46"
+          color="#7596c7"
         />
 
         <ArenaTable />
@@ -128,15 +128,24 @@ function ArenaCameraRig() {
     const perspective = camera as THREE.PerspectiveCamera;
     const aspect = Math.max(size.width / Math.max(size.height, 1), 0.4);
     const compact = aspect < 1.35;
-    const cameraPosition = compact
-      ? new THREE.Vector3(0, 14.2, 12.8)
-      : new THREE.Vector3(0, 10.4, 11.8);
     const target = compact
-      ? new THREE.Vector3(0, 0, 0.4)
-      : new THREE.Vector3(0, 0, 0.9);
+      ? new THREE.Vector3(0, 0, 0.25)
+      : new THREE.Vector3(0, 0, 0.55);
+    const direction = compact
+      ? new THREE.Vector3(0, 0.73, 0.68).normalize()
+      : new THREE.Vector3(0, 0.62, 0.78).normalize();
+    const halfFov = (42 * Math.PI) / 360;
+    const fitRadius = compact ? 9.7 : 9.3;
+    const horizontalDistance = fitRadius / (Math.tan(halfFov) * aspect);
+    const verticalDistance = fitRadius / Math.tan(halfFov);
+    const distance = Math.max(
+      horizontalDistance,
+      verticalDistance * (compact ? 0.58 : 0.44),
+    );
+    const cameraPosition = direction.multiplyScalar(distance).add(target);
 
     perspective.position.copy(cameraPosition);
-    perspective.fov = compact ? 42 : 38;
+    perspective.fov = 42;
     perspective.aspect = aspect;
     perspective.updateProjectionMatrix();
     perspective.lookAt(target);

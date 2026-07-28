@@ -17,6 +17,6 @@ describe("spreadPositions", () => {
   });
 
   it("uses a readable maximum gap for sparse lanes", () => {
-    expect(spreadPositions(3, 20)).toEqual([-1.72, 0, 1.72]);
+    expect(spreadPositions(3, 20)).toEqual([-2.02, 0, 2.02]);
   });
 });

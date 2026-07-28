@@ -98,7 +98,8 @@ describe("GameCardPreview", () => {
     render(<GameCardPreview />);
 
     const liveCard = screen.getByRole("article", { name: "Pithing Needle" });
-    expect(within(liveCard).getByText("5/4")).toBeInTheDocument();
+    expect(liveCard).toHaveAttribute("data-arena-power", "5");
+    expect(liveCard).toHaveAttribute("data-arena-toughness", "4");
   });
 
   it("anchors the preview to the hand card hovered through PlayerHand", async () => {

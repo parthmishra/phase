@@ -271,7 +271,7 @@ function buildDefaultPreferences(): PreferencesState {
     hudLayout: "inline",
     followActiveOpponent: true,
     logDefaultState: "closed",
-    boardBackground: "auto-wubrg",
+    boardBackground: "plain_slate",
     customBackgroundUrl: "",
     vfxQuality: "full",
     animationSpeedMultiplier: ANIMATION_SPEED_DEFAULT,
@@ -785,7 +785,7 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
     }),
     {
       name: "phase-preferences",
-      version: 28,
+      version: 29,
       // v0 → v1: flat aiDifficulty + aiDeckName become aiSeats[0].
       // v1 → v2: discrete animationSpeed/combatPacing enums become numeric
       //          animationSpeedMultiplier/combatPacingMultiplier.
@@ -845,6 +845,8 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       //             preserves the intended enabled-by-default behavior.
       // v27 → v28: Add showCardPreviewFooter; legacy stores default to true
       //          via the shallow merge, preserving the prior presentation.
+      // v28 → v29: Use the neutral Slate background while the Arena 3D
+      //          experiment establishes its own visual language.
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         let migrated = persisted as Record<string, unknown>;
@@ -1009,6 +1011,10 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
                 ? "SkipLowUseWindows"
                 : "Standard",
           };
+        }
+
+        if (version < 29 && migrated.boardBackground === "auto-wubrg") {
+          migrated = { ...migrated, boardBackground: "plain_slate" };
         }
 
         return migrated;

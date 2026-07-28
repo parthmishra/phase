@@ -31,16 +31,21 @@ engine GameObject + derived presentation state
           ArenaCardPresentation
               ┌─────┴─────┐
               ▼           ▼
-       DOM hand face   CanvasTexture
+     Composed hand face CanvasTexture
                           │
                           ▼
                    Three.js permanent
 ```
 
-The hand remains DOM-rendered because it needs sharp text, direct manipulation,
-keyboard semantics, and high-resolution inspection. Battlefield permanents use
-small, bounded canvas textures that rebuild only when their presentation
+The hand remains a DOM interaction surface, but its visible face is a
+high-resolution canvas composition shared by hand and inspection modes. It uses
+the PoC's measured M15 frame geometry, Beleren title/type typography, MPlantin
+rules typography, and locally rasterized Scryfall pips. Battlefield permanents
+use small, bounded canvas textures that rebuild only when their presentation
 revision changes.
+
+Frame, font, and pip assets are runtime-only and gitignored. Run
+`pnpm arena:assets` from `client/` to download them for a fresh checkout.
 
 The existing Phase dispatch pipeline remains authoritative. Three.js hit tests
 route object IDs into the same engine-provided legal action buckets and
@@ -80,8 +85,9 @@ object mount rather than guessed from card text or zone names.
 
 ## Visual language
 
-- Deep green-black stone/felt surface: quiet enough for multicolor art.
-- Warm brass center light: priority and resolution feel ceremonial.
+- Deep Slate felt surface: neutral enough for multicolor art and visually
+  distinct from a marked sports field.
+- Cool overhead light with restrained warmth on interaction feedback.
 - Cyan: an available action.
 - Acid green: a legal target.
 - Ember orange: declared combat.
@@ -101,7 +107,9 @@ selection.
 What currently earns its place:
 
 - The shallow perspective establishes a duel space without compromising hand
-  access or the existing priority controls.
+  access or the existing priority controls. The table deliberately fills the
+  available play area rather than floating as a small object over the chosen
+  background.
 - Land tapping, permanent arrival, hover lift, and attack travel are brief and
   state-linked. The table is still while the player is reading.
 - Legal-action cyan, modifier green, and combat ember remain distinguishable

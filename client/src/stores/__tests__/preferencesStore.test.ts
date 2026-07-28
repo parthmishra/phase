@@ -12,7 +12,7 @@ describe("preferencesStore", () => {
         hudLayout: "inline",
         followActiveOpponent: false,
         logDefaultState: "closed",
-        boardBackground: "auto-wubrg",
+        boardBackground: "plain_slate",
         vfxQuality: "full",
         animationSpeedMultiplier: 1.0,
         showCardPreviewFooter: true,
@@ -39,7 +39,7 @@ describe("preferencesStore", () => {
     expect(state.hudLayout).toBe("inline");
     expect(state.followActiveOpponent).toBe(false);
     expect(state.logDefaultState).toBe("closed");
-    expect(state.boardBackground).toBe("auto-wubrg");
+    expect(state.boardBackground).toBe("plain_slate");
     expect(state.multiplayerBoardLayout).toBe("focused");
     expect(state.aiSeats).toEqual([{ difficulty: "Medium", deckId: "Random" }]);
     expect(state.priorityPassingMode).toBe("Standard");
@@ -254,7 +254,7 @@ describe("preferencesStore", () => {
     expect(state.cardSize).toBe("medium");
     expect(state.hudLayout).toBe("inline");
     expect(state.logDefaultState).toBe("closed");
-    expect(state.boardBackground).toBe("auto-wubrg");
+    expect(state.boardBackground).toBe("plain_slate");
   });
 
   it("persists to localStorage with phase-preferences key", () => {
@@ -528,6 +528,22 @@ describe("preferencesStore", () => {
     expect(state.followActiveOpponent).toBe(true);
     expect(state.logDefaultState).toBe("open");
     expect(state.boardBackground).toBe("green");
+  });
+
+  it("migrates the previous automatic background default to Slate", () => {
+    localStorage.setItem(
+      "phase-preferences",
+      JSON.stringify({
+        state: { boardBackground: "auto-wubrg" },
+        version: 28,
+      }),
+    );
+
+    act(() => {
+      usePreferencesStore.persist.rehydrate();
+    });
+
+    expect(usePreferencesStore.getState().boardBackground).toBe("plain_slate");
   });
 
   it("aiBracketFilter defaults to empty (filter off)", () => {

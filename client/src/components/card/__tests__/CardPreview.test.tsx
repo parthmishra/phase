@@ -341,9 +341,10 @@ describe("CardPreview chosen attributes", () => {
 
     const liveCard = screen.getByRole("article", { name: "Second Card" });
     expect(liveCard).toHaveAttribute("data-arena-live-card-mode", "inspection");
-    expect(
-      liveCard.querySelector('img[src="oracle-second.png"]'),
-    ).not.toBeNull();
+    expect(liveCard).toHaveAttribute(
+      "data-arena-art-source",
+      "oracle-second.png",
+    );
     expect(document.querySelectorAll("[data-card-preview]")).toHaveLength(1);
     await waitFor(() => {
       expect(screen.queryByAltText("First Card")).toBeNull();

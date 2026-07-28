@@ -25,6 +25,7 @@ export interface ArenaCardPresentation {
   faceDown: boolean;
   name: string;
   manaSymbols: string[];
+  manaCostReduced: boolean;
   typeLine: string;
   rulesText: string | null;
   keywords: string[];
@@ -50,12 +51,16 @@ export function buildArenaCardPresentation(
   displayCost: ManaCost = object.mana_cost,
   attribution?: ObjectAttribution,
   rulesText: string | null = null,
+  manaCostReduced = false,
 ): ArenaCardPresentation {
+  const manaSymbols = manaCostToShards(displayCost);
   return {
     objectId: object.id,
     faceDown: object.face_down,
     name: publicName(object),
-    manaSymbols: manaCostToShards(displayCost),
+    manaSymbols:
+      manaCostReduced && manaSymbols.length === 0 ? ["0"] : manaSymbols,
+    manaCostReduced,
     typeLine: formatTypeLine(object.card_types, object.keywords),
     rulesText,
     keywords: formatKeywords(object.keywords),

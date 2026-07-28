@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "pnpm run protocol:check && tsc -b && vite build",
     "build:bootstrap": "vite build --config bootstrap/vite.config.ts",
+    "arena:assets": "node scripts/fetch-arena-assets.mjs",
     "lint": "eslint .",
     "protocol:check": "node ../scripts/check-protocol-version.mjs",
     "type-check": "pnpm run protocol:check && tsc -b --noEmit",
