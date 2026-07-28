@@ -239,7 +239,7 @@ async function drawRulesText(
     const paragraphGap = Math.round(fontSize * 0.35);
     const lines = paragraphs.flatMap((paragraph, index) =>
       layoutParagraph(
-        tokenizeParagraph(context, paragraph, inlinePipSize),
+        tokenizeArenaRulesParagraph(context, paragraph, inlinePipSize),
         maxWidth,
         spaceWidth,
         index > 0 ? paragraphGap : 0,
@@ -312,34 +312,47 @@ async function drawRulesText(
   }
 }
 
-function tokenizeParagraph(
-  context: CanvasRenderingContext2D,
+export function tokenizeArenaRulesParagraph(
+  context: Pick<CanvasRenderingContext2D, "measureText">,
   paragraph: string,
   pipSize: number,
 ): RichToken[] {
   const tokens: RichToken[] = [];
+  const pipPattern = /\{([^}]+)\}/g;
   paragraph
     .split(/\s+/)
     .filter(Boolean)
     .forEach((word) => {
-      let remainder = word;
-      while (remainder.startsWith("{")) {
-        const close = remainder.indexOf("}");
-        if (close === -1) break;
+      let cursor = 0;
+      let hasWordToken = false;
+      for (const match of word.matchAll(pipPattern)) {
+        const matchIndex = match.index;
+        if (matchIndex > cursor) {
+          const text = word.slice(cursor, matchIndex);
+          tokens.push({
+            kind: "text",
+            text,
+            width: context.measureText(text).width,
+            attachPrevious: hasWordToken,
+          });
+          hasWordToken = true;
+        }
         tokens.push({
           kind: "pip",
-          symbol: remainder.slice(1, close),
+          symbol: match[1],
           width: pipSize,
-          attachPrevious: false,
+          attachPrevious: hasWordToken,
         });
-        remainder = remainder.slice(close + 1);
+        hasWordToken = true;
+        cursor = matchIndex + match[0].length;
       }
-      if (remainder) {
+      if (cursor < word.length) {
+        const text = word.slice(cursor);
         tokens.push({
           kind: "text",
-          text: remainder,
-          width: context.measureText(remainder).width,
-          attachPrevious: /^[.,:;!?'")\]]+$/.test(remainder),
+          text,
+          width: context.measureText(text).width,
+          attachPrevious: hasWordToken,
         });
       }
     });

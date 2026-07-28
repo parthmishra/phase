@@ -13,6 +13,7 @@ import {
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
+import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import { layoutArenaSeat } from "./arenaLayout.ts";
 
 interface ArenaGameBoardProps {
@@ -65,58 +66,72 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
   if (!gameState) return null;
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center">
+    <div className="relative min-h-0 flex-1 overflow-visible">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex -translate-y-[calc(100%+0.4rem)] justify-center">
         {props.oppHud}
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center">
         {props.playerHud}
       </div>
 
-      <Canvas
-        shadows
-        frameloop="demand"
-        dpr={[1, 1.5]}
-        camera={{ fov: 42, near: 0.1, far: 70 }}
-        gl={{
-          antialias: true,
-          alpha: true,
-          powerPreference: "high-performance",
-        }}
-        style={{ position: "absolute", inset: 0 }}
-      >
-        <ArenaCameraRig />
-        <fog attach="fog" args={["#0d1420", 24, 42]} />
-        <ambientLight intensity={0.78} color="#dce7f5" />
-        <hemisphereLight
-          args={["#c7d7ec", "#0b1018", 0.82]}
-        />
-        <directionalLight
-          position={[-4, 10, 7]}
-          intensity={1.58}
-          color="#fff1cf"
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-camera-left={-9}
-          shadow-camera-right={9}
-          shadow-camera-top={9}
-          shadow-camera-bottom={-9}
-        />
-        <pointLight
-          position={[0, 3.8, 0]}
-          intensity={7}
-          distance={12}
-          color="#7596c7"
-        />
+      <div className="absolute inset-0 overflow-hidden">
+        <Canvas
+          shadows
+          frameloop="demand"
+          dpr={[1, 1.5]}
+          camera={{ fov: 42, near: 0.1, far: 70 }}
+          gl={{
+            antialias: true,
+            alpha: true,
+            powerPreference: "high-performance",
+          }}
+          style={{ position: "absolute", inset: 0 }}
+        >
+          <ArenaCameraRig />
+          <fog attach="fog" args={["#0d1420", 24, 42]} />
+          <ambientLight intensity={0.78} color="#dce7f5" />
+          <hemisphereLight
+            args={["#c7d7ec", "#0b1018", 0.82]}
+          />
+          <directionalLight
+            position={[-4, 10, 7]}
+            intensity={1.58}
+            color="#fff1cf"
+            castShadow
+            shadow-mapSize-width={1024}
+            shadow-mapSize-height={1024}
+            shadow-camera-left={-9}
+            shadow-camera-right={9}
+            shadow-camera-top={9}
+            shadow-camera-bottom={-9}
+          />
+          <pointLight
+            position={[0, 3.8, 0]}
+            intensity={7}
+            distance={12}
+            color="#7596c7"
+          />
 
-        <ArenaTable />
-        {placements.map((placement) => (
-          <ArenaPermanent key={placement.objectId} {...placement} />
-        ))}
-      </Canvas>
+          <ArenaTable />
+          <ArenaZonePiles
+            playerId={perspectivePlayerId}
+            seat="local"
+            onViewZone={props.onViewZone}
+          />
+          {opponentId != null && (
+            <ArenaZonePiles
+              playerId={opponentId}
+              seat="opponent"
+              onViewZone={props.onViewZone}
+            />
+          )}
+          {placements.map((placement) => (
+            <ArenaPermanent key={placement.objectId} {...placement} />
+          ))}
+        </Canvas>
 
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_52%,rgba(0,0,0,0.24)_100%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_52%,rgba(0,0,0,0.24)_100%)]" />
+      </div>
     </div>
   );
 });

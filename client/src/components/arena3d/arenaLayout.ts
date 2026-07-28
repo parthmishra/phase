@@ -14,6 +14,13 @@ export interface ArenaPlacement {
   attackDirection: -1 | 1;
 }
 
+export interface ArenaZoneLayout {
+  faceAngle: number;
+  library: [number, number, number];
+  graveyard: [number, number, number];
+  exile: [number, number, number];
+}
+
 const LANE_Z: Record<ArenaLane, number> = {
   creatures: 1.2,
   support: 2.55,
@@ -21,9 +28,9 @@ const LANE_Z: Record<ArenaLane, number> = {
 };
 
 const LANE_WIDTH: Record<ArenaLane, number> = {
-  creatures: 13.4,
-  support: 12.4,
-  lands: 13.4,
+  creatures: 9.4,
+  support: 8.8,
+  lands: 9.4,
 };
 
 export function layoutArenaSeat(
@@ -40,6 +47,23 @@ export function layoutArenaSeat(
     ...layoutLane(support, "support", direction, faceAngle, attackDirection),
     ...layoutLane(view.lands, "lands", direction, faceAngle, attackDirection),
   ];
+}
+
+export function arenaZoneLayout(seat: ArenaSeat): ArenaZoneLayout {
+  if (seat === "local") {
+    return {
+      faceAngle: 0,
+      library: [-6.3, 0.08, 3.82],
+      graveyard: [-6.3, 0.08, 1.62],
+      exile: [-6.3, 0.08, -0.58],
+    };
+  }
+  return {
+    faceAngle: Math.PI,
+    library: [6.3, 0.08, -3.82],
+    graveyard: [6.3, 0.08, -1.62],
+    exile: [6.3, 0.08, 0.58],
+  };
 }
 
 function layoutLane(

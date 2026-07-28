@@ -6,7 +6,12 @@ import {
 } from "./arenaCardPresentation.ts";
 import { renderArenaCardCanvas } from "./arenaCardCanvas.ts";
 
-const composedCardCache = new Map<string, Promise<string>>();
+interface ComposedCardCacheEntry {
+  dataUrl: string | null;
+  promise: Promise<string>;
+}
+
+const composedCardCache = new Map<string, ComposedCardCacheEntry>();
 
 export function useArenaComposedCard(
   presentation: ArenaCardPresentation | null,
@@ -16,30 +21,38 @@ export function useArenaComposedCard(
     presentation && artSource
       ? `${arenaCardRevision(presentation)}|${artSource}`
       : null;
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const cachedDataUrl = key ? composedCardCache.get(key)?.dataUrl ?? null : null;
+  const [resolved, setResolved] = useState<{
+    key: string;
+    dataUrl: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!key || !presentation || !artSource) {
-      setDataUrl(null);
+      setResolved(null);
       return;
     }
 
     let cancelled = false;
-    let request = composedCardCache.get(key);
-    if (!request) {
-      request = renderArenaCardCanvas(presentation, artSource).then((canvas) =>
-        canvas.toDataURL("image/png"),
-      );
-      composedCardCache.set(key, request);
+    let entry = composedCardCache.get(key);
+    if (!entry) {
+      entry = createCacheEntry(presentation, artSource);
+      composedCardCache.set(key, entry);
     }
-    request
+    if (entry.dataUrl) {
+      setResolved({ key, dataUrl: entry.dataUrl });
+      return;
+    }
+    entry.promise
       .then((nextDataUrl) => {
-        if (!cancelled) setDataUrl(nextDataUrl);
+        if (!cancelled) setResolved({ key, dataUrl: nextDataUrl });
       })
       .catch((error: unknown) => {
         console.error("Arena card composition failed", error);
-        if (!cancelled) setDataUrl(null);
-        composedCardCache.delete(key);
+        if (!cancelled) setResolved(null);
+        if (composedCardCache.get(key) === entry) {
+          composedCardCache.delete(key);
+        }
       });
 
     return () => {
@@ -47,5 +60,22 @@ export function useArenaComposedCard(
     };
   }, [artSource, key, presentation]);
 
-  return dataUrl;
+  if (cachedDataUrl) return cachedDataUrl;
+  return resolved?.key === key ? resolved.dataUrl : null;
+}
+
+function createCacheEntry(
+  presentation: ArenaCardPresentation,
+  artSource: string,
+): ComposedCardCacheEntry {
+  const entry = {
+    dataUrl: null,
+  } as ComposedCardCacheEntry;
+  entry.promise = renderArenaCardCanvas(presentation, artSource)
+    .then((canvas) => canvas.toDataURL("image/png"))
+    .then((nextDataUrl) => {
+      entry.dataUrl = nextDataUrl;
+      return nextDataUrl;
+    });
+  return entry;
 }

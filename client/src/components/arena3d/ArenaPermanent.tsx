@@ -86,7 +86,6 @@ export function ArenaPermanent({
       position[2] + (interaction.isAttacking ? attackDirection : 0);
     const targetY =
       position[1]
-      + (interaction.isHovered ? 0.18 : 0)
       + (interaction.isAttacking ? 0.07 : 0);
     const targetRotation =
       faceAngle + (object?.tapped ? Math.PI / 2 : 0);
@@ -130,7 +129,6 @@ export function ArenaPermanent({
 
   return (
     <group
-      ref={groupRef}
       onClick={(event) => {
         event.stopPropagation();
         interaction.onClick();
@@ -138,66 +136,83 @@ export function ArenaPermanent({
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
     >
+      {/* Keep a stationary raycast surface over the permanent's resting slot.
+          Visual scale, arrival, tap, and combat motion must not move the hover
+          target out from under the cursor and dismiss the inspection preview. */}
       <mesh
-        ref={arrivalRingRef}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.01, 0]}
+        position={[position[0], position[1] + 0.24, position[2]]}
       >
-        <ringGeometry args={[0.62, 0.72, 72]} />
+        <planeGeometry args={[CARD_WIDTH * 1.16, CARD_HEIGHT * 1.22]} />
         <meshBasicMaterial
-          color="#f1cf83"
           transparent
-          opacity={0.46}
-          blending={THREE.AdditiveBlending}
+          opacity={0}
           depthWrite={false}
-          toneMapped={false}
         />
       </mesh>
 
-      {glow && (
+      <group ref={groupRef}>
+        <mesh
+          ref={arrivalRingRef}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, -0.01, 0]}
+        >
+          <ringGeometry args={[0.62, 0.72, 72]} />
+          <meshBasicMaterial
+            color="#f1cf83"
+            transparent
+            opacity={0.46}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+
+        {glow && (
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, -0.004, 0]}
+          >
+            <planeGeometry args={[CARD_WIDTH + 0.13, CARD_HEIGHT + 0.13]} />
+            <meshBasicMaterial
+              color={glow.color}
+              transparent
+              opacity={glow.opacity}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
+          </mesh>
+        )}
+
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, -0.004, 0]}
+          castShadow
+          receiveShadow
         >
-          <planeGeometry args={[CARD_WIDTH + 0.13, CARD_HEIGHT + 0.13]} />
+          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
           <meshBasicMaterial
-            color={glow.color}
+            key={texture?.uuid ?? "arena-loading"}
+            map={texture}
+            color={texture ? "#ffffff" : "#19221f"}
             transparent
-            opacity={glow.opacity}
-            blending={THREE.AdditiveBlending}
+            alphaTest={0.06}
+            toneMapped={false}
+          />
+        </mesh>
+
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, -0.025, 0.035]}
+        >
+          <planeGeometry args={[CARD_WIDTH * 1.02, CARD_HEIGHT * 1.02]} />
+          <meshBasicMaterial
+            color="#000000"
+            transparent
+            opacity={0.34}
             depthWrite={false}
           />
         </mesh>
-      )}
-
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        castShadow
-        receiveShadow
-      >
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-        <meshBasicMaterial
-          key={texture?.uuid ?? "arena-loading"}
-          map={texture}
-          color={texture ? "#ffffff" : "#19221f"}
-          transparent
-          alphaTest={0.06}
-          toneMapped={false}
-        />
-      </mesh>
-
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.025, 0.035]}
-      >
-        <planeGeometry args={[CARD_WIDTH * 1.02, CARD_HEIGHT * 1.02]} />
-        <meshBasicMaterial
-          color="#000000"
-          transparent
-          opacity={0.34}
-          depthWrite={false}
-        />
-      </mesh>
+      </group>
     </group>
   );
 }

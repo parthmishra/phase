@@ -120,9 +120,6 @@ import { TargetingOverlay } from "../components/targeting/TargetingOverlay.tsx";
 import { PlayerHud } from "../components/hud/PlayerHud.tsx";
 import { OpponentHud } from "../components/hud/OpponentHud.tsx";
 import { TurnStatusLine } from "../components/hud/TurnStatusLine.tsx";
-import { GraveyardPile } from "../components/zone/GraveyardPile.tsx";
-import { LibraryPile } from "../components/zone/LibraryPile.tsx";
-import { ExilePile } from "../components/zone/ExilePile.tsx";
 import { ZoneViewer } from "../components/zone/ZoneViewer.tsx";
 import {
   PreferencesModal,
@@ -165,7 +162,7 @@ import { useMultiplayerDraftStore } from "../stores/multiplayerDraftStore.ts";
 import { SpectatorChrome } from "../components/spectator/SpectatorChrome.tsx";
 import { useSpectatorMode } from "../hooks/useSpectatorMode.ts";
 import { GameProvider } from "../providers/GameProvider.tsx";
-import { useCanActForWaitingState, usePerspectivePlayerId, usePlayerId } from "../hooks/usePlayerId.ts";
+import { useCanActForWaitingState, usePlayerId } from "../hooks/usePlayerId.ts";
 import {
   abilityChoiceLabel,
   formatAbilityCost,
@@ -176,21 +173,14 @@ import { LoyaltyBadge } from "../components/ui/LoyaltyBadge.tsx";
 import {
   getCastableZoneViewerTarget,
   getBoardChoiceView,
-  getOpponentIds,
   getSeatCount,
   getWaitingForObjectChoiceIds,
   isSplitBoardActive,
-  resolveFocusedOpponent,
   shouldRenderFocusedOpponentTopRow,
   type ZoneViewerTarget,
 } from "../viewmodel/gameStateView.ts";
 import { gameButtonClass } from "../components/ui/buttonStyles.ts";
 import { GAME_Z_LAYER } from "../constants/ui.ts";
-
-type ZoneRailStyle = CSSProperties & {
-  "--card-w": string;
-  "--card-h": string;
-};
 
 function castableZoneViewerAutoOpenKey(target: ZoneViewerTarget): string {
   return `${target.zone}:${target.playerId}:${target.objectIds.join(",")}`;
@@ -899,7 +889,6 @@ function GamePageContent({
   const [boardContextMenu, setBoardContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const playerId = usePlayerId();
-  const perspectivePlayerId = usePerspectivePlayerId();
   const isSpectatorMode = useSpectatorMode();
   // Card-report picker is valid in a live, participating game (never spectate).
   const canReportCard = gameState != null && !isSpectatorMode;
@@ -923,12 +912,6 @@ function GamePageContent({
   );
   const opponentDisplayName = useMultiplayerStore((s) => s.opponentDisplayName);
   const adapter = useGameStore((s) => s.adapter);
-  const focusedOpponent = useUiStore((s) => s.focusedOpponent);
-  const opponents = useMemo(() => {
-    return getOpponentIds(gameState, perspectivePlayerId);
-  }, [gameState, perspectivePlayerId]);
-  const activeOpponentId =
-    resolveFocusedOpponent(focusedOpponent, opponents) ?? opponents[0] ?? null;
   const seatCount = getSeatCount(gameState);
   const splitBoardActive = isSplitBoardActive(multiplayerBoardLayout, seatCount);
   const renderFocusedOpponentTopRow = shouldRenderFocusedOpponentTopRow(
@@ -1202,12 +1185,6 @@ function GamePageContent({
       ? isMobile ? "4.25rem" : "4.75rem"
       : "0.25rem",
   } as CSSProperties;
-  const playerZoneRailStyle: ZoneRailStyle = isMobile
-    ? { "--card-w": "28px", "--card-h": "39px" }
-    : { "--card-w": "clamp(45px, 4.5vw, 70px)", "--card-h": "clamp(63px, 6.3vw, 98px)" };
-  const pileSize = isMobile
-    ? { width: "38px", height: "53px" }
-    : { width: "clamp(45px, 4.5vw, 70px)", height: "clamp(63px, 6.3vw, 98px)" };
   const handleViewZone = useCallback(
     (zone: "graveyard" | "exile" | "library", zonePlayerId: number) => {
       setViewingZone({ zone, playerId: zonePlayerId });
@@ -1355,9 +1332,8 @@ function GamePageContent({
           gridTemplateColumns: "1fr",
         }}
       >
-        {/* Row 1: Opponent hand + zone piles. Equal flexible side tracks keep
-            the focused hand centered on the viewport while the piles remain
-            right-aligned; split layouts render their hands inside seat panes. */}
+        {/* Row 1: focused opponent hand. The Arena renderer owns the spatial
+            library/graveyard/exile zones on the tabletop. */}
         <div
           className={`relative z-20 min-w-0 w-full ${renderFocusedOpponentTopRow ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]" : "flex"} ${splitBoardActive ? "overflow-hidden" : "overflow-visible"}`}
           data-flex-zone="opp-row"
@@ -1368,32 +1344,7 @@ function GamePageContent({
               <div className="min-w-0">
                 <OpponentHand showCards={showAiHand} />
               </div>
-              <DraggableWidget
-                target={{ kind: "widget", key: "opponentPiles" }}
-                flexZone="opponentPiles"
-                className="flex items-start justify-self-end gap-1.5 px-1 py-1"
-                style={playerZoneRailStyle}
-              >
-                {activeOpponentId != null ? (
-                  <>
-                    <ExilePile
-                      playerId={activeOpponentId}
-                      size={pileSize}
-                      onClick={() => handleViewZone("exile", activeOpponentId)}
-                    />
-                    <LibraryPile
-                      playerId={activeOpponentId}
-                      size={pileSize}
-                      onView={() => handleViewZone("library", activeOpponentId)}
-                    />
-                    <GraveyardPile
-                      playerId={activeOpponentId}
-                      size={pileSize}
-                      onClick={() => handleViewZone("graveyard", activeOpponentId)}
-                    />
-                  </>
-                ) : null}
-              </DraggableWidget>
+              <div aria-hidden />
             </>
           )}
         </div>
@@ -1433,32 +1384,6 @@ function GamePageContent({
                 transform in index.css. */}
             <PlayerHand />
           </div>
-          <DraggableWidget
-            target={{ kind: "widget", key: "playerPiles" }}
-            flexZone="playerPiles"
-            scaleKey="playerPiles"
-            className="pointer-events-none absolute left-0 top-0 bottom-0 z-10 flex w-fit flex-col items-start justify-end gap-0.5 p-1 lg:gap-1 lg:p-3 [&>*]:pointer-events-auto [&>div>*]:pointer-events-auto"
-            // Anchor box-scale to the bottom-left dock corner.
-            style={{ ...playerZoneRailStyle, transformOrigin: "bottom left" }}
-          >
-            <div className="flex items-end gap-2">
-              <ExilePile
-                playerId={perspectivePlayerId}
-                size={pileSize}
-                onClick={() => handleViewZone("exile", perspectivePlayerId)}
-              />
-              <GraveyardPile
-                playerId={perspectivePlayerId}
-                size={pileSize}
-                onClick={() => handleViewZone("graveyard", perspectivePlayerId)}
-              />
-              <LibraryPile
-                playerId={perspectivePlayerId}
-                size={pileSize}
-                onView={() => handleViewZone("library", perspectivePlayerId)}
-              />
-            </div>
-          </DraggableWidget>
         </div>
       </div>
 
