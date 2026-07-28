@@ -19,6 +19,7 @@ export interface ArenaZoneLayout {
   library: [number, number, number];
   graveyard: [number, number, number];
   exile: [number, number, number];
+  command: [number, number, number];
 }
 
 const LANE_Z: Record<ArenaLane, number> = {
@@ -30,7 +31,7 @@ const LANE_Z: Record<ArenaLane, number> = {
 const LANE_WIDTH: Record<ArenaLane, number> = {
   creatures: 9.4,
   support: 8.8,
-  lands: 9.4,
+  lands: 5.8,
 };
 
 export function layoutArenaSeat(
@@ -53,16 +54,18 @@ export function arenaZoneLayout(seat: ArenaSeat): ArenaZoneLayout {
   if (seat === "local") {
     return {
       faceAngle: 0,
-      library: [-6.3, 0.08, 3.82],
-      graveyard: [-6.3, 0.08, 1.62],
-      exile: [-6.3, 0.08, -0.58],
+      library: [-6.8, 0.08, 3.46],
+      graveyard: [-5.25, 0.08, 3.46],
+      exile: [-3.7, 0.08, 3.46],
+      command: [6.35, 0.08, 3.46],
     };
   }
   return {
     faceAngle: Math.PI,
-    library: [6.3, 0.08, -3.82],
-    graveyard: [6.3, 0.08, -1.62],
-    exile: [6.3, 0.08, 0.58],
+    library: [6.8, 0.08, -3.46],
+    graveyard: [5.25, 0.08, -3.46],
+    exile: [3.7, 0.08, -3.46],
+    command: [-6.35, 0.08, -3.46],
   };
 }
 

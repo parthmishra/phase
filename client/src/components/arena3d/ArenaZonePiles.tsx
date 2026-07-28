@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
-import { useTranslation } from "react-i18next";
 import * as THREE from "three";
 
 import type { PlayerId } from "../../adapter/types.ts";
@@ -11,8 +10,10 @@ import { useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerZoneIds } from "../../viewmodel/gameStateView.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
 import { arenaZoneLayout, type ArenaSeat } from "./arenaLayout.ts";
+import { useArenaImageTexture } from "./useArenaImageTexture.ts";
 
 type ViewableZone = "graveyard" | "exile" | "library";
+type ArenaCardZoneKind = "graveyard" | "library";
 
 interface ArenaZonePilesProps {
   playerId: PlayerId;
@@ -28,7 +29,6 @@ export function ArenaZonePiles({
   seat,
   onViewZone,
 }: ArenaZonePilesProps) {
-  const { t } = useTranslation("game");
   const gameState = useGameStore((state) => state.gameState);
   const library = getPlayerZoneIds(gameState, "library", playerId);
   const graveyard = getPlayerZoneIds(gameState, "graveyard", playerId);
@@ -50,7 +50,7 @@ export function ArenaZonePiles({
   return (
     <group>
       <ArenaCardZone
-        label={t("zone.library")}
+        kind="library"
         count={library.length}
         position={layout.library}
         faceAngle={layout.faceAngle}
@@ -63,7 +63,7 @@ export function ArenaZonePiles({
         onClick={() => handleView("library")}
       />
       <ArenaCardZone
-        label={t("zone.graveyard")}
+        kind="graveyard"
         count={graveyard.length}
         position={layout.graveyard}
         faceAngle={layout.faceAngle}
@@ -76,7 +76,6 @@ export function ArenaZonePiles({
       />
       {exile.length > 0 && (
         <ArenaExileZone
-          label={t("zone.exile")}
           count={exile.length}
           position={layout.exile}
           faceAngle={layout.faceAngle}
@@ -88,7 +87,7 @@ export function ArenaZonePiles({
 }
 
 interface ArenaCardZoneProps {
-  label: string;
+  kind: ArenaCardZoneKind;
   count: number;
   position: [number, number, number];
   faceAngle: number;
@@ -98,7 +97,7 @@ interface ArenaCardZoneProps {
 }
 
 function ArenaCardZone({
-  label,
+  kind,
   count,
   position,
   faceAngle,
@@ -106,15 +105,16 @@ function ArenaCardZone({
   stack = false,
   onClick,
 }: ArenaCardZoneProps) {
-  const texture = useImageTexture(imageSource);
-  const labelTexture = useMemo(
-    () => makeZoneLabelTexture(label, count, "#dbe8f4"),
-    [count, label],
-  );
+  const texture = useArenaImageTexture(imageSource);
+  const emptyTexture = useMemo(() => makeEmptyZoneTexture(kind), [kind]);
   const [hovered, setHovered] = useState(false);
-  const stackHeight = stack ? Math.min(0.09 + count * 0.002, 0.2) : 0.045;
+  const stackHeight = stack
+    ? Math.min(0.09 + count * 0.002, 0.2)
+    : count > 0
+      ? 0.045
+      : 0;
 
-  useEffect(() => () => labelTexture.dispose(), [labelTexture]);
+  useEffect(() => () => emptyTexture.dispose(), [emptyTexture]);
 
   const pointerOver = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -138,62 +138,55 @@ function ArenaCardZone({
       onPointerOver={pointerOver}
       onPointerOut={pointerOut}
     >
-      <mesh
-        position={[0, stackHeight / 2, 0]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[CARD_WIDTH, stackHeight, CARD_HEIGHT]} />
-        <meshStandardMaterial
-          color={stack ? "#111820" : "#22262b"}
-          roughness={0.72}
-          metalness={0.08}
-        />
-      </mesh>
-
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, stackHeight + (hovered ? 0.07 : 0.006), 0]}
-        castShadow
-      >
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-        <meshBasicMaterial
-          key={texture?.uuid ?? "arena-zone-loading"}
-          map={texture}
-          color={texture ? "#ffffff" : count > 0 ? "#29343f" : "#141b24"}
-          toneMapped={false}
-        />
-      </mesh>
-
-      {count === 0 && (
+      {count > 0 ? (
+        <>
+          <mesh
+            position={[0, stackHeight / 2, 0]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[CARD_WIDTH, stackHeight, CARD_HEIGHT]} />
+            <meshStandardMaterial
+              color={stack ? "#111820" : "#22262b"}
+              roughness={0.72}
+              metalness={0.08}
+            />
+          </mesh>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
+          >
+            <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+            <meshBasicMaterial
+              key={texture?.uuid ?? "arena-zone-loading"}
+              map={texture}
+              color={texture ? "#ffffff" : "#29343f"}
+              transparent
+              alphaTest={0.04}
+              toneMapped={false}
+            />
+          </mesh>
+        </>
+      ) : (
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, stackHeight + 0.012, 0]}
+          position={[0, 0.006, 0]}
         >
-          <ringGeometry args={[0.34, 0.42, 48]} />
+          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
           <meshBasicMaterial
-            color="#708197"
+            map={emptyTexture}
             transparent
-            opacity={0.22}
+            opacity={hovered ? 0.72 : 0.46}
             depthWrite={false}
+            toneMapped={false}
           />
         </mesh>
       )}
-
-      <sprite position={[0, 0.62 + stackHeight, 0]} scale={[1.56, 0.39, 1]}>
-        <spriteMaterial
-          map={labelTexture}
-          transparent
-          depthTest={false}
-          toneMapped={false}
-        />
-      </sprite>
     </group>
   );
 }
 
 interface ArenaExileZoneProps {
-  label: string;
   count: number;
   position: [number, number, number];
   faceAngle: number;
@@ -201,19 +194,12 @@ interface ArenaExileZoneProps {
 }
 
 function ArenaExileZone({
-  label,
   count,
   position,
   faceAngle,
   onClick,
 }: ArenaExileZoneProps) {
-  const labelTexture = useMemo(
-    () => makeZoneLabelTexture(label, count, "#c5b9ff"),
-    [count, label],
-  );
   const [hovered, setHovered] = useState(false);
-
-  useEffect(() => () => labelTexture.dispose(), [labelTexture]);
 
   return (
     <group
@@ -244,92 +230,63 @@ function ArenaExileZone({
           metalness={0.22}
         />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
-        <ringGeometry args={[0.28, 0.48, 64]} />
-        <meshBasicMaterial
-          color="#9c7cf4"
-          transparent
-          opacity={hovered ? 0.8 : 0.48}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <sprite position={[0, 0.62, 0]} scale={[1.56, 0.39, 1]}>
-        <spriteMaterial
-          map={labelTexture}
-          transparent
-          depthTest={false}
-          toneMapped={false}
-        />
-      </sprite>
+      {Array.from({ length: Math.min(count, 3) }, (_, index) => (
+        <mesh
+          key={index}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.025 + index * 0.003, 0]}
+        >
+          <ringGeometry
+            args={[0.25 + index * 0.11, 0.31 + index * 0.11, 64]}
+          />
+          <meshBasicMaterial
+            color="#9c7cf4"
+            transparent
+            opacity={(hovered ? 0.82 : 0.5) - index * 0.1}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
 
-function useImageTexture(source: string | null): THREE.Texture | null {
-  const [loaded, setLoaded] = useState<{
-    source: string;
-    texture: THREE.Texture;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!source) return;
-    let cancelled = false;
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      if (cancelled) return;
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      context.drawImage(image, 0, 0);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = 8;
-      setLoaded({ source, texture });
-    };
-    image.src = source;
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
-
-  useEffect(
-    () => () => {
-      loaded?.texture.dispose();
-    },
-    [loaded],
-  );
-
-  return loaded?.source === source ? loaded.texture : null;
-}
-
-function makeZoneLabelTexture(
-  label: string,
-  count: number,
-  color: string,
-): THREE.CanvasTexture {
+function makeEmptyZoneTexture(kind: ArenaCardZoneKind): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = 390;
+  canvas.height = 546;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("2D canvas unavailable");
 
-  context.fillStyle = "rgba(8, 13, 20, 0.9)";
+  context.fillStyle = "rgba(5, 10, 17, 0.34)";
   context.beginPath();
-  context.roundRect(34, 27, 444, 74, 30);
+  context.roundRect(8, 8, 374, 530, 28);
   context.fill();
-  context.strokeStyle = "rgba(170, 195, 220, 0.28)";
-  context.lineWidth = 3;
+  context.strokeStyle = "rgba(156, 176, 198, 0.26)";
+  context.lineWidth = 5;
   context.stroke();
-  context.fillStyle = color;
-  context.font = '700 34px "Arena Beleren", Georgia, serif';
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(`${label.toUpperCase()}  ${count}`, 256, 65);
+
+  context.strokeStyle = "rgba(156, 176, 198, 0.2)";
+  context.fillStyle = "rgba(111, 131, 153, 0.16)";
+  context.lineWidth = 10;
+  if (kind === "graveyard") {
+    context.beginPath();
+    context.roundRect(126, 150, 138, 234, 54);
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(98, 396);
+    context.lineTo(292, 396);
+    context.stroke();
+  } else {
+    for (const offset of [0, 18]) {
+      context.beginPath();
+      context.roundRect(112 + offset, 134 - offset, 150, 244, 20);
+      context.stroke();
+    }
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

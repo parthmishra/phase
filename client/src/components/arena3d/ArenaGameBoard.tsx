@@ -11,6 +11,7 @@ import {
   getOpponentIds,
   resolveFocusedOpponent,
 } from "../../viewmodel/gameStateView.ts";
+import { ArenaCommandZone } from "./ArenaCommandZone.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
@@ -118,19 +119,28 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             seat="local"
             onViewZone={props.onViewZone}
           />
+          <ArenaCommandZone
+            playerId={perspectivePlayerId}
+            seat="local"
+          />
           {opponentId != null && (
-            <ArenaZonePiles
-              playerId={opponentId}
-              seat="opponent"
-              onViewZone={props.onViewZone}
-            />
+            <>
+              <ArenaZonePiles
+                playerId={opponentId}
+                seat="opponent"
+                onViewZone={props.onViewZone}
+              />
+              <ArenaCommandZone
+                playerId={opponentId}
+                seat="opponent"
+              />
+            </>
           )}
           {placements.map((placement) => (
             <ArenaPermanent key={placement.objectId} {...placement} />
           ))}
         </Canvas>
 
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_52%,rgba(0,0,0,0.24)_100%)]" />
       </div>
     </div>
   );

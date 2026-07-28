@@ -3,6 +3,7 @@ import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type { ArenaPlacement } from "./arenaLayout.ts";
+import { ArenaCardGlow } from "./ArenaCardGlow.tsx";
 import { useArenaCardTexture } from "./useArenaCardTexture.ts";
 import { useArenaPermanentInteraction } from "./useArenaPermanentInteraction.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
@@ -169,19 +170,14 @@ export function ArenaPermanent({
         </mesh>
 
         {glow && (
-          <mesh
-            rotation={[-Math.PI / 2, 0, 0]}
-            position={[0, -0.004, 0]}
-          >
-            <planeGeometry args={[CARD_WIDTH + 0.13, CARD_HEIGHT + 0.13]} />
-            <meshBasicMaterial
-              color={glow.color}
-              transparent
-              opacity={glow.opacity}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-            />
-          </mesh>
+          <ArenaCardGlow
+            width={CARD_WIDTH}
+            height={CARD_HEIGHT}
+            padding={glow.padding}
+            color={glow.color}
+            opacity={glow.opacity}
+            y={-0.004}
+          />
         )}
 
         <mesh
@@ -219,18 +215,18 @@ export function ArenaPermanent({
 
 function permanentGlow(
   interaction: ArenaPermanentInteractionLike,
-): { color: string; opacity: number } | null {
+): { color: string; opacity: number; padding: number } | null {
   if (interaction.isAttacking || interaction.isBlocking) {
-    return { color: "#f58b3b", opacity: 0.7 };
+    return { color: "#f58b3b", opacity: 0.7, padding: 0.2 };
   }
   if (interaction.isValidTarget) {
-    return { color: "#b9f65a", opacity: 0.82 };
+    return { color: "#b9f65a", opacity: 0.82, padding: 0.24 };
   }
   if (interaction.isActionable) {
-    return { color: "#62dcef", opacity: 0.58 };
+    return { color: "#22d3ee", opacity: 0.78, padding: 0.24 };
   }
   if (interaction.isSelected) {
-    return { color: "#f7e7b0", opacity: 0.55 };
+    return { color: "#f7e7b0", opacity: 0.55, padding: 0.2 };
   }
   return null;
 }
