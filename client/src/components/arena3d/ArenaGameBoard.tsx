@@ -104,7 +104,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           <directionalLight
             position={[-7, 12, -8]}
             intensity={1.72}
-            color="#fff1cf"
+            color="#f2f6ff"
             castShadow
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}

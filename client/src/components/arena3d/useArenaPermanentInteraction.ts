@@ -10,6 +10,7 @@ import { useGameStore } from "../../stores/gameStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import {
   collectObjectActions,
+  isManaObjectAction,
   resolveSingleActionDispatch,
 } from "../../viewmodel/cardActionChoice.ts";
 import {
@@ -21,6 +22,7 @@ import {
 } from "../../viewmodel/gameStateView.ts";
 
 export interface ArenaPermanentInteraction {
+  hasProminentAction: boolean;
   isActionable: boolean;
   isAttacking: boolean;
   isBlocking: boolean;
@@ -64,6 +66,9 @@ export function useArenaPermanentInteraction(
   const objectActions = useMemo(
     () => collectObjectActions(legalActionsByObject, objectId),
     [legalActionsByObject, objectId],
+  );
+  const hasProminentAction = objectActions.some(
+    (action) => !isManaObjectAction(action, object),
   );
   const validTargetIds = useMemo(
     () => new Set(getWaitingForObjectChoiceIds(waitingFor)),
@@ -205,6 +210,9 @@ export function useArenaPermanentInteraction(
   }, [hoverObject, inspectObject]);
 
   return {
+    // Mana sources remain clickable but do not receive a persistent cyan ring.
+    // The glow is reserved for non-mana activations and explicit game choices.
+    hasProminentAction,
     isActionable:
       isBoardChoice
       || validAttacker

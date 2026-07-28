@@ -22,9 +22,9 @@ export interface ArenaZoneLayout {
 }
 
 const LANE_Z: Record<ArenaLane, number> = {
-  creatures: 1.2,
-  support: 2.55,
-  lands: 3.9,
+  creatures: 0.35,
+  support: 1.15,
+  lands: 2,
 };
 
 const LANE_WIDTH: Record<ArenaLane, number> = {

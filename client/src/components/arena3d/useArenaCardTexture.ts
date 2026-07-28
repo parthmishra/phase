@@ -159,7 +159,7 @@ async function createArenaCardTexture(
   const artX = 18;
   const artY = 70;
   const artW = TEXTURE_WIDTH - 36;
-  const artH = TEXTURE_HEIGHT - 112;
+  const artH = TEXTURE_HEIGHT - artY;
   drawCover(context, art, artX, artY, artW, artH);
 
   const artShade = context.createLinearGradient(0, artY, 0, artY + artH);
@@ -171,8 +171,6 @@ async function createArenaCardTexture(
 
   context.fillStyle = "rgba(8, 10, 10, 0.9)";
   context.fillRect(0, 0, TEXTURE_WIDTH, 66);
-  context.fillStyle = "rgba(8, 10, 10, 0.88)";
-  context.fillRect(0, TEXTURE_HEIGHT - 58, TEXTURE_WIDTH, 58);
 
   if (presentation.modifierCount > 0) {
     context.fillStyle = "#76f3a1";
@@ -188,10 +186,6 @@ async function createArenaCardTexture(
   drawFittedText(context, presentation.name, 24, 34, 380);
 
   drawManaSymbols(context, presentation.manaSymbols, TEXTURE_WIDTH - 25, 33);
-
-  context.fillStyle = "#e9e0cb";
-  context.font = '600 20px "Newsreader", Georgia, serif';
-  drawFittedText(context, presentation.typeLine, 24, TEXTURE_HEIGHT - 29, 410);
 
   const toughness =
     presentation.toughness == null

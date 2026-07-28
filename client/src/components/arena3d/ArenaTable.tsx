@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 const ARENA_TABLE_WIDTH = 17.2;
 const ARENA_TABLE_DEPTH = 18;
-const ARENA_TABLE_CORNER_RADIUS = 1.08;
+const ARENA_TABLE_CORNER_RADIUS = 2.15;
 const ARENA_TABLE_THICKNESS = 0.36;
 
 export function ArenaTable() {
@@ -58,7 +58,7 @@ export function ArenaTable() {
         castShadow
         receiveShadow
       >
-        <meshStandardMaterial color="#0b1018" roughness={0.64} metalness={0.16} />
+        <meshStandardMaterial color="#080d14" roughness={0.98} metalness={0} />
       </mesh>
     </group>
   );
@@ -74,18 +74,42 @@ function makeRoundedRectangleShape(
   const shape = new THREE.Shape();
   shape.moveTo(x + radius, y);
   shape.lineTo(x + width - radius, y);
-  shape.quadraticCurveTo(x + width, y, x + width, y + radius);
-  shape.lineTo(x + width, y + depth - radius);
-  shape.quadraticCurveTo(
-    x + width,
-    y + depth,
+  shape.absarc(
     x + width - radius,
-    y + depth,
+    y + radius,
+    radius,
+    -Math.PI / 2,
+    0,
+    false,
+  );
+  shape.lineTo(x + width, y + depth - radius);
+  shape.absarc(
+    x + width - radius,
+    y + depth - radius,
+    radius,
+    0,
+    Math.PI / 2,
+    false,
   );
   shape.lineTo(x + radius, y + depth);
-  shape.quadraticCurveTo(x, y + depth, x, y + depth - radius);
+  shape.absarc(
+    x + radius,
+    y + depth - radius,
+    radius,
+    Math.PI / 2,
+    Math.PI,
+    false,
+  );
   shape.lineTo(x, y + radius);
-  shape.quadraticCurveTo(x, y, x + radius, y);
+  shape.absarc(
+    x + radius,
+    y + radius,
+    radius,
+    Math.PI,
+    Math.PI * 1.5,
+    false,
+  );
+  shape.closePath();
   return shape;
 }
 
@@ -96,7 +120,7 @@ function makeRoundedSurfaceGeometry(
 ): THREE.ShapeGeometry {
   const geometry = new THREE.ShapeGeometry(
     makeRoundedRectangleShape(width, depth, radius),
-    12,
+    24,
   );
   const positions = geometry.getAttribute("position");
   const uvs = new Float32Array(positions.count * 2);
@@ -122,7 +146,7 @@ function makeRoundedBaseGeometry(
       bevelSegments: 3,
       bevelSize: 0.045,
       bevelThickness: 0.035,
-      curveSegments: 12,
+      curveSegments: 24,
     },
   );
 }

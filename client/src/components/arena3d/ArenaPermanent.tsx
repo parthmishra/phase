@@ -10,6 +10,8 @@ import { useGameStore } from "../../stores/gameStore.ts";
 
 const CARD_WIDTH = 1.78;
 const CARD_HEIGHT = 1.16;
+const CARD_CORNER_RADIUS = 0.09;
+const CARD_GEOMETRY = makeRoundedCardGeometry();
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
@@ -51,6 +53,7 @@ export function ArenaPermanent({
 
   useEffect(() => invalidate(), [
     faceAngle,
+    interaction.hasProminentAction,
     interaction.isActionable,
     interaction.isAttacking,
     interaction.isBlocking,
@@ -181,11 +184,11 @@ export function ArenaPermanent({
         )}
 
         <mesh
+          geometry={CARD_GEOMETRY}
           rotation={[-Math.PI / 2, 0, 0]}
           castShadow
           receiveShadow
         >
-          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
           <meshBasicMaterial
             key={texture?.uuid ?? "arena-loading"}
             map={texture}
@@ -193,19 +196,6 @@ export function ArenaPermanent({
             transparent
             alphaTest={0.06}
             toneMapped={false}
-          />
-        </mesh>
-
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, -0.025, 0.035]}
-        >
-          <planeGeometry args={[CARD_WIDTH * 1.02, CARD_HEIGHT * 1.02]} />
-          <meshBasicMaterial
-            color="#000000"
-            transparent
-            opacity={0.34}
-            depthWrite={false}
           />
         </mesh>
       </group>
@@ -222,7 +212,7 @@ function permanentGlow(
   if (interaction.isValidTarget) {
     return { color: "#b9f65a", opacity: 0.82, padding: 0.24 };
   }
-  if (interaction.isActionable) {
+  if (interaction.hasProminentAction) {
     return { color: "#22d3ee", opacity: 0.78, padding: 0.24 };
   }
   if (interaction.isSelected) {
@@ -232,11 +222,67 @@ function permanentGlow(
 }
 
 interface ArenaPermanentInteractionLike {
-  isActionable: boolean;
+  hasProminentAction: boolean;
   isAttacking: boolean;
   isBlocking: boolean;
   isSelected: boolean;
   isValidTarget: boolean;
+}
+
+function makeRoundedCardGeometry(): THREE.ShapeGeometry {
+  const halfWidth = CARD_WIDTH / 2;
+  const halfHeight = CARD_HEIGHT / 2;
+  const radius = CARD_CORNER_RADIUS;
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfWidth + radius, -halfHeight);
+  shape.lineTo(halfWidth - radius, -halfHeight);
+  shape.absarc(
+    halfWidth - radius,
+    -halfHeight + radius,
+    radius,
+    -Math.PI / 2,
+    0,
+    false,
+  );
+  shape.lineTo(halfWidth, halfHeight - radius);
+  shape.absarc(
+    halfWidth - radius,
+    halfHeight - radius,
+    radius,
+    0,
+    Math.PI / 2,
+    false,
+  );
+  shape.lineTo(-halfWidth + radius, halfHeight);
+  shape.absarc(
+    -halfWidth + radius,
+    halfHeight - radius,
+    radius,
+    Math.PI / 2,
+    Math.PI,
+    false,
+  );
+  shape.lineTo(-halfWidth, -halfHeight + radius);
+  shape.absarc(
+    -halfWidth + radius,
+    -halfHeight + radius,
+    radius,
+    Math.PI,
+    Math.PI * 1.5,
+    false,
+  );
+  shape.closePath();
+
+  const geometry = new THREE.ShapeGeometry(shape, 8);
+  const positions = geometry.getAttribute("position");
+  const uvs = new Float32Array(positions.count * 2);
+  for (let index = 0; index < positions.count; index += 1) {
+    uvs[index * 2] = (positions.getX(index) + halfWidth) / CARD_WIDTH;
+    uvs[index * 2 + 1] =
+      (positions.getY(index) + halfHeight) / CARD_HEIGHT;
+  }
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  return geometry;
 }
 
 function angleDelta(from: number, to: number): number {
