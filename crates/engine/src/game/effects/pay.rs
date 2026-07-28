@@ -3198,6 +3198,114 @@ mod tests {
         );
     }
 
+    /// CR 118.3b + CR 119.4 + CR 616.1: Public GameAction regression for a
+    /// life payment whose replacement has an interactive post-effect. The
+    /// submitted payment commits, but the PayAmount outer chain must remain
+    /// parked until that replacement choice resolves.
+    #[test]
+    fn pay_amount_game_action_waits_for_interactive_life_replacement() {
+        use crate::game::effects::resolve_ability_chain;
+        use crate::game::zones::create_object;
+        use crate::types::ability::{
+            AbilityDefinition, AbilityKind, PlayerFilter, QuantityModification,
+            ReplacementDefinition, SubAbilityLink, TargetFilter,
+        };
+        use crate::types::actions::GameAction;
+        use crate::types::replacements::ReplacementEvent;
+        use crate::types::zones::Zone;
+
+        let mut state = GameState::new_two_player(42);
+        let replacement_source = create_object(
+            &mut state,
+            CardId(501),
+            PlayerId(0),
+            "Interactive Life-Loss Modifier".to_string(),
+            Zone::Battlefield,
+        );
+        let replacement_choice = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::ChooseOneOf {
+                chooser: PlayerFilter::Controller,
+                branches: vec![AbilityDefinition::new(
+                    AbilityKind::Spell,
+                    Effect::GainLife {
+                        amount: QuantityExpr::Fixed { value: 1 },
+                        player: TargetFilter::Controller,
+                    },
+                )],
+            },
+        );
+        state
+            .objects
+            .get_mut(&replacement_source)
+            .unwrap()
+            .replacement_definitions = vec![ReplacementDefinition::new(ReplacementEvent::LoseLife)
+            .quantity_modification(QuantityModification::Plus { value: 0 })
+            .execute(replacement_choice)]
+        .into();
+
+        let mut pay = ResolvedAbility::new(
+            pay_any_life_ability(),
+            vec![],
+            replacement_source,
+            PlayerId(0),
+        );
+        let mut rider = ResolvedAbility::new(
+            Effect::GainLife {
+                amount: QuantityExpr::Fixed { value: 7 },
+                player: TargetFilter::Controller,
+            },
+            vec![],
+            replacement_source,
+            PlayerId(0),
+        );
+        rider.sub_link = SubAbilityLink::SequentialSibling;
+        pay.sub_ability = Some(Box::new(rider));
+
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &pay, &mut events, 0).unwrap();
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::PayAmountChoice { .. }
+        ));
+
+        crate::game::engine::apply_as_current(
+            &mut state,
+            GameAction::SubmitPayAmount { amount: 3 },
+        )
+        .unwrap();
+
+        assert_eq!(state.players[0].life, 17, "only the payment has committed");
+        assert!(
+            matches!(state.waiting_for, WaitingFor::ChooseOneOfBranch { .. }),
+            "replacement choice must remain visible, got {:?}",
+            state.waiting_for
+        );
+        assert!(
+            matches!(
+                state.pending_deferred_life_cost_resume,
+                Some(crate::types::game_state::DeferredLifeCostResume::PayAmount { total: 3, .. })
+            ),
+            "the outer pay-amount action must have a typed resume owner"
+        );
+        assert_ne!(
+            state.last_effect_count,
+            Some(3),
+            "the outer payment result must not publish before the replacement child"
+        );
+
+        crate::game::engine::apply_as_current(&mut state, GameAction::ChooseBranch { index: 0 })
+            .unwrap();
+
+        assert_eq!(
+            state.players[0].life, 25,
+            "replacement branch (+1) resolves before the parked outer rider (+7)"
+        );
+        assert_eq!(state.last_effect_count, Some(3));
+        assert!(state.pending_deferred_life_cost_resume.is_none());
+        assert!(matches!(state.waiting_for, WaitingFor::Priority { .. }));
+    }
+
     /// CR 119.8: Under CantLoseLife the prompt clamps max=0; submitting 0
     /// declines the payment — no life lost, the IfYouDo Draw reads 0.
     #[test]

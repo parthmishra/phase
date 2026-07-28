@@ -804,7 +804,9 @@ fn pay_ability_cost_inner(
                     // CR 118.12 + CR 605.3b + CR 616.1: The mana ability
                     // cursor, rather than the unless-payment handler, owns
                     // the replacement choice and exact resume state.
-                    if mana_ability_cost_payment_is_paused(state) {
+                    if mana_ability_cost_payment_is_paused(state)
+                        || state.pending_deferred_life_cost_resume.is_some()
+                    {
                         return Ok(PaymentOutcome::Paused {
                             remaining_cost: None,
                         });
@@ -848,7 +850,9 @@ fn pay_ability_cost_inner(
                     // CR 118.12 + CR 605.3b + CR 616.1: See the concrete
                     // mana-cost arm above; the replacement-aware cursor owns
                     // this pause as well.
-                    if mana_ability_cost_payment_is_paused(state) {
+                    if mana_ability_cost_payment_is_paused(state)
+                        || state.pending_deferred_life_cost_resume.is_some()
+                    {
                         return Ok(PaymentOutcome::Paused {
                             remaining_cost: None,
                         });
@@ -902,7 +906,8 @@ fn pay_ability_cost_inner(
                         // continuation: it would retry a paid prefix or let the
                         // rider run before the unpaid cost is settled.
                         if matches!(scope, PaymentScope::Resolution { .. })
-                            && mana_ability_cost_payment_is_paused(state)
+                            && (mana_ability_cost_payment_is_paused(state)
+                                || state.pending_deferred_life_cost_resume.is_some())
                         {
                             return Ok(PaymentOutcome::Paused {
                                 remaining_cost: None,

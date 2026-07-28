@@ -1869,6 +1869,7 @@ mod tests {
                 caster,
             )),
             cost: ManaCost::NoCost,
+            prepaid_actual_mana_spent: None,
             base_cost: None,
             declared_mana_additions: Vec::new(),
             activation_cost: None,
@@ -5085,6 +5086,7 @@ mod tests {
             pending: Box::new(pending),
             cursor: ManaAbilityCostCursor {
                 remaining: Vec::new(),
+                remaining_life_payments: Vec::new(),
                 resolution_mode: ManaAbilityCostResolutionMode::Interactive,
                 excluded_sources: Vec::new(),
                 sub_cost_demand: None,

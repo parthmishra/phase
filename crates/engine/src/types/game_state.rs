@@ -5425,6 +5425,12 @@ pub struct PendingCast {
     pub card_id: CardId,
     pub ability: Box<ResolvedAbility>,
     pub cost: ManaCost,
+    /// CR 601.2h + CR 616.1: Mana already committed before a life-payment
+    /// replacement's post-effect paused. The resumed cast uses `NoCost` and
+    /// carries this amount into final cast bookkeeping instead of spending or
+    /// measuring the same mana twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepaid_actual_mana_spent: Option<u32>,
     /// CR 601.2f: The tax-inclusive base mana cost captured at announcement,
     /// BEFORE any cost reductions/increases or {X} concretization. Lets the
     /// full concrete cost be recomputed from scratch for any chosen X with
@@ -5590,6 +5596,66 @@ fn default_origin_zone() -> Zone {
     Zone::Hand
 }
 
+/// CR 118.3b + CR 119.4 + CR 616.1: Exact outer cost action suspended after a
+/// life payment committed but its replacement's interactive post-effect did
+/// not finish. The replacement continuation remains the immediate child; this
+/// owner resumes only after that child drains.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum DeferredLifeCostResume {
+    /// Continue a spell cast or activated-ability payment without replaying the
+    /// life payment. Mana-payment callers set `cost` to `NoCost` and preserve
+    /// the amount already spent in `prepaid_actual_mana_spent`.
+    Cast {
+        player: PlayerId,
+        pending: Box<PendingCast>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remaining_life_payments: Vec<u32>,
+        /// Resolution-stack depth that existed before the life-loss event.
+        /// Replacement-produced child frames must retire back to this boundary
+        /// before the cast resumes.
+        resume_at_resolution_depth: usize,
+    },
+    /// Finish a resolution-time "pay any amount of life" choice after its
+    /// replacement post-effect settles, then expose the paid amount to the
+    /// remaining ability chain.
+    PayAmount {
+        player: PlayerId,
+        total: u32,
+        /// Resolution-stack depth containing the outer pay-amount chain.
+        /// The replacement's child work drains above it first.
+        resume_at_resolution_depth: usize,
+    },
+    /// Resume a resolution/special-action mana-payment root after all selected
+    /// Phyrexian life components and their replacement children settle.
+    ManaRoot {
+        player: PlayerId,
+        resume: Box<ManaAbilityResume>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remaining_life_payments: Vec<u32>,
+        resume_at_resolution_depth: usize,
+    },
+}
+
+impl DeferredLifeCostResume {
+    pub fn resume_at_resolution_depth(&self) -> usize {
+        match self {
+            DeferredLifeCostResume::Cast {
+                resume_at_resolution_depth,
+                ..
+            }
+            | DeferredLifeCostResume::PayAmount {
+                resume_at_resolution_depth,
+                ..
+            }
+            | DeferredLifeCostResume::ManaRoot {
+                resume_at_resolution_depth,
+                ..
+            } => *resume_at_resolution_depth,
+        }
+    }
+}
+
 /// CR 601.2h + CR 616.1: Tail behavior for a sequential cost move that paused
 /// on a replacement choice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -5657,6 +5723,11 @@ pub struct ManaAbilityCostParent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManaAbilityCostCursor {
     pub remaining: Vec<AbilityCost>,
+    /// CR 118.3b + CR 119.4 + CR 616.1: Selected Phyrexian life components
+    /// that follow an already-paid component whose replacement post-effect
+    /// paused. They complete before the cursor advances to mana production.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining_life_payments: Vec<u32>,
     /// Direct auto-tap resolution has already chosen its production path and
     /// therefore must not surface an output-color prompt after a paused cost
     /// move resumes. Interactive activation retains the prompt.
@@ -5877,6 +5948,7 @@ impl PendingCast {
             card_id,
             ability: Box::new(ability),
             cost,
+            prepaid_actual_mana_spent: None,
             base_cost: None,
             declared_mana_additions: Vec::new(),
             activation_cost: None,
@@ -13006,6 +13078,13 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_cost_move_resume: Option<PendingCostMoveResume>,
 
+    /// CR 118.3b + CR 119.4 + CR 616.1: Typed owner for a surrounding cost
+    /// action whose life payment committed before an interactive replacement
+    /// post-effect paused. Serialized with the prompt so restore resumes the
+    /// exact cast or resolution payment without charging it twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_deferred_life_cost_resume: Option<DeferredLifeCostResume>,
+
     /// CR 601.2h + CR 616.1: Resume a sequential discard cost after a
     /// replacement choice. Cost moves use `pending_cost_move_resume` above.
     #[serde(skip)]
@@ -16642,6 +16721,7 @@ impl GameState {
             pending_taps_for_mana_overrides: std::collections::HashMap::new(),
             current_triggered_mana_override: None,
             pending_cost_move_resume: None,
+            pending_deferred_life_cost_resume: None,
             pending_discard_for_cost: None,
             pending_cast: None,
             ring_level: HashMap::new(),
@@ -18093,6 +18173,7 @@ fn _gamestate_partition_is_total(s: &GameState) {
         pending_taps_for_mana_overrides: _,
         current_triggered_mana_override: _,
         pending_cost_move_resume: _,
+        pending_deferred_life_cost_resume: _,
         pending_discard_for_cost: _,
         pending_cast: _,
         ring_level: _,
@@ -21120,6 +21201,7 @@ mod tests {
                     PlayerId(0),
                 )),
                 cost: ManaCost::NoCost,
+                prepaid_actual_mana_spent: None,
                 base_cost: None,
                 declared_mana_additions: Vec::new(),
                 activation_cost: None,
@@ -21528,6 +21610,7 @@ mod tests {
                 PlayerId(0),
             )),
             cost: ManaCost::NoCost,
+            prepaid_actual_mana_spent: None,
             base_cost: None,
             declared_mana_additions: Vec::new(),
             activation_cost: None,
