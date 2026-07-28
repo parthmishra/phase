@@ -1605,22 +1605,27 @@ fn parse_assemble_contraption_subject(subject: &str) -> Option<TargetFilter> {
 /// Handles Bloodletter-style doublers and preserves generic "If you would lose
 /// life, instead ..." replacement recognition without substring dispatch.
 fn parse_lose_life_replacement(text: &str, lower: &str) -> Option<ReplacementDefinition> {
-    let ((scope, quantity_modification), rest) = nom_on_lower(text, lower, |i| {
-        let (i, _) = tag("if ").parse(i)?;
-        let (i, scope) = parse_lose_life_subject(i)?;
-        let (i, _) = tag(" would lose life").parse(i)?;
-        let (i, _) = opt(preceded(tag(" "), tag("during your turn"))).parse(i)?;
-        let (i, _) = tag(", ").parse(i)?;
-        let (i, quantity_modification) = alt((
-            value(
-                Some(QuantityModification::DOUBLE),
-                terminated(parse_double_lose_life_consequence, opt(char('.'))),
-            ),
-            value(None, parse_lose_life_instead_consequence),
-        ))
-        .parse(i)?;
-        Ok((i, (scope, quantity_modification)))
-    })?;
+    let ((scope, during_your_turn, quantity_modification), rest) =
+        nom_on_lower(text, lower, |i| {
+            let (i, _) = tag("if ").parse(i)?;
+            let (i, scope) = parse_lose_life_subject(i)?;
+            let (i, _) = tag(" would lose life").parse(i)?;
+            let (i, during_your_turn) =
+                opt(preceded(tag(" "), tag("during your turn"))).parse(i)?;
+            let (i, _) = tag(", ").parse(i)?;
+            let (i, quantity_modification) = alt((
+                value(
+                    Some(QuantityModification::DOUBLE),
+                    terminated(parse_double_lose_life_consequence, opt(char('.'))),
+                ),
+                value(None, parse_lose_life_instead_consequence),
+            ))
+            .parse(i)?;
+            Ok((
+                i,
+                (scope, during_your_turn.is_some(), quantity_modification),
+            ))
+        })?;
     if !rest.trim().is_empty() {
         return None;
     }
@@ -1632,6 +1637,18 @@ fn parse_lose_life_replacement(text: &str, lower: &str) -> Option<ReplacementDef
     }
     if let Some(quantity_modification) = quantity_modification {
         def = def.quantity_modification(quantity_modification);
+    }
+    if during_your_turn {
+        // CR 109.5 + CR 102.1: "during your turn" means while the source's
+        // controller is the active player.
+        // Reuse the existing parameterized active-player gate rather than
+        // hiding Bloodletter's restriction in the LoseLife event matcher.
+        def = def.condition(ReplacementCondition::OnlyIfQuantity {
+            lhs: QuantityExpr::Fixed { value: 0 },
+            comparator: Comparator::EQ,
+            rhs: QuantityExpr::Fixed { value: 0 },
+            active_player_req: Some(ControllerRef::You),
+        });
     }
     Some(def)
 }
@@ -14062,6 +14079,47 @@ mod tests {
             Some(QuantityModification::DOUBLE)
         );
         assert_eq!(def.valid_player, Some(ReplacementPlayerScope::Opponent));
+        assert_eq!(
+            def.condition,
+            Some(ReplacementCondition::OnlyIfQuantity {
+                lhs: QuantityExpr::Fixed { value: 0 },
+                comparator: Comparator::EQ,
+                rhs: QuantityExpr::Fixed { value: 0 },
+                active_player_req: Some(ControllerRef::You),
+            })
+        );
+    }
+
+    #[test]
+    fn bloodletter_full_oracle_parses_without_coverage_gaps() {
+        let parsed = parse_oracle_text(
+            "Flying\nIf an opponent would lose life during your turn, they lose twice that much \
+             life instead. (Damage causes loss of life.)",
+            "Bloodletter of Aclazotz",
+            &["Flying".to_string()],
+            &["Creature".to_string()],
+            &["Vampire".to_string(), "Demon".to_string()],
+        );
+
+        assert!(
+            parsed.parse_warnings.is_empty(),
+            "Bloodletter must not hide a swallowed turn condition: {:?}",
+            parsed.parse_warnings
+        );
+        assert!(
+            parsed.abilities.is_empty(),
+            "Bloodletter's static replacement must not lower as a spell ability"
+        );
+        assert_eq!(parsed.replacements.len(), 1);
+        assert_eq!(
+            parsed.replacements[0].condition,
+            Some(ReplacementCondition::OnlyIfQuantity {
+                lhs: QuantityExpr::Fixed { value: 0 },
+                comparator: Comparator::EQ,
+                rhs: QuantityExpr::Fixed { value: 0 },
+                active_player_req: Some(ControllerRef::You),
+            })
+        );
     }
 
     #[test]

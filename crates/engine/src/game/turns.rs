@@ -278,6 +278,7 @@ fn enter_phase(state: &mut GameState, next: Phase, events: &mut Vec<GameEvent>) 
             next_phase: next,
             in_combat,
             entering_cleanup,
+            drain_state: crate::types::game_state::PhaseTransitionDrainState::Ready,
         });
     drain_pending_phase_transition_progress(state, events);
 }
@@ -299,9 +300,91 @@ fn next_apnap_player_with_pending_materialization(state: &GameState) -> Option<P
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EmptyManaPoolApplyOutcome {
+    Applied,
+    Deferred,
+}
+
+/// CR 106.4 + CR 119.3 + CR 500.5: Apply the final replacement-ordered mana
+/// dispositions, then apply one aggregate Yurlok-class life-loss event for the
+/// mana units that were actually removed. Retained or transformed units are
+/// not lost and therefore do not contribute.
+pub(super) fn apply_empty_mana_pool_event(
+    state: &mut GameState,
+    event: ProposedEvent,
+    events: &mut Vec<GameEvent>,
+) -> EmptyManaPoolApplyOutcome {
+    let ProposedEvent::EmptyManaPool {
+        player_id, units, ..
+    } = event
+    else {
+        debug_assert!(false, "expected EmptyManaPool event");
+        return EmptyManaPoolApplyOutcome::Applied;
+    };
+
+    // CR 604.1: This is an existence query, evaluated exactly once for this
+    // player's aggregate empty-pool event.
+    let causes_life_loss =
+        crate::game::static_abilities::player_unspent_mana_loss_causes_life_loss(state, player_id);
+    let amount =
+        crate::types::mana::apply_empty_mana_pool_decisions(state, player_id, &units, events);
+    state.pending_step_end_mana_handlers.clear();
+
+    if !causes_life_loss || amount == 0 {
+        return EmptyManaPoolApplyOutcome::Applied;
+    }
+
+    match crate::game::effects::life::apply_life_loss(state, player_id, amount, events) {
+        Ok(_) => EmptyManaPoolApplyOutcome::Applied,
+        Err(crate::game::effects::life::ReplacementDeferred::ReplacementChoice) => {
+            EmptyManaPoolApplyOutcome::Deferred
+        }
+        Err(crate::game::effects::life::ReplacementDeferred::SubstitutionContinuation) => {
+            mark_phase_transition_awaiting_post_replacement(state);
+            EmptyManaPoolApplyOutcome::Deferred
+        }
+    }
+}
+
+pub(super) fn mark_phase_transition_awaiting_post_replacement(state: &mut GameState) {
+    if let Some(progress) = state.pending_phase_transition_progress.as_mut() {
+        progress.drain_state =
+            crate::types::game_state::PhaseTransitionDrainState::AwaitingPostReplacementContinuation;
+    }
+}
+
+/// CR 614.6 + CR 500.5: Resume the typed APNAP phase owner only after the
+/// interactive substitute that suspended it has terminally left the resolution
+/// stack. Merely having a pending phase cursor is insufficient: ordinary
+/// empty-mana replacement choices and loop-collapse prompts have distinct
+/// owners and resume paths.
+pub(super) fn resume_phase_transition_after_post_replacement(
+    state: &mut GameState,
+    events: &mut Vec<GameEvent>,
+) {
+    if !matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+        return;
+    }
+    let awaiting = state
+        .pending_phase_transition_progress
+        .as_ref()
+        .is_some_and(|progress| {
+            progress.drain_state
+                == crate::types::game_state::PhaseTransitionDrainState::AwaitingPostReplacementContinuation
+        });
+    if !awaiting || state.active_post_replacement_drains().is_some() {
+        return;
+    }
+    if let Some(progress) = state.pending_phase_transition_progress.as_mut() {
+        progress.drain_state = crate::types::game_state::PhaseTransitionDrainState::Ready;
+    }
+    drain_pending_phase_transition_progress(state, events);
+}
+
 /// CR 703.4q + CR 616.1: Per-phase APNAP-queue drain. Pops players one at a
-/// time, runs `clear_expiring_at_step_end` first (H2 invariant —
-/// expiry-bound units never enter the replacement pipeline), scans active
+/// time, runs `clear_expired_retention_markers` first so reached durations
+/// become eligible for ordinary emptying, scans active
 /// step-end mana handlers for that player, builds and dispatches a
 /// `ProposedEvent::EmptyManaPool` through `replace_event`. On `Execute`,
 /// applies decisions and continues. On `NeedsChoice`, sets `state.waiting_for`
@@ -312,6 +395,18 @@ pub(super) fn drain_pending_phase_transition_progress(
     state: &mut GameState,
     events: &mut Vec<GameEvent>,
 ) {
+    // The typed phase cursor is parked while an interactive substitute owns
+    // resolution. A cursor's mere presence is not authority to drain it.
+    if state
+        .pending_phase_transition_progress
+        .as_ref()
+        .is_some_and(|progress| {
+            progress.drain_state != crate::types::game_state::PhaseTransitionDrainState::Ready
+        })
+    {
+        return;
+    }
+
     while let Some(progress) = state.pending_phase_transition_progress.as_mut() {
         let Some(player_id) = progress.remaining_players.pop_front() else {
             // Queue empty. Copy `next_phase` out first, releasing the `progress`
@@ -384,13 +479,14 @@ pub(super) fn drain_pending_phase_transition_progress(
         let in_combat = progress.in_combat;
         let entering_cleanup = progress.entering_cleanup;
 
-        // CR 500.5 + CR 614.6 (H2 invariant): Drop only expiry-bound units
-        // whose own rule fires on this transition. Non-expiry units flow
-        // into the replacement pipeline as Drop-disposition decisions.
+        // CR 500.5 + CR 703.4q: End reached retention durations first, then
+        // route the still-unspent units through the ordinary empty-pool event.
+        // Clearing only the marker preserves composition with any other active
+        // retain / transform handler and lets Yurlok count actual loss.
         if let Some(player) = state.players.iter_mut().find(|p| p.id == player_id) {
             player
                 .mana_pool
-                .clear_expiring_at_step_end(in_combat, entering_cleanup);
+                .clear_expired_retention_markers(in_combat, entering_cleanup);
         }
 
         // Scan active step-end mana handlers for this player. Inlines the
@@ -402,12 +498,11 @@ pub(super) fn drain_pending_phase_transition_progress(
 
         // Build per-unit decision payload from the player's surviving pool.
         //
-        // CR 500.5 + CR 703.4q (H2 invariant): expiry-bound units (e.g.
-        // Klauth's "you don't lose this mana as steps and phases end",
-        // Firebending's "Until end of combat, you don't lose this mana as
-        // steps and phases end" — CR 702.189a) have *already* had their fate
-        // decided by `clear_expiring_at_step_end` above — they were either
-        // dropped (their rule fired) or deliberately retained.
+        // CR 500.5 + CR 703.4q: expiry-bound units (e.g. Klauth's "you don't
+        // lose this mana as steps and phases end", Firebending's "Until end of
+        // combat..." — CR 702.189a) stay excluded while their duration remains
+        // active. Once it ends, `clear_expired_retention_markers` makes them
+        // ordinary `None`-expiry units for this event.
         //
         // CR 614.17 + CR 614.17c: "you don't lose this mana …" is a "can't"
         // effect, not a replacement effect. It prevents the CR 106.4 /
@@ -459,15 +554,11 @@ pub(super) fn drain_pending_phase_transition_progress(
 
         match replacement::replace_event(state, proposed, events) {
             ReplacementResult::Execute(event) => {
-                if let ProposedEvent::EmptyManaPool {
-                    player_id, units, ..
-                } = event
+                if apply_empty_mana_pool_event(state, event, events)
+                    == EmptyManaPoolApplyOutcome::Deferred
                 {
-                    crate::types::mana::apply_empty_mana_pool_decisions(
-                        state, player_id, &units, events,
-                    );
+                    return;
                 }
-                state.pending_step_end_mana_handlers.clear();
                 // Continue to next player.
             }
             ReplacementResult::NeedsChoice(choosing_player) => {
@@ -3457,10 +3548,9 @@ mod tests {
     // the no-handler-default path (#10), and the Drop-disposition matcher
     // gate (#11).
     //
-    // Expiry-bound interaction tests (#6, #7) live in `types/mana.rs` as
-    // shape tests on `clear_expiring_at_step_end` since that helper runs
-    // before the pipeline starts (H2 invariant — expiry-bound units never
-    // enter the replacement path).
+    // Expiry-bound interaction tests (#6, #7) live in `types/mana.rs` for
+    // marker timing and in the Yurlok integration suite for actual-loss and
+    // still-active-handler composition through the production pipeline.
     // -----------------------------------------------------------------
 
     /// CR 616.1 (#4): When two `Retain` handlers on a single player both

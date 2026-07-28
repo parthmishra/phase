@@ -17,11 +17,11 @@
 //! - **CR 119.4** — "If a player pays life, the payment is subtracted from their
 //!   life total; in other words, the player loses that much life." Paying life IS
 //!   losing life, so the deduction routes through
-//!   [`effects::life::apply_damage_life_loss`] which runs the replacement pipeline.
+//!   [`effects::life::apply_life_loss`] which runs the replacement pipeline.
 //! - **CR 119.4b** — Players can always pay 0 life, even under a pay-life prohibition.
 //! - **CR 119.8** — "A cost that involves having that player pay life can't be paid."
 
-use crate::game::effects::life::{apply_damage_life_loss, ReplacementDeferred};
+use crate::game::effects::life::apply_life_loss;
 use crate::game::static_abilities::{player_cant_pay_life_as_cost, player_has_cant_lose_life};
 use crate::types::events::GameEvent;
 use crate::types::game_state::GameState;
@@ -94,7 +94,7 @@ pub fn can_pay_life_cost(state: &GameState, player: PlayerId, amount: u32) -> bo
 
 /// CR 118.3b + CR 119.4 + CR 119.8: Pay `amount` life from `player` as a cost.
 ///
-/// Routes the life deduction through [`apply_damage_life_loss`] per CR 119.4
+/// Routes the life deduction through [`apply_life_loss`] per CR 119.4
 /// ("paying life IS losing life"), so the replacement pipeline and the
 /// `CantLoseLife` short-circuit run consistently with every other life-loss event.
 ///
@@ -103,7 +103,7 @@ pub fn can_pay_life_cost(state: &GameState, player: PlayerId, amount: u32) -> bo
 /// failure signal for their context (cost-payment flag, `EngineError`, etc.).
 ///
 /// Defense in depth: the prohibition check happens here AND inside
-/// `apply_damage_life_loss`. This module is also called from pre-validation
+/// `apply_life_loss`. This module is also called from pre-validation
 /// paths which may not have reached the executor yet, so checking at the cost
 /// boundary keeps the result enum accurate.
 pub fn pay_life_as_cost(
@@ -138,9 +138,9 @@ pub fn pay_life_as_cost(
     // effect intercepts cost-path life loss. If that ever ships, the
     // cost-payment flow would need a new WaitingFor round-trip; for now,
     // report the cost as unpayable to avoid silently half-applying.
-    match apply_damage_life_loss(state, player, amount, events) {
+    match apply_life_loss(state, player, amount, events) {
         Ok(_) => PayLifeCostResult::Paid { amount },
-        Err(ReplacementDeferred) => {
+        Err(_) => {
             debug_assert!(
                 false,
                 "pay_life_as_cost: unexpected ReplacementDeferred during cost payment"

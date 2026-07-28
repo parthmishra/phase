@@ -3566,39 +3566,87 @@ fn life_reduced_applier(
 
 // --- 6b. LoseLife (oracle-parsed: e.g. Bloodletter of Aclazotz) ---
 
-fn lose_life_matcher(event: &ProposedEvent, source: ObjectId, state: &GameState) -> bool {
-    if let ProposedEvent::LifeLoss { player_id, .. } = event {
-        // Match when opponent loses life during source controller's turn
-        if let Some(obj) = state.objects.get(&source) {
-            *player_id != obj.controller && state.active_player == obj.controller
-        } else {
-            false
-        }
-    } else {
-        false
-    }
+fn lose_life_matcher(event: &ProposedEvent, _source: ObjectId, _state: &GameState) -> bool {
+    matches!(event, ProposedEvent::LifeLoss { .. })
 }
 
 fn lose_life_applier(
     event: ProposedEvent,
-    _rid: ReplacementId,
-    _state: &mut GameState,
+    rid: ReplacementId,
+    state: &mut GameState,
     _events: &mut Vec<GameEvent>,
 ) -> ApplyResult {
-    if let ProposedEvent::LifeLoss {
-        player_id,
-        amount,
-        applied,
-    } = event
-    {
-        ApplyResult::Modified(ProposedEvent::LifeLoss {
+    use crate::types::ability::QuantityModification;
+
+    let definition = state
+        .objects
+        .get(&rid.source)
+        .and_then(|obj| obj.replacement_definitions.get(rid.index));
+
+    if let Some(modification) = definition.and_then(|def| def.quantity_modification.clone()) {
+        let ProposedEvent::LifeLoss {
             player_id,
-            amount: amount * 2,
+            amount,
             applied,
-        })
-    } else {
-        ApplyResult::Modified(event)
+        } = event
+        else {
+            return ApplyResult::Modified(event);
+        };
+        let amount = match modification {
+            QuantityModification::Times { factor } => amount.saturating_mul(factor),
+            QuantityModification::Half => amount / 2,
+            QuantityModification::Plus { value } => amount.saturating_add(value),
+            QuantityModification::Minus { value } => amount.saturating_sub(value),
+            QuantityModification::Prevent => return ApplyResult::Prevented,
+        };
+        return ApplyResult::Modified(ProposedEvent::LifeLoss {
+            player_id,
+            amount,
+            applied,
+        });
     }
+
+    let Some(execute) = definition.and_then(|def| def.execute.as_deref()) else {
+        return ApplyResult::Modified(event);
+    };
+    if execute.sub_ability.is_none() {
+        if let (
+            ProposedEvent::LifeLoss {
+                player_id,
+                amount,
+                applied,
+            },
+            Effect::LoseLife {
+                amount: replacement_amount,
+                ..
+            },
+        ) = (&event, &*execute.effect)
+        {
+            if let Some(resolved) = resolve_event_replacement_quantity(replacement_amount, *amount)
+            {
+                return ApplyResult::Modified(ProposedEvent::LifeLoss {
+                    player_id: *player_id,
+                    amount: resolved.max(0) as u32,
+                    applied: applied.clone(),
+                });
+            }
+        }
+    }
+
+    // CR 614.1a + CR 614.6: A typed non-LifeLoss execute chain substitutes
+    // its effect for the life-loss event. The common replacement driver owns
+    // and drains that mandatory post-replacement continuation.
+    if !matches!(
+        &*execute.effect,
+        Effect::LoseLife { .. } | Effect::Unimplemented { .. }
+    ) {
+        if let ProposedEvent::LifeLoss { amount, .. } = event {
+            state.last_effect_count = Some(amount as i32);
+        }
+        return ApplyResult::Prevented;
+    }
+
+    ApplyResult::Modified(event)
 }
 
 // --- 7. AddCounter ---
@@ -6477,6 +6525,7 @@ fn object_replacement_candidate_applies(
         }
     }
     if let ProposedEvent::LifeGain { player_id, .. }
+    | ProposedEvent::LifeLoss { player_id, .. }
     | ProposedEvent::Draw { player_id, .. }
     | ProposedEvent::Scry { player_id, .. }
     | ProposedEvent::Mill { player_id, .. }
@@ -9495,8 +9544,8 @@ mod tests {
     use crate::game::game_object::{AttachTarget, GameObject};
     use crate::types::ability::{
         AbilityCost, AbilityDefinition, AbilityKind, CastManaObjectScope, CastManaSpentMetric,
-        ChosenAttribute, ControllerRef, Effect, EffectScope, FilterProp, OriginConstraint,
-        PlayerFilter, PtValue, QuantityExpr, QuantityModification, QuantityRef,
+        ChosenAttribute, Comparator, ControllerRef, Effect, EffectScope, FilterProp,
+        OriginConstraint, PlayerFilter, PtValue, QuantityExpr, QuantityModification, QuantityRef,
         ReplacementDefinition, ReplacementMode, ReplacementPlayerScope, TapStateChange,
         TargetFilter, TargetRef, TypeFilter, TypedFilter,
     };
@@ -17547,7 +17596,13 @@ mod tests {
         let bloodletter = ObjectId(10);
         let repl = {
             let mut repl = ReplacementDefinition::new(ReplacementEvent::LoseLife)
-                .quantity_modification(QuantityModification::DOUBLE);
+                .quantity_modification(QuantityModification::DOUBLE)
+                .condition(ReplacementCondition::OnlyIfQuantity {
+                    lhs: QuantityExpr::Fixed { value: 0 },
+                    comparator: Comparator::EQ,
+                    rhs: QuantityExpr::Fixed { value: 0 },
+                    active_player_req: Some(ControllerRef::You),
+                });
             repl.valid_player = Some(ReplacementPlayerScope::Opponent);
             repl
         };
@@ -17578,13 +17633,151 @@ mod tests {
         assert_eq!(amount, 6);
     }
 
+    /// CR 109.5 + CR 614.1a: LoseLife recipient scope is independent of turn
+    /// ownership. Turn restrictions belong in `ReplacementCondition`.
+    #[test]
+    fn lose_life_player_scopes_apply_on_either_players_turn() {
+        let cases = [
+            (
+                ReplacementPlayerScope::You,
+                PlayerId(0),
+                true,
+                "You/controller",
+            ),
+            (
+                ReplacementPlayerScope::You,
+                PlayerId(1),
+                false,
+                "You/opponent",
+            ),
+            (
+                ReplacementPlayerScope::Opponent,
+                PlayerId(0),
+                false,
+                "Opponent/controller",
+            ),
+            (
+                ReplacementPlayerScope::Opponent,
+                PlayerId(1),
+                true,
+                "Opponent/opponent",
+            ),
+            (
+                ReplacementPlayerScope::AnyPlayer,
+                PlayerId(0),
+                true,
+                "AnyPlayer/controller",
+            ),
+            (
+                ReplacementPlayerScope::AnyPlayer,
+                PlayerId(1),
+                true,
+                "AnyPlayer/opponent",
+            ),
+        ];
+
+        for active_player in [PlayerId(0), PlayerId(1)] {
+            for (scope, recipient, should_double, label) in &cases {
+                let mut repl = ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                    .quantity_modification(QuantityModification::DOUBLE);
+                repl.valid_player = Some(scope.clone());
+                let mut state = test_state_with_object(ObjectId(10), Zone::Battlefield, vec![repl]);
+                state.active_player = active_player;
+                let mut events = Vec::new();
+
+                let result = replace_event(
+                    &mut state,
+                    ProposedEvent::LifeLoss {
+                        player_id: *recipient,
+                        amount: 3,
+                        applied: HashSet::new(),
+                    },
+                    &mut events,
+                );
+                let ReplacementResult::Execute(ProposedEvent::LifeLoss { amount, .. }) = result
+                else {
+                    panic!("{label} on P{}'s turn returned {result:?}", active_player.0);
+                };
+                assert_eq!(
+                    amount,
+                    if *should_double { 6 } else { 3 },
+                    "{label} on P{}'s turn",
+                    active_player.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lose_life_quantity_prevent_suppresses_event() {
+        let repl = {
+            let mut repl = ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                .quantity_modification(QuantityModification::Prevent);
+            repl.valid_player = Some(ReplacementPlayerScope::Opponent);
+            repl
+        };
+        let mut state = test_state_with_object(ObjectId(10), Zone::Battlefield, vec![repl]);
+        state.active_player = PlayerId(0);
+        let mut events = Vec::new();
+
+        let result = replace_event(
+            &mut state,
+            ProposedEvent::LifeLoss {
+                player_id: PlayerId(1),
+                amount: 3,
+                applied: HashSet::new(),
+            },
+            &mut events,
+        );
+
+        assert!(matches!(result, ReplacementResult::Prevented));
+    }
+
+    #[test]
+    fn lose_life_cross_event_execute_stashes_substitution() {
+        let mut repl =
+            ReplacementDefinition::new(ReplacementEvent::LoseLife).execute(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::GainLife {
+                    amount: QuantityExpr::Ref {
+                        qty: crate::types::ability::QuantityRef::EventContextAmount,
+                    },
+                    player: TargetFilter::Controller,
+                },
+            ));
+        repl.valid_player = Some(ReplacementPlayerScope::Opponent);
+        let mut state = test_state_with_object(ObjectId(10), Zone::Battlefield, vec![repl]);
+        state.active_player = PlayerId(0);
+        let mut events = Vec::new();
+
+        let result = replace_event(
+            &mut state,
+            ProposedEvent::LifeLoss {
+                player_id: PlayerId(1),
+                amount: 3,
+                applied: HashSet::new(),
+            },
+            &mut events,
+        );
+
+        assert!(matches!(result, ReplacementResult::Prevented));
+        assert_eq!(state.last_effect_count, Some(3));
+        assert!(state.has_post_replacement_drain());
+    }
+
     /// CR 614.1a: Bloodletter only doubles during the source controller's turn.
     #[test]
     fn bloodletter_does_not_double_on_opponents_turn() {
         let bloodletter = ObjectId(10);
         let repl = {
             let mut repl = ReplacementDefinition::new(ReplacementEvent::LoseLife)
-                .quantity_modification(QuantityModification::DOUBLE);
+                .quantity_modification(QuantityModification::DOUBLE)
+                .condition(ReplacementCondition::OnlyIfQuantity {
+                    lhs: QuantityExpr::Fixed { value: 0 },
+                    comparator: Comparator::EQ,
+                    rhs: QuantityExpr::Fixed { value: 0 },
+                    active_player_req: Some(ControllerRef::You),
+                });
             repl.valid_player = Some(ReplacementPlayerScope::Opponent);
             repl
         };

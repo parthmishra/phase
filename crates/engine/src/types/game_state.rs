@@ -13898,12 +13898,51 @@ pub struct StepEndManaScanEntry {
 /// `drain_pending_phase_transition_progress` (commit 2). When all players are
 /// processed (queue empties), the drain calls `finish_enter_phase` to complete
 /// the phase entry (priority reset, LKI clear, `PhaseChanged` emission).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhaseTransitionDrainState {
+    #[default]
+    Ready,
+    /// CR 614.6: The current player's empty-mana event has already been
+    /// delivered, and its Yurlok-class life-loss event was replaced by an
+    /// interactive substitute. The APNAP cursor resumes only after that
+    /// post-replacement continuation terminally drains.
+    AwaitingPostReplacementContinuation,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhaseTransitionProgress {
     pub remaining_players: VecDeque<PlayerId>,
     pub next_phase: Phase,
     pub in_combat: bool,
     pub entering_cleanup: bool,
+    #[serde(default)]
+    pub drain_state: PhaseTransitionDrainState,
+}
+
+#[cfg(test)]
+mod phase_transition_progress_serde_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_progress_without_drain_state_defaults_to_ready() {
+        let progress = PhaseTransitionProgress {
+            remaining_players: VecDeque::from([PlayerId(1)]),
+            next_phase: Phase::Upkeep,
+            in_combat: false,
+            entering_cleanup: false,
+            drain_state: PhaseTransitionDrainState::AwaitingPostReplacementContinuation,
+        };
+        let mut legacy = serde_json::to_value(progress).expect("phase progress serializes");
+        legacy
+            .as_object_mut()
+            .expect("phase progress is a JSON object")
+            .remove("drain_state");
+
+        let restored: PhaseTransitionProgress =
+            serde_json::from_value(legacy).expect("legacy phase progress still loads");
+
+        assert_eq!(restored.drain_state, PhaseTransitionDrainState::Ready);
+    }
 }
 
 /// Context stored when a permanent spell's ETB replacement needs a player choice

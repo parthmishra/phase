@@ -146,6 +146,21 @@ pub(super) fn handle_replacement_choice(
         .pending_replacement
         .as_ref()
         .is_some_and(|pending| matches!(pending.proposed, ProposedEvent::RemoveCounter { .. }));
+    // CR 106.4 + CR 119.3 + CR 616.1f: Yurlok's aggregate LifeLoss can pause
+    // the APNAP phase-transition drain on an ordering choice. Capture that
+    // ownership before `continue_replacement` consumes the pending record.
+    // The LifeLoss event is the sole resume authority; the already-applied
+    // EmptyManaPool event must never be replayed.
+    let pending_was_phase_drain_life_loss = state
+        .pending_phase_transition_progress
+        .as_ref()
+        .is_some_and(|progress| {
+            progress.drain_state == crate::types::game_state::PhaseTransitionDrainState::Ready
+        })
+        && state
+            .pending_replacement
+            .as_ref()
+            .is_some_and(|pending| matches!(pending.proposed, ProposedEvent::LifeLoss { .. }));
     // CR 701.24a: capture the parked library placement (W3) BEFORE
     // `continue_replacement` consumes (`.take()`s) the pending record, so the
     // ZoneChange resume arm below can thread it into the delivery `DeliveryCtx`
@@ -726,13 +741,12 @@ pub(super) fn handle_replacement_choice(
                 // still set, drain remaining APNAP-ordered players — that
                 // call may itself pause again on another player's choice
                 // (CR 616.1e iteration).
-                ProposedEvent::EmptyManaPool {
-                    player_id, units, ..
-                } => {
-                    crate::types::mana::apply_empty_mana_pool_decisions(
-                        state, player_id, &units, events,
-                    );
-                    state.pending_step_end_mana_handlers.clear();
+                event @ ProposedEvent::EmptyManaPool { .. } => {
+                    if super::turns::apply_empty_mana_pool_event(state, event, events)
+                        == super::turns::EmptyManaPoolApplyOutcome::Deferred
+                    {
+                        return Ok(state.waiting_for.clone());
+                    }
                 }
                 // CR 705.1 + CR 614.1a: Coin-flip replacements (Krark's Thumb)
                 // are always Mandatory and applied inline by
@@ -1092,6 +1106,20 @@ pub(super) fn handle_replacement_choice(
                 )?;
             }
 
+            // CR 614.6 + CR 500.5: Finish every terminal replacement-choice
+            // Execute path through the shared continuation boundary. In
+            // particular, a nested non-preventing LifeLoss ordering choice can
+            // be the last child of an interactive substitute that owns a
+            // parked APNAP phase transition; the direct phase drain above
+            // deliberately rejects that cursor while it is Awaiting. The
+            // shared resumer first retires the outer continuation/frame, then
+            // advances the typed phase owner exactly once.
+            if matches!(waiting_for, WaitingFor::Priority { .. }) {
+                state.waiting_for = waiting_for;
+                super::engine::resume_pending_continuation_if_priority(state, events)?;
+                waiting_for = state.waiting_for.clone();
+            }
+
             Ok(waiting_for)
         }
         super::replacement::ReplacementResult::NeedsChoice(player) => {
@@ -1166,6 +1194,49 @@ pub(super) fn handle_replacement_choice(
                     WaitingFor::Priority { .. } | WaitingFor::ReplacementChoice { .. }
                 )
             {
+                return Ok(state.waiting_for.clone());
+            }
+            if pending_was_phase_drain_life_loss {
+                state.waiting_for = WaitingFor::Priority {
+                    player: state.active_player,
+                };
+                // CR 614.6: A cross-event replacement's substitute completes
+                // before the original phase-transition drain may resume. If it
+                // pauses again, preserve the phase cursor and surface that
+                // prompt; its eventual replacement epilogue will resume here.
+                if state.has_post_replacement_drain() {
+                    if let Some(waiting_for) =
+                        apply_pending_post_replacement_effect(state, None, None, None, events)
+                    {
+                        state.waiting_for = waiting_for;
+                        super::turns::mark_phase_transition_awaiting_post_replacement(state);
+                    }
+                }
+                if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+                    super::turns::drain_pending_phase_transition_progress(state, events);
+                }
+                return Ok(state.waiting_for.clone());
+            }
+            // CR 614.6 + CR 616.1f + CR 500.5: A prevented LifeLoss choice
+            // raised *inside* an interactive substitute is a child of the
+            // parked phase-transition owner, not a second root. Resume the
+            // outer ability continuation and its exact post-replacement frame
+            // before the generic prevented-spell teardown below can discard
+            // that work. The shared resumer advances the phase cursor only
+            // after the outer frame is terminal; a further choice leaves the
+            // cursor Awaiting and surfaces that prompt.
+            if state
+                .pending_phase_transition_progress
+                .as_ref()
+                .is_some_and(|progress| {
+                    progress.drain_state
+                        == crate::types::game_state::PhaseTransitionDrainState::AwaitingPostReplacementContinuation
+                })
+            {
+                state.waiting_for = WaitingFor::Priority {
+                    player: state.active_player,
+                };
+                super::engine::resume_pending_continuation_if_priority(state, events)?;
                 return Ok(state.waiting_for.clone());
             }
             // CR 701.50a + CR 614.5 + CR 616.1f: the leading Draw of a connive

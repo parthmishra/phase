@@ -3267,6 +3267,14 @@ pub(super) fn resume_pending_continuation_if_priority(
         if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
             effects::resume_resolution_frames(state, events);
         }
+        // CR 614.6 + CR 500.5: An interactive cross-event substitute may be
+        // the child that suspended the APNAP phase-transition drain. Resume
+        // that typed owner only after the post-replacement frame has
+        // terminally drained; ordinary phase-boundary prompts use other states
+        // and are intentionally unaffected.
+        if matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+            turns::resume_phase_transition_after_post_replacement(state, events);
+        }
         // CR 605.3b + CR 616.1: A post-replacement prompt reaches this common
         // boundary only after ordinary continuations drain. The shared typed
         // dispatcher owns the remaining eligible payment roots.
