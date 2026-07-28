@@ -436,7 +436,7 @@ fn effect_pay_cost_mana_resume(
     // retry that would bypass the player's submitted unless-payment flow.
     if let WaitingFor::UnlessPayment {
         player,
-        cost: _,
+        cost,
         pending_effect,
         trigger_event,
         effect_description,
@@ -445,7 +445,7 @@ fn effect_pay_cost_mana_resume(
     {
         return Some(ManaAbilityResume::UnlessPayment {
             outer_player: Some(*player),
-            cost: Box::new(cost),
+            cost: Box::new(cost.clone()),
             pending_effect: pending_effect.clone(),
             trigger_event: trigger_event.clone(),
             effect_description: effect_description.clone(),
