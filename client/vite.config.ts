@@ -402,6 +402,19 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_IMPORT_DECK_PROXY ?? "http://localhost:8787",
         changeOrigin: true,
       },
+      // Arena card faces composite art and live engine text into WebGL
+      // textures. Keep these transports fixed to the two Scryfall image hosts;
+      // they are not arbitrary URL proxies.
+      "/arena-card-art": {
+        target: "https://cards.scryfall.io",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/arena-card-art/, ""),
+      },
+      "/arena-card-back": {
+        target: "https://backs.scryfall.io",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/arena-card-back/, ""),
+      },
     },
   },
   build: {

@@ -47,6 +47,7 @@ import {
 } from "./handFanPresentation.ts";
 import { useHandScrubPreview } from "./useHandScrubPreview.ts";
 import { MobileHeldHandCard } from "./MobileHeldHandCard.tsx";
+import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -644,11 +645,7 @@ export function PlayerHand() {
             <HandCard
               key={obj.id}
               objectId={obj.id}
-              cardName={obj.name}
-              oracleId={obj.printed_ref?.oracle_id}
-              faceName={obj.printed_ref?.face_name}
               manaCost={obj.mana_cost}
-              unimplementedMechanics={obj.unimplemented_mechanics}
               index={i}
               handSize={handObjects.length}
               insertionSlotMV={insertionSlotMV}
@@ -791,11 +788,7 @@ export function PlayerHand() {
 
 interface HandCardProps {
   objectId: number;
-  cardName: string;
-  oracleId?: string;
-  faceName?: string;
   manaCost: ManaCost;
-  unimplementedMechanics?: string[];
   index: number;
   handSize: number;
   insertionSlotMV: MotionValue<number>;
@@ -823,11 +816,7 @@ interface HandCardProps {
 
 const HandCard = memo(function HandCard({
   objectId,
-  cardName,
-  oracleId,
-  faceName,
   manaCost,
-  unimplementedMechanics,
   index,
   handSize,
   insertionSlotMV,
@@ -989,13 +978,10 @@ const HandCard = memo(function HandCard({
         className={`relative rounded-lg ${glowClass} ${isSelected ? "ring-2 ring-cyan-400" : ""}`}
         style={{ x: displaceX }}
       >
-        <CardImage
-          cardName={cardName}
-          size="normal"
-          oracleId={oracleId}
-          faceName={faceName}
-          unimplementedMechanics={unimplementedMechanics}
-          className="!w-[var(--hand-card-w)] !h-[var(--hand-card-h)]"
+        <ArenaCardFace
+          objectId={objectId}
+          displayCost={displayCost}
+          isCostReduced={isReduced}
         />
         {/* Inner-edge drop highlights. Always rendered, normally invisible; their
             opacity is driven by MotionValues so the glow toggles without a
@@ -1011,12 +997,6 @@ const HandCard = memo(function HandCard({
           className="pointer-events-none absolute inset-y-0 right-0 w-[3px] rounded-full bg-ember-bright shadow-[0_0_10px_3px_rgba(251,146,60,0.85)]"
           style={{ opacity: rightEdgeOpacity }}
         />
-        {/* @container overlay sized to the card (absolute inset-0 takes width
-            from the card wrapper, so container-type can't collapse it); lets the
-            pips scale in cqi with --hand-card-w instead of a fixed px size. */}
-        <div className="pointer-events-none absolute inset-0 @container">
-          <ManaCostPips cost={displayCost} isReduced={isReduced} size="fluid" />
-        </div>
       </motion.div>
     </motion.div>
   );

@@ -87,6 +87,10 @@ export class GameObjectFactory extends Factory<GameObject> {
     return this.params({ tapped: true });
   }
 
+  faceDown() {
+    return this.params({ face_down: true });
+  }
+
   named(name: string) {
     return this.params({ name });
   }

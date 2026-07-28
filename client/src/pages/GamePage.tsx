@@ -50,7 +50,7 @@ import { BlockAssignmentLines } from "../components/board/BlockAssignmentLines.t
 import { BlockRequirementBadges } from "../components/combat/BlockRequirementBadges.tsx";
 import { AttackRequirementBadges } from "../components/combat/AttackRequirementBadges.tsx";
 import { BlockerConstraintBadges } from "../components/combat/BlockerConstraintBadges.tsx";
-import { GameBoard } from "../components/board/GameBoard.tsx";
+import { ArenaGameBoard } from "../components/arena3d/ArenaGameBoard.tsx";
 import { CardImage } from "../components/card/CardImage.tsx";
 import { GameCardPreview } from "../components/card/GameCardPreview.tsx";
 import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
@@ -1400,7 +1400,7 @@ function GamePageContent({
 
         {/* Row 2: Battlefield — takes remaining space; HUDs passed inline to PlayerAreas */}
         <div className="relative z-30 flex min-h-0 min-w-0 flex-col">
-          <GameBoard
+          <ArenaGameBoard
             oppHud={oppHud}
             playerHud={playerHud}
             showOpponentCards={showAiHand}
