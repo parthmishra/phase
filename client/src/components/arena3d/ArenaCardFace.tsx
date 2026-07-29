@@ -84,7 +84,7 @@ export function ArenaCardFace({
 
   return (
     <Element
-      className={`arena-card-face relative isolate h-[var(--hand-card-h)] w-[var(--hand-card-w)] overflow-hidden rounded-[4.4%/3.15%] bg-[#0b0b0b] text-[#f7f0dc] shadow-[0_12px_28px_rgba(0,0,0,0.55)] ${className}`}
+      className={`arena-card-face relative isolate h-[var(--hand-card-h)] w-[var(--hand-card-w)] overflow-hidden rounded-[4.4%/3.15%] bg-[#0b0b0b] text-[#f7f0dc] shadow-[0_10px_22px_rgba(0,0,0,0.46)] ${className}`}
       style={style}
       aria-label={presentation.name}
       data-arena-live-card

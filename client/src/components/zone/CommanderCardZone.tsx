@@ -250,7 +250,7 @@ function CommanderCard({
           objectId={commander.id}
           displayCost={displayCost}
           isCostReduced={isReduced}
-          className="h-full w-full shadow-[0_12px_28px_rgba(0,0,0,0.55)]"
+          className="h-full w-full shadow-[0_10px_22px_rgba(0,0,0,0.46)]"
           style={{ height: "100%", width: "100%" }}
         />
       ) : (
@@ -269,7 +269,7 @@ function CommanderCard({
       )}
 
       {/* Actionable glow ring — castable or commander-ninjutsu available */}
-      {(canCast || canNinjutsu) && (
+      {!handPresentation && (canCast || canNinjutsu) && (
         <div className={`absolute inset-0 rounded-lg ${CASTABLE_AFFORDANCE_ACTIVE}`} />
       )}
 

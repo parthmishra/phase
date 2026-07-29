@@ -33,19 +33,19 @@ interface HudPlateProps {
 }
 
 const TONE_CLASSES: Record<HudTone, string> = {
-  neutral: "border-white/12 bg-slate-950/90 text-slate-100 shadow-[0_1px_0_rgba(255,255,255,0.05)]",
-  emerald: "border-emerald-400/28 bg-emerald-950/72 text-emerald-50 shadow-[0_1px_0_rgba(255,255,255,0.05)]",
-  rose: "border-rose-400/28 bg-rose-950/72 text-rose-50 shadow-[0_1px_0_rgba(255,255,255,0.05)]",
-  cyan: "border-cyan-400/32 bg-cyan-950/72 text-cyan-50 shadow-[0_1px_0_rgba(255,255,255,0.05)]",
-  amber: "border-amber-400/28 bg-amber-950/72 text-amber-50 shadow-[0_1px_0_rgba(255,255,255,0.05)]",
+  neutral: "border-white/12 bg-[#08111d]/86 text-slate-100 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
+  emerald: "border-emerald-300/24 bg-[#081712]/86 text-emerald-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
+  rose: "border-rose-300/24 bg-[#190c13]/86 text-rose-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
+  cyan: "border-cyan-300/25 bg-[#07151a]/86 text-cyan-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
+  amber: "border-amber-300/24 bg-[#19140a]/86 text-amber-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
 };
 
 const ACTIVE_TURN_CLASSES: Record<HudTone, string> = {
-  neutral: "border-white/35 ring-1 ring-white/40 shadow-[0_0_0_1px_rgba(255,255,255,0.16),0_0_24px_rgba(226,232,240,0.22)]",
-  emerald: "border-emerald-300/60 ring-1 ring-emerald-300/60 shadow-[0_0_0_1px_rgba(110,231,183,0.18),0_0_26px_rgba(16,185,129,0.34)]",
-  rose: "border-rose-300/62 ring-1 ring-rose-300/60 shadow-[0_0_0_1px_rgba(253,164,175,0.18),0_0_26px_rgba(244,63,94,0.34)]",
-  cyan: "border-cyan-300/62 ring-1 ring-cyan-300/60 shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_0_26px_rgba(34,211,238,0.34)]",
-  amber: "border-amber-300/62 ring-1 ring-amber-300/60 shadow-[0_0_0_1px_rgba(252,211,77,0.18),0_0_26px_rgba(245,158,11,0.34)]",
+  neutral: "border-white/32 ring-1 ring-white/22 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
+  emerald: "border-emerald-300/48 ring-1 ring-emerald-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
+  rose: "border-rose-300/48 ring-1 ring-rose-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
+  cyan: "border-cyan-300/48 ring-1 ring-cyan-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
+  amber: "border-amber-300/48 ring-1 ring-amber-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
 };
 
 export function HudPlate({

@@ -10,9 +10,9 @@ import {
   getOpponentIds,
   getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
-import { ArenaForest } from "./ArenaForest.tsx";
+import { ArenaHeldHand } from "./ArenaHeldHand.tsx";
+import { ArenaMaterialPlane } from "./ArenaMaterialPlane.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
-import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import {
   assignArenaOpponentSeats,
@@ -20,7 +20,7 @@ import {
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
 
-const ARENA_CAMERA_FOV = 34;
+const ARENA_CAMERA_FOV = 32;
 
 interface ArenaGameBoardProps {
   oppHud?: React.ReactNode;
@@ -94,23 +94,31 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
 
   return (
     <div
-      className="relative min-h-0 flex-1 overflow-visible"
-      data-arena-table-layout={tableLayout}
+      className="relative h-full min-h-0 w-full overflow-visible"
+      data-arena-stage-layout={tableLayout}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex -translate-y-[calc(100%+0.4rem)] justify-center">
+      <div
+        className="pointer-events-none absolute inset-x-0 z-30 flex justify-center"
+        style={{
+          top:
+            "calc(env(safe-area-inset-top) + clamp(6.2rem, 12dvh, 8rem))",
+        }}
+        data-arena-screen-space-ui="opponent-hud"
+      >
         <div className="contents pointer-events-auto">{props.oppHud}</div>
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center">
+      <div
+        className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
+        style={{
+          bottom:
+            "calc(env(safe-area-inset-bottom) + clamp(7.9rem, 18.5dvh, 10.5rem))",
+        }}
+        data-arena-screen-space-ui="player-hud"
+      >
         <div className="contents pointer-events-auto">{props.playerHud}</div>
       </div>
 
-      <div
-        className="absolute inset-x-0 top-0 overflow-hidden"
-        style={{
-          bottom:
-            "calc(-1 * min(calc(0.18 * (100dvh - var(--game-top-overlay-offset, 0px))), 150px))",
-        }}
-      >
+      <div className="absolute inset-0 overflow-hidden">
         <Canvas
           shadows
           frameloop="demand"
@@ -124,18 +132,17 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           style={{ position: "absolute", inset: 0 }}
         >
           <ArenaCameraRig tableLayout={tableLayout} />
-          <color attach="background" args={["#050a0c"]} />
-          <fog attach="fog" args={["#07100f", 18, 48]} />
-          <ambientLight intensity={0.64} color="#91a3a0" />
-          <hemisphereLight
-            args={["#a8bcb8", "#07100f", 0.86]}
-          />
-          {/* A warm top-left key gives the slab and cards one readable,
-              consistent light direction. */}
+          <ArenaRendererSettings />
+          <color attach="background" args={["#111a1c"]} />
+          <fog attach="fog" args={["#111a1c", 34, 62]} />
+          <ambientLight intensity={0.72} color="#a7b0ad" />
+          <hemisphereLight args={["#c1c5bc", "#1d292a", 0.96]} />
+          {/* One broad warm key establishes the painterly upper-left value
+              mass while retaining readable shadows beneath matte cards. */}
           <directionalLight
-            position={[-9, 13, -7]}
-            intensity={2.6}
-            color="#f4ddb0"
+            position={[-9, 18, -7]}
+            intensity={2.85}
+            color="#ead6b8"
             castShadow
             shadow-mapSize-width={2048}
             shadow-mapSize-height={2048}
@@ -144,30 +151,32 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             shadow-camera-top={11}
             shadow-camera-bottom={-11}
             shadow-bias={-0.00015}
+            shadow-normalBias={0.025}
+            shadow-radius={3}
           />
-          {/* Cool ruin-light separates silhouettes without flattening the key. */}
+          {/* A restrained cool fill separates the far edge without creating a
+              second theatrical light source. */}
           <directionalLight
-            position={[8, 5.5, 8]}
-            intensity={0.46}
-            color="#6fc4b7"
+            position={[9, 7, 9]}
+            intensity={0.44}
+            color="#799aa5"
           />
-          <pointLight
-            position={[0, 7.5, 0.5]}
-            intensity={1.1}
-            distance={22}
-            decay={2}
-            color="#bcd1ca"
-          />
-          <pointLight
-            position={[-3.8, 3.4, -2.6]}
-            intensity={0.9}
-            distance={10}
-            decay={2}
-            color="#e6c98e"
+          <directionalLight
+            position={[-4, 8, -12]}
+            intensity={0.54}
+            color="#a5bdbe"
           />
 
-          <ArenaForest />
-          <ArenaTable />
+          <ArenaMaterialPlane />
+          {opponentSeats.map(({ playerId, seat }) => (
+            <ArenaHeldHand
+              key={`held-hand-${playerId}`}
+              playerId={playerId}
+              seat={seat}
+              tableLayout={tableLayout}
+              showCards={props.showOpponentCards}
+            />
+          ))}
           <ArenaZonePiles
             playerId={perspectivePlayerId}
             seat="local"
@@ -205,21 +214,22 @@ function ArenaCameraRig({
     const aspect = Math.max(size.width / Math.max(size.height, 1), 0.4);
     const compact = aspect < 1.35;
     const target = compact
-      ? new THREE.Vector3(0, 0, 0.65)
-      : new THREE.Vector3(0, 0, tableLayout === "pod" ? 0.82 : 1.15);
+      ? new THREE.Vector3(0, 0, 0.4)
+      : new THREE.Vector3(0, 0, tableLayout === "pod" ? 0.55 : 0.72);
     const direction = compact
       ? new THREE.Vector3(0, 0.86, 0.51).normalize()
       : new THREE.Vector3(0, 0.8, 0.6).normalize();
     const halfFov = (ARENA_CAMERA_FOV * Math.PI) / 360;
-    const fitRadius = compact
-      ? tableLayout === "pod" ? 11.2 : 10.4
-      : tableLayout === "pod" ? 11.6 : 10.4;
+    const fitRadius = tableLayout === "pod" ? 9.3 : 8.7;
     const horizontalDistance = fitRadius / (Math.tan(halfFov) * aspect);
     const verticalDistance = fitRadius / Math.tan(halfFov);
-    const distance = Math.max(
-      horizontalDistance,
-      verticalDistance * (compact ? 0.58 : 0.44),
-    );
+    // Compact screens intentionally crop the environment instead of zooming
+    // the cards down to fit an artificial perimeter. The interactive play lanes
+    // remain large while the material plane continues beyond the viewport;
+    // the mobile hand drawer carries the primary narrow-screen interaction.
+    const distance = compact
+      ? verticalDistance * (tableLayout === "pod" ? 0.72 : 0.68)
+      : Math.max(horizontalDistance, verticalDistance * 0.48);
     const cameraPosition = direction.multiplyScalar(distance).add(target);
 
     perspective.position.copy(cameraPosition);
@@ -229,6 +239,20 @@ function ArenaCameraRig({
     perspective.lookAt(target);
     invalidate();
   }, [camera, invalidate, size.height, size.width, tableLayout]);
+
+  return null;
+}
+
+function ArenaRendererSettings() {
+  const { gl, invalidate } = useThree();
+
+  useEffect(() => {
+    gl.outputColorSpace = THREE.SRGBColorSpace;
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = 1.18;
+    gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    invalidate();
+  }, [gl, invalidate]);
 
   return null;
 }

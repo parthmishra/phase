@@ -104,12 +104,12 @@ export function GameMenu({
         top: "calc(env(safe-area-inset-top) + var(--game-top-overlay-offset, 0px) + 0.75rem)",
       }}
     >
-      <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-200/45 bg-slate-950/84 shadow-[0_8px_22px_rgba(0,0,0,0.32),0_0_14px_rgba(34,211,238,0.22)] backdrop-blur-md">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-200/45 bg-slate-950/84 shadow-[0_8px_22px_rgba(0,0,0,0.32),0_0_14px_rgba(34,211,238,0.22)] backdrop-blur-md">
         <button
           onClick={() => {
             setOpen(!open);
           }}
-          className={`flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${
+          className={`flex h-12 w-12 items-center justify-center rounded-full border transition-colors ${
             open
               ? "border-cyan-200/80 bg-cyan-300/18 text-cyan-50"
               : "border-white/15 bg-white/7 text-gray-100 hover:border-cyan-200/70 hover:bg-cyan-300/14"

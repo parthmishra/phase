@@ -15,7 +15,9 @@ import { useGameStore } from "../../stores/gameStore.ts";
 const CARD_WIDTH = ARENA_CARD_WIDTH;
 const CARD_HEIGHT = ARENA_CARD_DEPTH;
 const CARD_CORNER_RADIUS = 0.09;
-const CARD_GEOMETRY = makeRoundedCardGeometry();
+const CARD_THICKNESS = 0.026;
+const CARD_FACE_GEOMETRY = makeRoundedCardFaceGeometry();
+const CARD_BODY_GEOMETRY = makeRoundedCardBodyGeometry();
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
@@ -33,7 +35,6 @@ export function ArenaPermanent({
   const texture = useArenaCardTexture(objectId, pileCount);
   const interaction = useArenaPermanentInteraction(objectId);
   const groupRef = useRef<THREE.Group>(null);
-  const arrivalRingRef = useRef<THREE.Mesh>(null);
   const arrivalAgeRef = useRef(0);
   const initialPlacementRef = useRef({
     attackVector,
@@ -73,7 +74,7 @@ export function ArenaPermanent({
     texture,
   ]);
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
@@ -83,13 +84,6 @@ export function ArenaPermanent({
       arrivalAgeRef.current + delta,
     );
     const arrivalProgress = arrivalAgeRef.current / arrivalDuration;
-    const arrivalRing = arrivalRingRef.current;
-    if (arrivalRing) {
-      const ringScale = THREE.MathUtils.lerp(0.68, 1.46, arrivalProgress);
-      arrivalRing.scale.setScalar(ringScale);
-      const ringMaterial = arrivalRing.material as THREE.MeshBasicMaterial;
-      ringMaterial.opacity = 0.46 * (1 - arrivalProgress) ** 2;
-    }
 
     const response = 1 - Math.exp(-delta * 14);
     const targetX =
@@ -107,13 +101,6 @@ export function ArenaPermanent({
     group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
     group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, response);
     group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, response);
-    // A whisper of hover drift keeps the cards aloft over the stone — slow
-    // enough to read as weight, not animation. Combat and hover pin the card.
-    if (!interaction.isAttacking && !interaction.isHovered) {
-      const hoverPhase = (Number(objectId) % 89) / 89 * Math.PI * 2;
-      group.position.y +=
-        Math.sin(state.clock.elapsedTime * 0.85 + hoverPhase) * 0.012;
-    }
     group.rotation.y = lerpAngle(group.rotation.y, targetRotation, response);
     const nextScale = THREE.MathUtils.lerp(
       group.scale.x,
@@ -133,7 +120,7 @@ export function ArenaPermanent({
 
   if (!object) return null;
 
-  const glow = permanentGlow(interaction);
+  const visualState = permanentVisualState(interaction);
 
   const handlePointerOver = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -165,8 +152,8 @@ export function ArenaPermanent({
       >
         <planeGeometry
           args={[
-            (object.tapped ? CARD_HEIGHT : CARD_WIDTH) * cardScale * 1.1,
-            (object.tapped ? CARD_WIDTH : CARD_HEIGHT) * cardScale * 1.1,
+            (object.tapped ? CARD_HEIGHT : CARD_WIDTH) * cardScale * 1.2,
+            (object.tapped ? CARD_WIDTH : CARD_HEIGHT) * cardScale * 1.2,
           ]}
         />
         <meshBasicMaterial
@@ -177,50 +164,48 @@ export function ArenaPermanent({
       </mesh>
 
       <group ref={groupRef}>
-        <mesh
-          ref={arrivalRingRef}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, -0.01, 0]}
-        >
-          <ringGeometry args={[0.62, 0.72, 72]} />
-          <meshBasicMaterial
-            color="#f1cf83"
-            transparent
-            opacity={0.46}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-
-        {glow && (
+        {visualState.underglow && (
           <ArenaCardGlow
             width={CARD_WIDTH}
             height={CARD_HEIGHT}
-            padding={glow.padding}
-            color={glow.color}
-            opacity={glow.opacity}
+            padding={visualState.underglow.padding}
+            color={visualState.underglow.color}
+            opacity={visualState.underglow.opacity}
             y={-0.004}
           />
         )}
 
+        {visualState.bracketColor && (
+          <ArenaTargetBrackets color={visualState.bracketColor} />
+        )}
+
         <mesh
-          geometry={CARD_GEOMETRY}
+          geometry={CARD_BODY_GEOMETRY}
           rotation={[-Math.PI / 2, 0, 0]}
           castShadow
           receiveShadow
         >
           <meshStandardMaterial
+            color="#151820"
+            roughness={0.98}
+            metalness={0}
+          />
+        </mesh>
+
+        <mesh
+          geometry={CARD_FACE_GEOMETRY}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.003, 0]}
+          receiveShadow
+        >
+          <meshLambertMaterial
             key={texture?.uuid ?? "arena-loading"}
             map={texture}
-            color={texture ? "#ffffff" : "#171d1d"}
+            color={texture ? "#ffffff" : "#171a20"}
             transparent
             alphaTest={0.06}
-            roughness={0.68}
-            metalness={0.025}
-            emissive={texture ? "#ffffff" : "#0b1212"}
-            emissiveMap={texture}
-            emissiveIntensity={texture ? 0.045 : 0.3}
+            emissive={texture ? "#050505" : "#080b10"}
+            emissiveIntensity={texture ? 0.02 : 0.18}
             shadowSide={THREE.DoubleSide}
           />
         </mesh>
@@ -229,22 +214,37 @@ export function ArenaPermanent({
   );
 }
 
-function permanentGlow(
+interface ArenaPermanentVisualState {
+  bracketColor: string | null;
+  underglow: {
+    color: string;
+    opacity: number;
+    padding: number;
+  } | null;
+}
+
+function permanentVisualState(
   interaction: ArenaPermanentInteractionLike,
-): { color: string; opacity: number; padding: number } | null {
+): ArenaPermanentVisualState {
   if (interaction.isAttacking || interaction.isBlocking) {
-    return { color: "#f58b3b", opacity: 0.7, padding: 0.2 };
+    return {
+      bracketColor: null,
+      underglow: { color: "#c5784c", opacity: 0.24, padding: 0.2 },
+    };
   }
   if (interaction.isValidTarget) {
-    return { color: "#b9f65a", opacity: 0.82, padding: 0.24 };
+    return { bracketColor: "#8bcbbd", underglow: null };
   }
   if (interaction.hasProminentAction) {
-    return { color: "#22d3ee", opacity: 0.78, padding: 0.24 };
+    return {
+      bracketColor: null,
+      underglow: { color: "#72b9ca", opacity: 0.26, padding: 0.28 },
+    };
   }
   if (interaction.isSelected) {
-    return { color: "#f7e7b0", opacity: 0.55, padding: 0.2 };
+    return { bracketColor: "#d8cfb2", underglow: null };
   }
-  return null;
+  return { bracketColor: null, underglow: null };
 }
 
 interface ArenaPermanentInteractionLike {
@@ -255,7 +255,55 @@ interface ArenaPermanentInteractionLike {
   isValidTarget: boolean;
 }
 
-function makeRoundedCardGeometry(): THREE.ShapeGeometry {
+function ArenaTargetBrackets({ color }: { color: string }) {
+  const cornerX = CARD_WIDTH / 2 + 0.035;
+  const cornerZ = CARD_HEIGHT / 2 + 0.035;
+  const bracketLength = 0.21;
+  const bracketWidth = 0.045;
+
+  return (
+    <group position={[0, 0.013, 0]}>
+      {([-1, 1] as const).flatMap((xDirection) =>
+        ([-1, 1] as const).flatMap((zDirection) => [
+          <mesh
+            key={`horizontal-${xDirection}-${zDirection}`}
+            position={[
+              xDirection * (cornerX - bracketLength / 2),
+              0,
+              zDirection * cornerZ,
+            ]}
+          >
+            <boxGeometry args={[bracketLength, 0.012, bracketWidth]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={0.84}
+              toneMapped={false}
+            />
+          </mesh>,
+          <mesh
+            key={`vertical-${xDirection}-${zDirection}`}
+            position={[
+              xDirection * cornerX,
+              0,
+              zDirection * (cornerZ - bracketLength / 2),
+            ]}
+          >
+            <boxGeometry args={[bracketWidth, 0.012, bracketLength]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={0.84}
+              toneMapped={false}
+            />
+          </mesh>,
+        ]),
+      )}
+    </group>
+  );
+}
+
+function makeRoundedCardShape(): THREE.Shape {
   const halfWidth = CARD_WIDTH / 2;
   const halfHeight = CARD_HEIGHT / 2;
   const radius = CARD_CORNER_RADIUS;
@@ -298,8 +346,13 @@ function makeRoundedCardGeometry(): THREE.ShapeGeometry {
     false,
   );
   shape.closePath();
+  return shape;
+}
 
-  const geometry = new THREE.ShapeGeometry(shape, 8);
+function makeRoundedCardFaceGeometry(): THREE.ShapeGeometry {
+  const geometry = new THREE.ShapeGeometry(makeRoundedCardShape(), 8);
+  const halfWidth = CARD_WIDTH / 2;
+  const halfHeight = CARD_HEIGHT / 2;
   const positions = geometry.getAttribute("position");
   const uvs = new Float32Array(positions.count * 2);
   for (let index = 0; index < positions.count; index += 1) {
@@ -308,6 +361,17 @@ function makeRoundedCardGeometry(): THREE.ShapeGeometry {
       (positions.getY(index) + halfHeight) / CARD_HEIGHT;
   }
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  return geometry;
+}
+
+function makeRoundedCardBodyGeometry(): THREE.ExtrudeGeometry {
+  const geometry = new THREE.ExtrudeGeometry(makeRoundedCardShape(), {
+    depth: CARD_THICKNESS,
+    bevelEnabled: false,
+    steps: 1,
+    curveSegments: 8,
+  });
+  geometry.translate(0, 0, -CARD_THICKNESS);
   return geometry;
 }
 

@@ -388,53 +388,21 @@ select.select-dark option {
   }
 }
 
-/* A calm, molten-gold command-card aura. The slow conic shimmer supplies a
-   digital-client castability cue while the blurred radial wash keeps it from
-   competing with targeting and combat effects on the battlefield. */
-@keyframes arena-command-aura-turn {
-  to {
-    transform: rotate(1turn) scale(1.035);
-  }
-}
-
-@keyframes arena-command-aura-breathe {
-  0%,
-  100% {
-    opacity: 0.42;
-    filter: blur(8px);
-  }
-  50% {
-    opacity: 0.72;
-    filter: blur(11px);
-  }
-}
-
+/* Castability is a quiet sea-glass underlight. It stays behind the matte card
+   and avoids rotating borders or motion that could compete with game state. */
 .arena-command-castable-aura {
   background:
-    radial-gradient(ellipse at 50% 90%, rgb(245 158 11 / 45%), transparent 62%),
-    conic-gradient(
-      from 20deg,
-      transparent 0deg,
-      rgb(254 240 138 / 82%) 48deg,
-      rgb(245 158 11 / 35%) 95deg,
-      transparent 142deg,
-      rgb(251 191 36 / 72%) 228deg,
-      transparent 310deg
+    radial-gradient(ellipse at 50% 90%, rgb(105 190 198 / 38%), transparent 64%),
+    linear-gradient(
+      180deg,
+      transparent 42%,
+      rgb(91 166 181 / 16%) 78%,
+      rgb(115 202 204 / 28%)
     );
   box-shadow:
-    0 0 14px rgb(245 158 11 / 42%),
-    0 0 30px rgb(251 191 36 / 18%);
-  animation:
-    arena-command-aura-turn 7s linear infinite,
-    arena-command-aura-breathe 3.8s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arena-command-castable-aura {
-    animation: none;
-    opacity: 0.55;
-    filter: blur(9px);
-  }
+    0 7px 16px rgb(88 179 191 / 24%),
+    0 0 24px rgb(88 179 191 / 12%);
+  filter: blur(7px);
 }
 
 @media (prefers-reduced-motion: reduce) {

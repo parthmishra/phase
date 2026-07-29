@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { type ThreeEvent } from "@react-three/fiber";
+import { type ThreeEvent, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type { PlayerId } from "../../adapter/types.ts";
@@ -35,6 +35,9 @@ export function ArenaZonePiles({
   onViewZone,
 }: ArenaZonePilesProps) {
   const gameState = useGameStore((state) => state.gameState);
+  const viewportLayout = useThree(({ size }) =>
+    size.width / Math.max(size.height, 1) < 1 ? "compact" : "wide"
+  );
   const library = getPlayerZoneIds(gameState, "library", playerId);
   const graveyard = getPlayerZoneIds(gameState, "graveyard", playerId);
   const exile = getPlayerZoneIds(gameState, "exile", playerId);
@@ -49,7 +52,7 @@ export function ArenaZonePiles({
     faceName: graveyardLookup?.faceName,
     faceIndex: graveyardLookup?.faceIndex,
   });
-  const layout = arenaZoneLayout(seat, tableLayout);
+  const layout = arenaZoneLayout(seat, tableLayout, viewportLayout);
   const handleView = (zone: ViewableZone) => onViewZone?.(zone, playerId);
 
   return (
@@ -155,8 +158,8 @@ function ArenaCardZone({
             />
             <meshStandardMaterial
               color={stack ? "#0b0e0f" : "#15191a"}
-              roughness={0.78}
-              metalness={0.05}
+              roughness={0.98}
+              metalness={0}
             />
           </mesh>
           <mesh
@@ -166,17 +169,14 @@ function ArenaCardZone({
             receiveShadow
           >
             <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
-            <meshStandardMaterial
+            <meshLambertMaterial
               key={texture?.uuid ?? "arena-zone-loading"}
               map={texture}
               color={texture ? "#ffffff" : "#2f2a21"}
               transparent
               alphaTest={0.04}
-              roughness={0.76}
-              metalness={0.015}
-              emissive={texture ? "#ffffff" : "#081110"}
-              emissiveMap={texture}
-              emissiveIntensity={texture ? 0.04 : 0.24}
+              emissive={texture ? "#050505" : "#080b10"}
+              emissiveIntensity={texture ? 0.02 : 0.16}
               shadowSide={THREE.DoubleSide}
             />
           </mesh>
@@ -234,35 +234,24 @@ function ArenaExileZone({
         document.body.style.cursor = "";
       }}
     >
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
-        <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
+      <mesh
+        position={[0, 0.018 + Math.min(count, 8) * 0.001, 0]}
+        castShadow
+        receiveShadow
+      >
+        <boxGeometry
+          args={[
+            ARENA_CARD_WIDTH,
+            0.036 + Math.min(count, 8) * 0.002,
+            ARENA_CARD_DEPTH,
+          ]}
+        />
         <meshStandardMaterial
-          color="#17142b"
-          emissive="#4b3490"
-          emissiveIntensity={hovered ? 0.48 : 0.24}
-          roughness={0.46}
-          metalness={0.22}
+          color={hovered ? "#302d45" : "#211f31"}
+          roughness={0.98}
+          metalness={0}
         />
       </mesh>
-      {Array.from({ length: Math.min(count, 3) }, (_, index) => (
-        <mesh
-          key={index}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.025 + index * 0.003, 0]}
-        >
-          <ringGeometry
-            args={[0.25 + index * 0.11, 0.31 + index * 0.11, 64]}
-          />
-          <meshBasicMaterial
-            color="#9c7cf4"
-            transparent
-            opacity={(hovered ? 0.82 : 0.5) - index * 0.1}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
     </group>
   );
 }
@@ -278,29 +267,11 @@ function makeEmptyZoneTexture(kind: ArenaCardZoneKind): THREE.CanvasTexture {
   context.beginPath();
   context.roundRect(8, 8, 374, 530, 28);
   context.fill();
-  context.strokeStyle = "rgba(156, 176, 198, 0.26)";
+  context.strokeStyle = kind === "graveyard"
+    ? "rgba(145, 152, 166, 0.24)"
+    : "rgba(122, 153, 174, 0.24)";
   context.lineWidth = 5;
   context.stroke();
-
-  context.strokeStyle = "rgba(156, 176, 198, 0.2)";
-  context.fillStyle = "rgba(111, 131, 153, 0.16)";
-  context.lineWidth = 10;
-  if (kind === "graveyard") {
-    context.beginPath();
-    context.roundRect(126, 150, 138, 234, 54);
-    context.fill();
-    context.stroke();
-    context.beginPath();
-    context.moveTo(98, 396);
-    context.lineTo(292, 396);
-    context.stroke();
-  } else {
-    for (const offset of [0, 18]) {
-      context.beginPath();
-      context.roundRect(112 + offset, 134 - offset, 150, 244, 20);
-      context.stroke();
-    }
-  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

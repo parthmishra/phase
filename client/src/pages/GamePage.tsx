@@ -27,7 +27,6 @@ import type {
 import { useDraftStore } from "../stores/draftStore";
 import { loadActiveQuickDraft } from "../services/quickDraftPersistence";
 import type { DraftMatchResult } from "../services/quickDraftPersistence";
-import { useResolvedGridRows } from "../hooks/useResolvedGridRows.ts";
 import { useGameViewportLock } from "../hooks/useGameViewportLock.ts";
 import { FlexEditOverlay } from "../components/flexlayout/FlexEditOverlay.tsx";
 import { DraggableWidget } from "../components/flexlayout/DraggableWidget.tsx";
@@ -63,7 +62,6 @@ import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
 import { MobilePhaseChip } from "../components/controls/MobilePhaseChip.tsx";
 import { MayTriggerAutoChoiceList } from "../components/board/MayTriggerAutoChoiceList.tsx";
 import { PriorityYieldList } from "../components/board/PriorityYieldList.tsx";
-import { OpponentHand } from "../components/hand/OpponentHand.tsx";
 import { MobileHandDrawer } from "../components/hand/MobileHandDrawer.tsx";
 import { HandBadge } from "../components/hand/HandBadge.tsx";
 import { PlayerHand } from "../components/hand/PlayerHand.tsx";
@@ -826,7 +824,6 @@ function GamePageContent({
   const lobbyProgress = useGameStore((s) => s.lobbyProgress);
   const dispatch = useGameDispatch();
   useGameViewportLock();
-  const focusedGridTemplateRows = useResolvedGridRows();
   const gameState = useGameStore((s) => s.gameState);
   const objects = useGameStore((s) => s.gameState?.objects);
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
@@ -1303,69 +1300,56 @@ function GamePageContent({
 
       <DebugModeBanner />
 
-      {/* Full-screen board layout — CSS Grid with 3 rows: opp hand, battlefield, player hand.
-          Board choices lift the grid above normal HUD rails, but must stay below
-          DialogHost/TargetingOverlay so confirm controls are not hidden behind
-          the player hand. Keep this ordering in GAME_Z_LAYER. */}
+      {/* One continuous Arena stage. Screen-space controls stay large and
+          accessible, but both hands are grounded at the near/far table edges
+          instead of reserving detached dashboard rows around the canvas. */}
       <div
-        className={`relative ${boardChoiceLayerActive && !isReconnecting ? GAME_Z_LAYER.boardChoiceGrid : GAME_Z_LAYER.board} grid min-w-0 h-full${isReconnecting ? " pointer-events-none" : ""}`}
+        className={`relative ${boardChoiceLayerActive && !isReconnecting ? GAME_Z_LAYER.boardChoiceGrid : GAME_Z_LAYER.board} h-full min-w-0 overflow-hidden${isReconnecting ? " pointer-events-none" : ""}`}
         style={{
           paddingTop: "var(--game-top-overlay-offset, 0px)",
-          gridTemplateRows: focusedGridTemplateRows,
-          gridTemplateColumns: "1fr",
         }}
+        data-arena-game-stage
       >
-        {/* Row 1: focused opponent hand. The Arena renderer owns the spatial
-            library/graveyard/exile zones on the tabletop. */}
+        <ArenaGameBoard
+          oppHud={oppHud}
+          playerHud={playerHud}
+          showOpponentCards={showAiHand}
+          onKickPlayer={isP2PHost ? handleKickPlayer : undefined}
+          onViewZone={handleViewZone}
+        />
+
+        {/* The opponent's concealed hand now belongs to the Three.js seat.
+            Keep only the focused command-zone interaction in screen space. */}
         <div
-          className="relative z-20 grid min-w-0 w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] overflow-visible"
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 min-w-0 overflow-visible"
           data-flex-zone="opp-row"
+          data-arena-opponent-dock
         >
-          <div aria-hidden />
-          <div className="flex min-w-0 items-start justify-center">
-            <OpponentHand showCards={showAiHand} />
-          </div>
-          <div className="flex min-w-0 items-start justify-start pt-1">
+          <div className="pointer-events-auto absolute right-[max(0.5rem,env(safe-area-inset-right))] top-[max(0.25rem,env(safe-area-inset-top))]">
             <ArenaFocusedOpponentCommandZone />
           </div>
         </div>
 
-        {/* Row 2: Battlefield — takes remaining space; HUDs passed inline to PlayerAreas */}
-        <div className="relative z-30 flex min-h-0 min-w-0 flex-col">
-          <ArenaGameBoard
-            oppHud={oppHud}
-            playerHud={playerHud}
-            showOpponentCards={showAiHand}
-            onKickPlayer={isP2PHost ? handleKickPlayer : undefined}
-            onViewZone={handleViewZone}
-          />
-        </div>
-
-        {/* Row 3: Player hand + zones. The hand is top-anchored in this row, so
-            if the row stretched with its (resizable) band track, resizing the
-            band would drag the hand vertically. Instead we give the row a
-            CONSTANT height equal to the DEFAULT band and pin it to the track's
-            bottom (`self-end`, the viewport edge, which never moves). The height
-            mirrors the resolver's default track exactly — `min(18%, 150px)` of
-            the grid's CONTENT box (`100dvh` minus the top-overlay padding) — but
-            computed in viewport units so it ignores the LIVE (resized) track,
-            which a plain `18%` on a grid item would track instead. The hand thus
-            keeps its default resting position and stays put on resize; a grown
-            band opens empty space ABOVE the row (trading with the battlefield)
-            rather than shoving the hand up. */}
+        {/* The near-edge hand floats over the table apron. It has a responsive
+            interaction band rather than a fixed page row, so battlefield space
+            remains useful on phones and tablets. */}
         <div
-          className="relative z-30 min-w-0 self-end overflow-visible"
-          style={{ height: "min(calc(0.18 * (100dvh - var(--game-top-overlay-offset, 0px))), 150px)" }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-30 min-w-0 overflow-visible"
+          style={{
+            height:
+              "calc(env(safe-area-inset-bottom) + clamp(7.75rem, 18dvh, 10rem))",
+          }}
           data-flex-zone="player-row"
+          data-arena-player-dock
         >
           <div
-            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end"
+            className="grid h-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end pb-[env(safe-area-inset-bottom)]"
             data-flex-zone="playerHandRow"
           >
-            <div className="flex min-w-0 items-end justify-end pb-1">
+            <div className="pointer-events-auto flex min-w-0 items-end justify-end pb-1">
               <ArenaHandCommandZone playerId={playerId} seat="player" />
             </div>
-            <div className="min-w-0">
+            <div className="pointer-events-auto min-w-0">
               {/* Castable graveyard/exile cards remain colored wings inside the
                   main hand fan; the command zone has its own adjacent dock. */}
               <PlayerHand />
@@ -1381,13 +1365,15 @@ function GamePageContent({
         flexZone="actionRail"
         scaleKey="actionRail"
         resizeCorner="bl"
-        className="fixed z-30 flex flex-col items-end gap-1.5 max-lg:portrait:w-full max-lg:portrait:flex-row max-lg:portrait:items-end max-lg:portrait:justify-between max-lg:portrait:gap-2"
+        className="fixed z-30 flex flex-col items-end gap-1.5 rounded-[16px] border border-white/10 bg-[#07101c]/88 p-1.5 shadow-[0_16px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-end max-lg:portrait:justify-between max-lg:portrait:gap-2"
         style={{
-          bottom: "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom))",
+          bottom:
+            "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + 0.4rem)",
           right: "calc(env(safe-area-inset-right) + var(--game-edge-right) + var(--game-right-rail-offset, 0px))",
           // Anchor box-scale to the docked corner so it grows inward, not off-screen.
           transformOrigin: "bottom right",
         }}
+        data-arena-command-shelf
       >
         {!isSpectatorMode && (
           <div

@@ -16,6 +16,18 @@ describe("arenaZoneLayout", () => {
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 
+  it("pulls duel piles into mirrored compact rows on narrow screens", () => {
+    const local = arenaZoneLayout("local", "duel", "compact");
+    const opponent = arenaZoneLayout("far", "duel", "compact");
+
+    expect(local.library).toEqual([-1.45, 0.08, 4.35]);
+    expect(local.graveyard).toEqual([0, 0.08, 4.35]);
+    expect(local.exile).toEqual([1.45, 0.08, 4.35]);
+    expect(opponent.library).toEqual([1.45, 0.08, -3.9]);
+    expect(opponent.graveyard[0]).toBeCloseTo(0);
+    expect(opponent.exile[0]).toBeCloseTo(-1.45);
+  });
+
   it("places the right library at the near corner", () => {
     const right = arenaZoneLayout("right", "pod");
 

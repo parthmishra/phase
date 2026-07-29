@@ -4,6 +4,7 @@ import type { PlayerBattlefieldView } from "../../viewmodel/gameStateView.ts";
 
 export type ArenaSeat = "local" | "far" | "left" | "right";
 export type ArenaTableLayout = "duel" | "pod";
+export type ArenaViewportLayout = "wide" | "compact";
 export type ArenaLane = "creatures" | "support" | "lands";
 
 export const ARENA_CARD_WIDTH = 1.3;
@@ -29,6 +30,20 @@ export interface ArenaZoneLayout {
   library: [number, number, number];
   graveyard: [number, number, number];
   exile: [number, number, number];
+}
+
+export interface ArenaHeldHandLayout {
+  position: [number, number, number];
+  faceAngle: number;
+  scale: number;
+}
+
+export interface ArenaHeldCardTransform {
+  x: number;
+  y: number;
+  z: number;
+  rotationZ: number;
+  scale: number;
 }
 
 export interface ArenaLaneZoneLayout {
@@ -126,8 +141,12 @@ export function assignArenaOpponentSeats(
 export function arenaZoneLayout(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
+  viewportLayout: ArenaViewportLayout = "wide",
 ): ArenaZoneLayout {
   if (seat === "local") {
+    if (tableLayout === "duel" && viewportLayout === "compact") {
+      return arenaZoneRow(0, [-1.45, 0.08, 4.35]);
+    }
     return tableLayout === "pod"
       ? arenaZoneRow(0, [-5.7, 0.08, 4.35])
       : {
@@ -138,6 +157,9 @@ export function arenaZoneLayout(
         };
   }
   if (seat === "far") {
+    if (tableLayout === "duel" && viewportLayout === "compact") {
+      return arenaZoneRow(Math.PI, [1.45, 0.08, -3.9]);
+    }
     return tableLayout === "pod"
       ? arenaZoneRow(
           Math.PI,
@@ -156,6 +178,63 @@ export function arenaZoneLayout(
   }
   const faceAngle = CARDINAL_SIDE_SEAT_ANGLE;
   return arenaZoneRow(faceAngle, [SIDE_PILE_ROW_X, 0.08, 3]);
+}
+
+/**
+ * Anchors concealed hands above the plane at each seat's outer edge. Fans are
+ * intentionally large enough to read against their own libraries, then
+ * partially cropped by the viewport like the opponent hand in Magic Arena.
+ */
+export function arenaHeldHandLayout(
+  seat: ArenaSeat,
+  tableLayout: ArenaTableLayout = "duel",
+): ArenaHeldHandLayout {
+  if (seat === "local") {
+    return {
+      position: [0, 0.1, tableLayout === "pod" ? 6.1 : 5.25],
+      faceAngle: Math.PI,
+      scale: tableLayout === "pod" ? 0.84 : 0.92,
+    };
+  }
+  if (seat === "far") {
+    return {
+      position: [0, 0.92, tableLayout === "pod" ? -5.95 : -5.25],
+      faceAngle: 0,
+      scale: tableLayout === "pod" ? 0.74 : 0.82,
+    };
+  }
+  if (seat === "left") {
+    return {
+      position: [-8.35, 0.94, -0.55],
+      faceAngle: Math.PI / 2,
+      scale: 0.84,
+    };
+  }
+  return {
+    position: [8.35, 0.94, 0.55],
+    faceAngle: -Math.PI / 2,
+    scale: 0.84,
+  };
+}
+
+/** Broad, bottom-pivoted fan geometry that keeps even large hands legible. */
+export function arenaHeldCardFan(count: number): ArenaHeldCardTransform[] {
+  if (count <= 0) return [];
+  const center = (count - 1) / 2;
+  const step = count === 1 ? 0 : Math.min(0.38, 3.6 / (count - 1));
+  const scale = count > 16 ? 0.68 : count > 11 ? 0.78 : 0.88;
+
+  return Array.from({ length: count }, (_, index) => {
+    const centeredIndex = index - center;
+    const normalized = center === 0 ? 0 : centeredIndex / center;
+    return {
+      x: centeredIndex * step,
+      y: (1 - Math.abs(normalized)) * 0.13,
+      z: index * 0.012,
+      rotationZ: -normalized * 0.24,
+      scale,
+    };
+  });
 }
 
 function arenaZoneRow(

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
+  arenaHeldCardFan,
+  arenaHeldHandLayout,
   arenaLaneZoneLayouts,
   arenaZoneLayout,
   assignArenaOpponentSeats,
@@ -69,6 +71,58 @@ describe("spreadPositions", () => {
 
   it("uses a readable maximum gap for sparse lanes", () => {
     expect(spreadPositions(3, 20)).toEqual([-2.02, 0, 2.02]);
+  });
+});
+
+describe("arenaHeldCardFan", () => {
+  it("clusters a single card over the implied grip", () => {
+    expect(arenaHeldCardFan(1)).toEqual([
+      {
+        x: 0,
+        y: 0.13,
+        z: 0,
+        rotationZ: -0,
+        scale: 0.88,
+      },
+    ]);
+  });
+
+  it("keeps a large hand bounded while preserving individual cards", () => {
+    const fan = arenaHeldCardFan(20);
+
+    expect(fan).toHaveLength(20);
+    expect(fan[0].x).toBeGreaterThanOrEqual(-1.8);
+    expect(fan[fan.length - 1].x).toBeLessThanOrEqual(1.8);
+    expect(fan[0].rotationZ).toBeGreaterThan(0);
+    expect(fan[fan.length - 1].rotationZ).toBeLessThan(0);
+    expect(fan.every((card) => card.scale === 0.68)).toBe(true);
+  });
+});
+
+describe("arenaHeldHandLayout", () => {
+  it("faces every opponent hand toward the table center", () => {
+    expect(arenaHeldHandLayout("far").faceAngle).toBe(0);
+    expect(arenaHeldHandLayout("left", "pod").faceAngle).toBe(Math.PI / 2);
+    expect(arenaHeldHandLayout("right", "pod").faceAngle).toBe(-Math.PI / 2);
+  });
+
+  it("keeps pod hands on their authored seat edges", () => {
+    expect(arenaHeldHandLayout("far", "pod").position[2]).toBeLessThan(-5.5);
+    expect(arenaHeldHandLayout("left", "pod").position[0]).toBeLessThan(-8);
+    expect(arenaHeldHandLayout("right", "pod").position[0]).toBeGreaterThan(8);
+  });
+
+  it("elevates opponent hands and keeps side fans near library scale", () => {
+    for (const seat of ["far", "left", "right"] as const) {
+      const layout = arenaHeldHandLayout(seat, "pod");
+      expect(layout.position[1]).toBeGreaterThan(0.9);
+    }
+    expect(arenaHeldHandLayout("left", "pod").scale).toBeGreaterThanOrEqual(
+      0.8,
+    );
+    expect(arenaHeldHandLayout("right", "pod").scale).toBeGreaterThanOrEqual(
+      0.8,
+    );
   });
 });
 

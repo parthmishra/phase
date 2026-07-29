@@ -899,7 +899,7 @@ const HandCard = memo(function HandCard({
 
   const glowClass = hasPriority
     ? isPlayable
-      ? "shadow-[0_0_16px_4px_rgba(34,211,238,0.6)] ring-2 ring-cyan-400"
+      ? "shadow-[0_0_18px_3px_rgba(94,184,198,0.34)] ring-1 ring-[#7bc7cc]/60"
       : ""
     : "";
 
@@ -975,7 +975,7 @@ const HandCard = memo(function HandCard({
       {...longPressHandlers}
     >
       <motion.div
-        className={`relative rounded-lg ${glowClass} ${isSelected ? "ring-2 ring-cyan-400" : ""}`}
+        className={`relative rounded-lg ${glowClass} ${isSelected ? "ring-1 ring-[#d8cfb2]/75" : ""}`}
         style={{ x: displaceX }}
       >
         <ArenaCardFace
