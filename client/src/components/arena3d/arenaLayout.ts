@@ -50,9 +50,9 @@ interface ArenaSeatFrame {
 const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
 const LANE_DEPTH = 1.98;
-const LANE_SPACING = 2.08;
 const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
+const SIDE_ROW_SPLIT = 1.75;
 const CARD_ROTATION_FOOTPRINT = Math.max(
   ARENA_CARD_WIDTH,
   ARENA_CARD_DEPTH,
@@ -78,9 +78,9 @@ const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 3.2,
-  support: 3.2,
-  lands: 3.2,
+  creatures: 4.2,
+  support: 3,
+  lands: 3,
 };
 
 export function layoutArenaSeat(
@@ -163,17 +163,23 @@ export function arenaZoneLayout(
       podPresentation === "kitchen"
         ? -KITCHEN_SIDE_SEAT_ANGLE
         : -INWARD_SIDE_SEAT_ANGLE;
-    return arenaZoneRow(faceAngle, [-6.3, 0.08, -3.3]);
+    return arenaZoneRow(
+      faceAngle,
+      podPresentation === "kitchen"
+        ? [-7.1, 0.08, -2.6]
+        : [-6.3, 0.08, -3.3],
+    );
   }
   const faceAngle =
     podPresentation === "kitchen"
       ? KITCHEN_SIDE_SEAT_ANGLE
       : INWARD_SIDE_SEAT_ANGLE;
-  const layout = arenaZoneRow(faceAngle, [5.8, 0.08, 2.55]);
-  return {
-    ...layout,
-    exile: [4.35, 0.08, 2.55],
-  };
+  return arenaZoneRow(
+    faceAngle,
+    podPresentation === "kitchen"
+      ? [7.1, 0.08, 2.6]
+      : [6.3, 0.08, 2.55],
+  );
 }
 
 function arenaZoneRow(
@@ -345,32 +351,26 @@ function podSeatFrame(
     podPresentation === "kitchen"
       ? KITCHEN_SIDE_SEAT_ANGLE
       : INWARD_SIDE_SEAT_ANGLE;
-  if (seat === "left") {
-    return seatFrameFromCenter(-sideAngle, [-6, -0.35], POD_SIDE_WIDTHS);
-  }
-  return seatFrameFromCenter(sideAngle, [6, -0.35], POD_SIDE_WIDTHS);
+  return sideSeatFrame(seat, sideAngle, podPresentation);
 }
 
-function seatFrameFromCenter(
-  faceAngle: number,
-  center: [number, number],
-  widths: Record<ArenaLane, number>,
+function sideSeatFrame(
+  seat: Extract<ArenaSeat, "left" | "right">,
+  sideAngle: number,
+  podPresentation: ArenaPodPresentation,
 ): ArenaSeatFrame {
-  const towardCenterX = -Math.sin(faceAngle);
-  const towardCenterZ = -Math.cos(faceAngle);
-  const laneCenter = (offset: number): [number, number] => [
-    center[0] + towardCenterX * offset,
-    center[1] + towardCenterZ * offset,
-  ];
+  const side = seat === "left" ? -1 : 1;
+  const faceAngle = side * sideAngle;
+  const backRowX = side * (podPresentation === "kitchen" ? 4.95 : 4.9);
   return {
     faceAngle,
-    attackVector: [towardCenterX, towardCenterZ],
+    attackVector: [-Math.sin(faceAngle), -Math.cos(faceAngle)],
     centers: {
-      creatures: laneCenter(LANE_SPACING),
-      support: laneCenter(0),
-      lands: laneCenter(-LANE_SPACING),
+      creatures: [side * 3.95, 0],
+      support: [backRowX, -side * SIDE_ROW_SPLIT],
+      lands: [backRowX, side * SIDE_ROW_SPLIT],
     },
-    widths,
+    widths: POD_SIDE_WIDTHS,
   };
 }
 

@@ -4,6 +4,7 @@ import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
   arenaLaneZoneLayouts,
+  arenaZoneLayout,
   assignArenaOpponentSeats,
   fitArenaLaneCards,
   layoutArenaSeat,
@@ -149,6 +150,65 @@ describe("assignArenaOpponentSeats", () => {
 
 describe("four-player pod footprint", () => {
   it.each(["inward", "kitchen"] as const)(
+    "uses the library and graveyard as the %s side seats' final row",
+    (presentation) => {
+      for (const seat of ["left", "right"] as const) {
+        const placements = layoutArenaSeat(
+          singlePermanentInEachLane(),
+          seat,
+          "pod",
+          presentation,
+        );
+        const piles = arenaZoneLayout(seat, "pod", presentation);
+        const battlefieldRow = Math.max(
+          ...placements.map(({ position }) => Math.abs(position[0])),
+        );
+        const pileRow = Math.min(
+          Math.abs(piles.library[0]),
+          Math.abs(piles.graveyard[0]),
+        );
+
+        expect(pileRow).toBeGreaterThan(battlefieldRow);
+      }
+    },
+  );
+
+  it("keeps kitchen side seats inside the table with piles as the final row", () => {
+    const kitchenTableHalfWidth = 17.2 / 2;
+    for (const seat of ["left", "right"] as const) {
+      const placements = layoutArenaSeat(
+        battlefieldWithLaneCount(3),
+        seat,
+        "pod",
+        "kitchen",
+      );
+      const piles = arenaZoneLayout(seat, "pod", "kitchen");
+      const battlefieldOuterEdge = Math.max(
+        ...placements.map(
+          ({ position, cardScale }) =>
+            Math.abs(position[0]) + ARENA_CARD_DEPTH * cardScale / 2,
+        ),
+      );
+      const pileInnerEdge = Math.min(
+        Math.abs(piles.library[0]),
+        Math.abs(piles.graveyard[0]),
+      ) - ARENA_CARD_DEPTH / 2;
+
+      expect(battlefieldOuterEdge).toBeLessThan(pileInnerEdge);
+      for (const position of [
+        ...placements.map(({ position }) => position),
+        piles.library,
+        piles.graveyard,
+        piles.exile,
+      ]) {
+        expect(
+          Math.abs(position[0]) + ARENA_CARD_DEPTH / 2,
+        ).toBeLessThan(kitchenTableHalfWidth);
+      }
+    }
+  });
+
+  it.each(["inward", "kitchen"] as const)(
     "keeps sparse full-size cards separated across %s seat boundaries",
     (presentation) => {
       const seatViews: [ArenaSeat, PlayerBattlefieldView][] = [
@@ -243,16 +303,16 @@ describe("four-player pod footprint", () => {
       right.map((placement) => [placement.lane, placement]),
     );
 
-    expect(Math.abs(leftByLane.lands.position[0])).toBeGreaterThan(
-      Math.abs(leftByLane.support.position[0]),
-    );
     expect(Math.abs(leftByLane.support.position[0])).toBeGreaterThan(
       Math.abs(leftByLane.creatures.position[0]),
     );
-    expect(leftByLane.creatures.position[2]).toBeGreaterThan(
-      leftByLane.support.position[2],
+    expect(Math.abs(leftByLane.lands.position[0])).toBeGreaterThan(
+      Math.abs(leftByLane.creatures.position[0]),
     );
     expect(leftByLane.support.position[2]).toBeGreaterThan(
+      leftByLane.creatures.position[2],
+    );
+    expect(leftByLane.creatures.position[2]).toBeGreaterThan(
       leftByLane.lands.position[2],
     );
     expect(leftByLane.lands.position[0]).toBe(

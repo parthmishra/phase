@@ -71,4 +71,14 @@ describe("arenaZoneLayout", () => {
       Math.PI / 2,
     );
   });
+
+  it("anchors kitchen side libraries toward their respective corners", () => {
+    const left = arenaZoneLayout("left", "pod", "kitchen");
+    const right = arenaZoneLayout("right", "pod", "kitchen");
+
+    expect(left.library[0]).toBeLessThan(-7);
+    expect(left.library[2]).toBeLessThan(-2.5);
+    expect(right.library[0]).toBeGreaterThan(7);
+    expect(right.library[2]).toBeGreaterThan(2.5);
+  });
 });
