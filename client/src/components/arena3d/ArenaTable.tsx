@@ -1,29 +1,40 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
-const ARENA_TABLE_WIDTH = 17.2;
+import type { ArenaTableLayout } from "./arenaLayout.ts";
+
+const ARENA_TABLE_LOCAL_WIDTH = 17.2;
+const ARENA_TABLE_FAR_WIDTH = 13.2;
 const ARENA_TABLE_DEPTH = 18;
 const ARENA_TABLE_CORNER_RADIUS = 2.15;
 const ARENA_TABLE_THICKNESS = 0.36;
 
-export function ArenaTable() {
+export function ArenaTable({
+  tableLayout = "duel",
+}: {
+  tableLayout?: ArenaTableLayout;
+}) {
+  const farWidth =
+    tableLayout === "pod" ? ARENA_TABLE_FAR_WIDTH : ARENA_TABLE_LOCAL_WIDTH;
   const surfaceTexture = useMemo(makeSurfaceTexture, []);
   const surfaceGeometry = useMemo(
     () => makeRoundedSurfaceGeometry(
-      ARENA_TABLE_WIDTH,
+      ARENA_TABLE_LOCAL_WIDTH,
+      farWidth,
       ARENA_TABLE_DEPTH,
       ARENA_TABLE_CORNER_RADIUS,
     ),
-    [],
+    [farWidth],
   );
   const baseGeometry = useMemo(
     () => makeRoundedBaseGeometry(
-      ARENA_TABLE_WIDTH + 0.18,
+      ARENA_TABLE_LOCAL_WIDTH + 0.18,
+      farWidth + 0.18,
       ARENA_TABLE_DEPTH + 0.18,
       ARENA_TABLE_CORNER_RADIUS + 0.08,
       ARENA_TABLE_THICKNESS,
     ),
-    [],
+    [farWidth],
   );
 
   useEffect(
@@ -64,64 +75,58 @@ export function ArenaTable() {
   );
 }
 
-function makeRoundedRectangleShape(
-  width: number,
+function makeRoundedTableShape(
+  localWidth: number,
+  farWidth: number,
   depth: number,
   radius: number,
 ): THREE.Shape {
-  const x = -width / 2;
-  const y = -depth / 2;
+  const localY = -depth / 2;
+  const farY = depth / 2;
+  const corners = [
+    new THREE.Vector2(-localWidth / 2, localY),
+    new THREE.Vector2(localWidth / 2, localY),
+    new THREE.Vector2(farWidth / 2, farY),
+    new THREE.Vector2(-farWidth / 2, farY),
+  ];
+  const rounded = corners.map((corner, index) => {
+    const previous = corners[(index + corners.length - 1) % corners.length];
+    const next = corners[(index + 1) % corners.length];
+    const incoming = previous.clone().sub(corner).normalize();
+    const outgoing = next.clone().sub(corner).normalize();
+    return {
+      corner,
+      incoming: corner.clone().addScaledVector(incoming, radius),
+      outgoing: corner.clone().addScaledVector(outgoing, radius),
+    };
+  });
   const shape = new THREE.Shape();
-  shape.moveTo(x + radius, y);
-  shape.lineTo(x + width - radius, y);
-  shape.absarc(
-    x + width - radius,
-    y + radius,
-    radius,
-    -Math.PI / 2,
-    0,
-    false,
-  );
-  shape.lineTo(x + width, y + depth - radius);
-  shape.absarc(
-    x + width - radius,
-    y + depth - radius,
-    radius,
-    0,
-    Math.PI / 2,
-    false,
-  );
-  shape.lineTo(x + radius, y + depth);
-  shape.absarc(
-    x + radius,
-    y + depth - radius,
-    radius,
-    Math.PI / 2,
-    Math.PI,
-    false,
-  );
-  shape.lineTo(x, y + radius);
-  shape.absarc(
-    x + radius,
-    y + radius,
-    radius,
-    Math.PI,
-    Math.PI * 1.5,
-    false,
-  );
+  shape.moveTo(rounded[0].outgoing.x, rounded[0].outgoing.y);
+  for (let index = 1; index <= rounded.length; index += 1) {
+    const point = rounded[index % rounded.length];
+    shape.lineTo(point.incoming.x, point.incoming.y);
+    shape.quadraticCurveTo(
+      point.corner.x,
+      point.corner.y,
+      point.outgoing.x,
+      point.outgoing.y,
+    );
+  }
   shape.closePath();
   return shape;
 }
 
 function makeRoundedSurfaceGeometry(
-  width: number,
+  localWidth: number,
+  farWidth: number,
   depth: number,
   radius: number,
 ): THREE.ShapeGeometry {
   const geometry = new THREE.ShapeGeometry(
-    makeRoundedRectangleShape(width, depth, radius),
+    makeRoundedTableShape(localWidth, farWidth, depth, radius),
     24,
   );
+  const width = Math.max(localWidth, farWidth);
   const positions = geometry.getAttribute("position");
   const uvs = new Float32Array(positions.count * 2);
   for (let index = 0; index < positions.count; index += 1) {
@@ -133,13 +138,14 @@ function makeRoundedSurfaceGeometry(
 }
 
 function makeRoundedBaseGeometry(
-  width: number,
+  localWidth: number,
+  farWidth: number,
   depth: number,
   radius: number,
   thickness: number,
 ): THREE.ExtrudeGeometry {
   return new THREE.ExtrudeGeometry(
-    makeRoundedRectangleShape(width, depth, radius),
+    makeRoundedTableShape(localWidth, farWidth, depth, radius),
     {
       depth: thickness,
       bevelEnabled: true,

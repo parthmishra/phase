@@ -16,7 +16,7 @@ describe("arenaZoneLayout", () => {
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 
-  it("keeps pod side zones on mirrored outer rails", () => {
+  it("converges mirrored pod side zones toward the narrow far edge", () => {
     const left = arenaZoneLayout("left", "pod");
     const right = arenaZoneLayout("right", "pod");
 
@@ -24,6 +24,14 @@ describe("arenaZoneLayout", () => {
     expect(left.graveyard[0]).toBe(-right.graveyard[0]);
     expect(left.exile[0]).toBe(-right.exile[0]);
     expect(left.library[2]).toBe(right.library[2]);
+    expect(Math.abs(left.library[0])).toBeGreaterThan(
+      Math.abs(left.graveyard[0]),
+    );
+    expect(Math.abs(left.graveyard[0])).toBeGreaterThan(
+      Math.abs(left.exile[0]),
+    );
+    expect(left.library[2]).toBeGreaterThan(left.graveyard[2]);
+    expect(left.graveyard[2]).toBeGreaterThan(left.exile[2]);
     expect(left.faceAngle).toBe(-Math.PI * 0.34);
     expect(right.faceAngle).toBe(Math.PI * 0.34);
   });

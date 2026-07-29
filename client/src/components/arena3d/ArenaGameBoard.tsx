@@ -147,7 +147,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             color="#7596c7"
           />
 
-          <ArenaTable />
+          <ArenaTable tableLayout={tableLayout} />
           <ArenaZonePiles
             playerId={perspectivePlayerId}
             seat="local"

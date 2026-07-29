@@ -2,8 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import {
   assignArenaOpponentSeats,
+  layoutArenaSeat,
   spreadPositions,
 } from "../arenaLayout.ts";
+import type { GroupedPermanent } from "../../../viewmodel/battlefieldProps.ts";
+import type { PlayerBattlefieldView } from "../../../viewmodel/gameStateView.ts";
+
+function permanent(id: number): GroupedPermanent {
+  return {
+    ids: [id],
+    count: 1,
+  } as GroupedPermanent;
+}
+
+function singlePermanentInEachLane(): PlayerBattlefieldView {
+  return {
+    creatures: [permanent(1)],
+    support: [permanent(2)],
+    lands: [permanent(3)],
+    planeswalkers: [],
+    other: [],
+  };
+}
 
 describe("spreadPositions", () => {
   it("centers a single permanent", () => {
@@ -45,5 +65,37 @@ describe("assignArenaOpponentSeats", () => {
       { playerId: 1, seat: "left" },
       { playerId: 2, seat: "right" },
     ]);
+  });
+});
+
+describe("four-player pod footprint", () => {
+  it("recedes side players inward from the broad local edge", () => {
+    const view = singlePermanentInEachLane();
+    const left = layoutArenaSeat(view, "left", "pod");
+    const right = layoutArenaSeat(view, "right", "pod");
+    const leftByLane = Object.fromEntries(
+      left.map((placement) => [placement.lane, placement]),
+    );
+    const rightByLane = Object.fromEntries(
+      right.map((placement) => [placement.lane, placement]),
+    );
+
+    expect(Math.abs(leftByLane.lands.position[0])).toBeGreaterThan(
+      Math.abs(leftByLane.support.position[0]),
+    );
+    expect(Math.abs(leftByLane.support.position[0])).toBeGreaterThan(
+      Math.abs(leftByLane.creatures.position[0]),
+    );
+    expect(leftByLane.lands.position[2]).toBeGreaterThan(
+      leftByLane.support.position[2],
+    );
+    expect(leftByLane.support.position[2]).toBeGreaterThan(
+      leftByLane.creatures.position[2],
+    );
+    expect(leftByLane.lands.position[0]).toBe(
+      -rightByLane.lands.position[0],
+    );
+    expect(leftByLane.creatures.attackVector[1]).toBeLessThan(0);
+    expect(rightByLane.creatures.attackVector[1]).toBeLessThan(0);
   });
 });

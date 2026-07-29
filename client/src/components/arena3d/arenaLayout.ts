@@ -43,9 +43,9 @@ const DUEL_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 7.2,
-  support: 6.4,
-  lands: 5.2,
+  creatures: 8.4,
+  support: 7.4,
+  lands: 6.2,
 };
 
 const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
@@ -55,9 +55,9 @@ const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 3.8,
-  support: 3.4,
-  lands: 3,
+  creatures: 2.4,
+  support: 2.2,
+  lands: 2,
 };
 
 export function layoutArenaSeat(
@@ -134,16 +134,16 @@ export function arenaZoneLayout(
   if (seat === "left") {
     return {
       faceAngle: -SIDE_SEAT_ANGLE,
-      library: [-6.45, 0.08, -2.7],
-      graveyard: [-6.45, 0.08, -1.25],
-      exile: [-6.45, 0.08, 0.2],
+      library: [-6.2, 0.08, 1.55],
+      graveyard: [-5.55, 0.08, 0.25],
+      exile: [-4.9, 0.08, -1.05],
     };
   }
   return {
     faceAngle: SIDE_SEAT_ANGLE,
-    library: [6.45, 0.08, -2.7],
-    graveyard: [6.45, 0.08, -1.25],
-    exile: [6.45, 0.08, 0.2],
+    library: [6.2, 0.08, 1.55],
+    graveyard: [5.55, 0.08, 0.25],
+    exile: [4.9, 0.08, -1.05],
   };
 }
 
@@ -201,22 +201,22 @@ function arenaSeatFrame(
   if (seat === "left") {
     return {
       faceAngle: -SIDE_SEAT_ANGLE,
-      attackVector: [0.84, 0.54],
+      attackVector: [0.84, -0.54],
       centers: {
-        creatures: [-2.85, -0.1],
-        support: [-3.55, -0.7],
-        lands: [-4.25, -1.3],
+        creatures: [-2.85, -0.75],
+        support: [-3.55, 0.1],
+        lands: [-4.25, 0.95],
       },
       widths: POD_SIDE_WIDTHS,
     };
   }
   return {
     faceAngle: SIDE_SEAT_ANGLE,
-    attackVector: [-0.84, 0.54],
+    attackVector: [-0.84, -0.54],
     centers: {
-      creatures: [2.85, -0.1],
-      support: [3.55, -0.7],
-      lands: [4.25, -1.3],
+      creatures: [2.85, -0.75],
+      support: [3.55, 0.1],
+      lands: [4.25, 0.95],
     },
     widths: POD_SIDE_WIDTHS,
   };
