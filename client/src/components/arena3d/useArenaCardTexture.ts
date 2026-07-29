@@ -9,8 +9,8 @@ import { cardImageLookup, tokenFiltersForObject } from "../../services/cardImage
 import { CARD_BACK_URL } from "../../services/scryfall.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 
-const TEXTURE_WIDTH = 640;
-const TEXTURE_HEIGHT = 420;
+const TEXTURE_WIDTH = 504;
+const TEXTURE_HEIGHT = 700;
 const TEXTURE_DISPOSE_DELAY_MS = 30_000;
 
 interface TextureCacheEntry {
@@ -146,7 +146,7 @@ async function createArenaCardTexture(
   context.clearRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT);
   context.save();
   context.beginPath();
-  context.roundRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT, 28);
+  context.roundRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT, 22);
   context.clip();
 
   // Battlefield cards use a neutral black silhouette so the frame remains
@@ -154,10 +154,10 @@ async function createArenaCardTexture(
   context.fillStyle = "#050606";
   context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
-  const artX = 18;
-  const artY = 70;
-  const artW = TEXTURE_WIDTH - 36;
-  const artH = TEXTURE_HEIGHT - artY - 18;
+  const artX = 14;
+  const artY = 58;
+  const artW = TEXTURE_WIDTH - 28;
+  const artH = TEXTURE_HEIGHT - artY - 14;
   drawCover(context, art, artX, artY, artW, artH);
 
   const artShade = context.createLinearGradient(0, artY, 0, artY + artH);
@@ -168,22 +168,22 @@ async function createArenaCardTexture(
   context.fillRect(artX, artY, artW, artH);
 
   context.fillStyle = "rgba(8, 10, 10, 0.9)";
-  context.fillRect(0, 0, TEXTURE_WIDTH, 66);
+  context.fillRect(0, 0, TEXTURE_WIDTH, 54);
 
   if (presentation.modifierCount > 0) {
     context.fillStyle = "#76f3a1";
     context.shadowColor = "#43ef86";
     context.shadowBlur = 16;
-    context.fillRect(0, 72, 7, artH - 8);
+    context.fillRect(0, 60, 6, artH - 8);
     context.shadowBlur = 0;
   }
 
   context.fillStyle = "#fff8e7";
-  context.font = '600 31px "Newsreader", Georgia, serif';
+  context.font = '600 25px "Newsreader", Georgia, serif';
   context.textBaseline = "middle";
-  drawFittedText(context, presentation.name, 24, 34, 380);
+  drawFittedText(context, presentation.name, 18, 28, 286);
 
-  drawManaSymbols(context, presentation.manaSymbols, TEXTURE_WIDTH - 25, 33);
+  drawManaSymbols(context, presentation.manaSymbols, TEXTURE_WIDTH - 16, 27);
 
   const toughness =
     presentation.toughness == null
@@ -193,24 +193,31 @@ async function createArenaCardTexture(
     drawStatBadge(
       context,
       `${presentation.power}/${toughness}`,
-      TEXTURE_WIDTH - 28,
-      TEXTURE_HEIGHT - 29,
+      TEXTURE_WIDTH - 18,
+      TEXTURE_HEIGHT - 27,
     );
   } else if (presentation.loyalty != null) {
     drawStatBadge(
       context,
       String(presentation.loyalty),
-      TEXTURE_WIDTH - 28,
-      TEXTURE_HEIGHT - 29,
+      TEXTURE_WIDTH - 18,
+      TEXTURE_HEIGHT - 27,
     );
   }
 
   if (presentation.counters.length > 0) {
     const count = presentation.counters.reduce((sum, counter) => sum + counter.count, 0);
-    drawRoundBadge(context, String(count), 31, 94, "#15251c", "#9cf7bd");
+    drawRoundBadge(context, String(count), 27, 78, "#15251c", "#9cf7bd");
   }
   if (pileCount > 1) {
-    drawRoundBadge(context, `×${pileCount}`, TEXTURE_WIDTH - 40, 92, "#16191d", "#ffffff");
+    drawRoundBadge(
+      context,
+      `×${pileCount}`,
+      TEXTURE_WIDTH - 30,
+      78,
+      "#16191d",
+      "#ffffff",
+    );
   }
 
   context.restore();

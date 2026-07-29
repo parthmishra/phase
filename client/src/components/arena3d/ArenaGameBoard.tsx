@@ -12,7 +12,6 @@ import {
   getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
-import { ArenaSeatZones } from "./ArenaSeatZones.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import {
@@ -214,19 +213,6 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             tableLayout={tableLayout}
             podPresentation={podPresentation}
           />
-          <ArenaSeatZones
-            seat="local"
-            tableLayout={tableLayout}
-            podPresentation={podPresentation}
-          />
-          {opponentSeats.map(({ playerId, seat }) => (
-            <ArenaSeatZones
-              key={`zones-${playerId}`}
-              seat={seat}
-              tableLayout={tableLayout}
-              podPresentation={podPresentation}
-            />
-          ))}
           <ArenaZonePiles
             playerId={perspectivePlayerId}
             seat="local"

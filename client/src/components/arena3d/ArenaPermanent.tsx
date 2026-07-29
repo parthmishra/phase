@@ -27,6 +27,7 @@ export function ArenaPermanent({
   position,
   faceAngle,
   attackVector,
+  cardScale,
 }: ArenaPermanentProps) {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
   const texture = useArenaCardTexture(objectId, pileCount);
@@ -36,6 +37,7 @@ export function ArenaPermanent({
   const arrivalAgeRef = useRef(0);
   const initialPlacementRef = useRef({
     attackVector,
+    cardScale,
     faceAngle,
     position,
   });
@@ -51,12 +53,13 @@ export function ArenaPermanent({
       initial.position[2] + initial.attackVector[1] * 0.14,
     );
     group.rotation.y = initial.faceAngle;
-    group.scale.setScalar(0.86);
+    group.scale.setScalar(initial.cardScale * 0.86);
     invalidate();
   }, [invalidate]);
 
   useEffect(() => invalidate(), [
     faceAngle,
+    cardScale,
     interaction.hasProminentAction,
     interaction.isActionable,
     interaction.isAttacking,
@@ -95,10 +98,11 @@ export function ArenaPermanent({
       position[2] + (interaction.isAttacking ? attackVector[1] : 0);
     const targetY =
       position[1]
-      + (interaction.isAttacking ? 0.07 : 0);
+      + (interaction.isAttacking ? 0.07 : 0)
+      + (interaction.isHovered ? 0.045 : 0);
     const targetRotation =
       faceAngle + (object?.tapped ? Math.PI / 2 : 0);
-    const targetScale = interaction.isHovered ? 1.09 : 1;
+    const targetScale = cardScale;
 
     group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
     group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, response);
@@ -152,7 +156,12 @@ export function ArenaPermanent({
         rotation={[-Math.PI / 2, 0, 0]}
         position={[position[0], position[1] + 0.24, position[2]]}
       >
-        <planeGeometry args={[CARD_WIDTH * 1.16, CARD_HEIGHT * 1.22]} />
+        <planeGeometry
+          args={[
+            (object.tapped ? CARD_HEIGHT : CARD_WIDTH) * cardScale * 1.1,
+            (object.tapped ? CARD_WIDTH : CARD_HEIGHT) * cardScale * 1.1,
+          ]}
+        />
         <meshBasicMaterial
           transparent
           opacity={0}

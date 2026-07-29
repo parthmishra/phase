@@ -7,8 +7,8 @@ export type ArenaTableLayout = "duel" | "pod";
 export type ArenaPodPresentation = "inward" | "kitchen";
 export type ArenaLane = "creatures" | "support" | "lands";
 
-export const ARENA_PERMANENT_WIDTH = 1.78;
-export const ARENA_PERMANENT_DEPTH = 1.16;
+export const ARENA_PERMANENT_WIDTH = 1.28;
+export const ARENA_PERMANENT_DEPTH = 1.78;
 
 export interface ArenaSeatAssignment {
   playerId: PlayerId;
@@ -22,6 +22,7 @@ export interface ArenaPlacement {
   position: [number, number, number];
   faceAngle: number;
   attackVector: [number, number];
+  cardScale: number;
 }
 
 export interface ArenaZoneLayout {
@@ -48,8 +49,14 @@ interface ArenaSeatFrame {
 
 const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
-const LANE_DEPTH = 1.24;
-const LANE_SPACING = 1.15;
+const LANE_DEPTH = 1.5;
+const LANE_SPACING = 1.6;
+const LANE_EDGE_PADDING = 0.1;
+const CARD_GAP = 0.12;
+const CARD_ROTATION_FOOTPRINT = Math.max(
+  ARENA_PERMANENT_WIDTH,
+  ARENA_PERMANENT_DEPTH,
+);
 const ZONE_PILE_GAP = 1.45;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
@@ -59,9 +66,9 @@ const DUEL_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 7.1,
-  support: 6.8,
-  lands: 6.4,
+  creatures: 6,
+  support: 5.8,
+  lands: 5.5,
 };
 
 const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
@@ -213,11 +220,7 @@ function layoutLane(
   lane: ArenaLane,
   frame: ArenaSeatFrame,
 ): ArenaPlacement[] {
-  const usableCenterWidth = Math.max(
-    frame.widths[lane] - ARENA_PERMANENT_WIDTH,
-    0,
-  );
-  const offsets = spreadPositions(groups.length, usableCenterWidth);
+  const fit = fitArenaLaneCards(groups.length, frame.widths[lane]);
   const [centerX, centerZ] = frame.centers[lane];
   const tangentX = Math.cos(frame.faceAngle);
   const tangentZ = -Math.sin(frame.faceAngle);
@@ -226,13 +229,51 @@ function layoutLane(
     pileCount: group.count,
     lane,
     position: [
-      centerX + tangentX * offsets[index],
+      centerX + tangentX * fit.offsets[index],
       0.07,
-      centerZ + tangentZ * offsets[index],
+      centerZ + tangentZ * fit.offsets[index],
     ],
     faceAngle: frame.faceAngle,
     attackVector: frame.attackVector,
+    cardScale: fit.cardScale,
   }));
+}
+
+export function fitArenaLaneCards(
+  count: number,
+  laneWidth: number,
+): { offsets: number[]; cardScale: number; gap: number } {
+  if (count <= 0) {
+    return { offsets: [], cardScale: 1, gap: 0 };
+  }
+
+  const innerWidth = Math.max(laneWidth - LANE_EDGE_PADDING * 2, 0);
+  const depthScale = Math.max(
+    (LANE_DEPTH - LANE_EDGE_PADDING * 2) / ARENA_PERMANENT_DEPTH,
+    0,
+  );
+  const gap =
+    count === 1
+      ? 0
+      : Math.min(CARD_GAP, innerWidth / (count * 4));
+  // Reserve the larger card dimension along the lane so tapping a permanent
+  // cannot rotate it into its neighbors.
+  const widthScale = Math.max(
+    (innerWidth - gap * (count - 1))
+      / (count * CARD_ROTATION_FOOTPRINT),
+    0,
+  );
+  const cardScale = Math.min(1, depthScale, widthScale);
+  const stride = CARD_ROTATION_FOOTPRINT * cardScale + gap;
+  const start = -((count - 1) * stride) / 2;
+  return {
+    offsets: Array.from(
+      { length: count },
+      (_, index) => start + index * stride,
+    ),
+    cardScale,
+    gap,
+  };
 }
 
 function arenaSeatFrame(
@@ -280,16 +321,16 @@ function podSeatFrame(
   if (seat === "far") {
     const widths =
       podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
-    return seatFrameFromCenter(Math.PI, [0, -2.4], widths);
+    return seatFrameFromCenter(Math.PI, [0, -3.75], widths);
   }
   const sideAngle =
     podPresentation === "kitchen"
       ? KITCHEN_SIDE_SEAT_ANGLE
       : INWARD_SIDE_SEAT_ANGLE;
   if (seat === "left") {
-    return seatFrameFromCenter(-sideAngle, [-5.7, -0.35], POD_SIDE_WIDTHS);
+    return seatFrameFromCenter(-sideAngle, [-5.65, -0.35], POD_SIDE_WIDTHS);
   }
-  return seatFrameFromCenter(sideAngle, [5.7, -0.35], POD_SIDE_WIDTHS);
+  return seatFrameFromCenter(sideAngle, [5.65, -0.35], POD_SIDE_WIDTHS);
 }
 
 function seatFrameFromCenter(

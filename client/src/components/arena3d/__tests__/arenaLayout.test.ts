@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARENA_PERMANENT_DEPTH,
   ARENA_PERMANENT_WIDTH,
   arenaLaneZoneLayouts,
   assignArenaOpponentSeats,
+  fitArenaLaneCards,
   layoutArenaSeat,
   spreadPositions,
   type ArenaLaneZoneLayout,
@@ -55,6 +57,55 @@ describe("spreadPositions", () => {
 
   it("uses a readable maximum gap for sparse lanes", () => {
     expect(spreadPositions(3, 20)).toEqual([-2.02, 0, 2.02]);
+  });
+});
+
+describe("fitArenaLaneCards", () => {
+  it("uses portrait proportions for untapped battlefield cards", () => {
+    expect(ARENA_PERMANENT_DEPTH).toBeGreaterThan(ARENA_PERMANENT_WIDTH);
+  });
+
+  it("shrinks crowded cards while preserving a visible gap", () => {
+    const fit = fitArenaLaneCards(7, 3.2);
+    const rotationFootprint =
+      Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH) * fit.cardScale;
+
+    expect(fit.cardScale).toBeLessThan(1);
+    expect(fit.gap).toBeGreaterThan(0);
+    for (let index = 1; index < fit.offsets.length; index += 1) {
+      expect(fit.offsets[index] - fit.offsets[index - 1]).toBeGreaterThan(
+        rotationFootprint,
+      );
+    }
+  });
+
+  it("keeps even a very crowded lane non-overlapping", () => {
+    const fit = fitArenaLaneCards(40, 3.2);
+    const rotationFootprint =
+      Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH) * fit.cardScale;
+    const occupiedWidth =
+      rotationFootprint * 40 + fit.gap * (fit.offsets.length - 1);
+
+    expect(fit.cardScale).toBeGreaterThan(0);
+    expect(fit.gap).toBeGreaterThan(0);
+    expect(occupiedWidth).toBeLessThan(3.2);
+  });
+
+  it("keeps each player's lane zones separated by base padding", () => {
+    for (const presentation of ["inward", "kitchen"] as const) {
+      for (const seat of ["local", "far", "left", "right"] as const) {
+        const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
+        for (let index = 1; index < zones.length; index += 1) {
+          const previous = zones[index - 1];
+          const current = zones[index];
+          const separation = Math.hypot(
+            current.position[0] - previous.position[0],
+            current.position[2] - previous.position[2],
+          );
+          expect(separation).toBeGreaterThan(previous.depth);
+        }
+      }
+    }
   });
 });
 
@@ -118,8 +169,14 @@ describe("four-player pod footprint", () => {
             deltaX * Math.cos(zone.faceAngle)
             - deltaZ * Math.sin(zone.faceAngle);
           expect(
-            Math.abs(tangentOffset) + ARENA_PERMANENT_WIDTH / 2,
+            Math.abs(tangentOffset)
+              + Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH)
+                * placement.cardScale
+                / 2,
           ).toBeLessThanOrEqual(zone.width / 2 + Number.EPSILON);
+          expect(
+            ARENA_PERMANENT_DEPTH * placement.cardScale,
+          ).toBeLessThan(zone.depth);
         }
       }
     },
