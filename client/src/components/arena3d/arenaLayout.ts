@@ -45,10 +45,7 @@ interface ArenaSeatFrame {
   attackVector: [number, number];
   centers: Record<ArenaLane, [number, number]>;
   widths: Record<ArenaLane, number>;
-  alignments: Record<ArenaLane, LaneAlignment>;
 }
-
-type LaneAlignment = -1 | 0 | 1;
 
 const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
@@ -56,6 +53,7 @@ const LANE_DEPTH = 1.98;
 const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
 const SIDE_ROW_SPLIT = 2.2;
+const LOCAL_BACK_ROW_Z = 1.6;
 const CARD_ROTATION_FOOTPRINT = Math.max(
   ARENA_CARD_WIDTH,
   ARENA_CARD_DEPTH,
@@ -84,12 +82,6 @@ const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
   creatures: 4.2,
   support: 4,
   lands: 4,
-};
-
-const CENTERED_LANE_ALIGNMENTS: Record<ArenaLane, LaneAlignment> = {
-  creatures: 0,
-  support: 0,
-  lands: 0,
 };
 
 export function layoutArenaSeat(
@@ -236,11 +228,6 @@ function layoutLane(
   frame: ArenaSeatFrame,
 ): ArenaPlacement[] {
   const fit = fitArenaLaneCards(groups.length, frame.widths[lane]);
-  const offsets = alignArenaLaneCards(
-    fit,
-    frame.widths[lane],
-    frame.alignments[lane],
-  );
   const [centerX, centerZ] = frame.centers[lane];
   const tangentX = Math.cos(frame.faceAngle);
   const tangentZ = -Math.sin(frame.faceAngle);
@@ -249,29 +236,14 @@ function layoutLane(
     pileCount: group.count,
     lane,
     position: [
-      centerX + tangentX * offsets[index],
+      centerX + tangentX * fit.offsets[index],
       0.07,
-      centerZ + tangentZ * offsets[index],
+      centerZ + tangentZ * fit.offsets[index],
     ],
     faceAngle: frame.faceAngle,
     attackVector: frame.attackVector,
     cardScale: fit.cardScale,
   }));
-}
-
-function alignArenaLaneCards(
-  fit: ReturnType<typeof fitArenaLaneCards>,
-  laneWidth: number,
-  alignment: LaneAlignment,
-): number[] {
-  if (alignment === 0 || fit.offsets.length === 0) return fit.offsets;
-
-  const innerWidth = Math.max(laneWidth - LANE_EDGE_PADDING * 2, 0);
-  const occupiedWidth =
-    CARD_ROTATION_FOOTPRINT * fit.cardScale * fit.offsets.length
-    + fit.gap * Math.max(fit.offsets.length - 1, 0);
-  const shift = alignment * Math.max((innerWidth - occupiedWidth) / 2, 0);
-  return fit.offsets.map((offset) => offset + shift);
 }
 
 export function fitArenaLaneCards(
@@ -325,11 +297,10 @@ function arenaSeatFrame(
       attackVector: [0, -1],
       centers: {
         creatures: [0, 0.2],
-        support: [-2.4, 2.5],
-        lands: [2.4, 2.5],
+        support: [-2.4, LOCAL_BACK_ROW_Z],
+        lands: [2.4, LOCAL_BACK_ROW_Z],
       },
       widths: DUEL_WIDTHS,
-      alignments: CENTERED_LANE_ALIGNMENTS,
     };
   }
   if (seat === "far") {
@@ -343,7 +314,6 @@ function arenaSeatFrame(
       attackVector: [0, 1],
       centers,
       widths: DUEL_WIDTHS,
-      alignments: opponentLaneAlignments(centers, Math.PI),
     };
   }
   return podSeatFrame(seat, podPresentation);
@@ -359,11 +329,10 @@ function podSeatFrame(
       attackVector: [0, -1],
       centers: {
         creatures: [0, 0],
-        support: [-1.8, 2.35],
-        lands: [1.8, 2.35],
+        support: [-1.8, LOCAL_BACK_ROW_Z],
+        lands: [1.8, LOCAL_BACK_ROW_Z],
       },
       widths: POD_LOCAL_WIDTHS,
-      alignments: CENTERED_LANE_ALIGNMENTS,
     };
   }
   if (seat === "far") {
@@ -379,7 +348,6 @@ function podSeatFrame(
       attackVector: [0, 1],
       centers,
       widths,
-      alignments: opponentLaneAlignments(centers, Math.PI),
     };
   }
   const sideAngle =
@@ -407,29 +375,7 @@ function sideSeatFrame(
     attackVector: [-Math.sin(faceAngle), -Math.cos(faceAngle)],
     centers,
     widths: POD_SIDE_WIDTHS,
-    alignments: opponentLaneAlignments(centers, faceAngle),
   };
-}
-
-function opponentLaneAlignments(
-  centers: Record<ArenaLane, [number, number]>,
-  faceAngle: number,
-): Record<ArenaLane, LaneAlignment> {
-  return {
-    creatures: 0,
-    support: innerEdgeAlignment(centers.support, faceAngle),
-    lands: innerEdgeAlignment(centers.lands, faceAngle),
-  };
-}
-
-function innerEdgeAlignment(
-  center: [number, number],
-  faceAngle: number,
-): LaneAlignment {
-  const tangentX = Math.cos(faceAngle);
-  const tangentZ = -Math.sin(faceAngle);
-  const towardOrigin = -center[0] * tangentX - center[1] * tangentZ;
-  return towardOrigin < 0 ? -1 : towardOrigin > 0 ? 1 : 0;
 }
 
 export function spreadPositions(count: number, availableWidth: number): number[] {

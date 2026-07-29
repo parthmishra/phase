@@ -150,6 +150,25 @@ describe("assignArenaOpponentSeats", () => {
 
 describe("four-player pod footprint", () => {
   it.each(["inward", "kitchen"] as const)(
+    "keeps the local %s support and land row clear of the near-edge nameplate",
+    (presentation) => {
+      const zones = arenaLaneZoneLayouts("local", "pod", presentation);
+      const creatures = zones.find(({ lane }) => lane === "creatures");
+      const support = zones.find(({ lane }) => lane === "support");
+      const lands = zones.find(({ lane }) => lane === "lands");
+
+      expect(creatures).toBeDefined();
+      expect(support).toBeDefined();
+      expect(lands).toBeDefined();
+      if (!creatures || !support || !lands) return;
+
+      expect(support.position[2]).toBeLessThan(2);
+      expect(lands.position[2]).toBe(support.position[2]);
+      expect(support.position[2]).toBeGreaterThan(creatures.position[2]);
+    },
+  );
+
+  it.each(["inward", "kitchen"] as const)(
     "uses the library and graveyard as the %s side seats' final row",
     (presentation) => {
       for (const seat of ["left", "right"] as const) {
@@ -293,63 +312,61 @@ describe("four-player pod footprint", () => {
   );
 
   it.each(["inward", "kitchen"] as const)(
-    "anchors sparse opponent land and support rows to their %s inner edges",
+    "starts every %s seat lane at its center and grows symmetrically outward",
     (presentation) => {
-      for (const seat of ["far", "left", "right"] as const) {
+      for (const seat of ["local", "far", "left", "right"] as const) {
         const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
-        const sparse = layoutArenaSeat(
+        const single = layoutArenaSeat(
           singlePermanentInEachLane(),
           seat,
           "pod",
           presentation,
         );
-        const crowded = layoutArenaSeat(
-          crowdedBattlefieldView(),
+        const growing = layoutArenaSeat(
+          battlefieldWithLaneCount(3),
           seat,
           "pod",
           presentation,
         );
 
-        for (const lane of ["support", "lands"] as const) {
+        for (const lane of ["creatures", "support", "lands"] as const) {
           const zone = zones.find((candidate) => candidate.lane === lane);
-          const sparseCard = sparse.find(
+          const singleCard = single.find(
             (placement) => placement.lane === lane,
           );
-          const crowdedCards = crowded.filter(
+          const growingCards = growing.filter(
             (placement) => placement.lane === lane,
           );
           expect(zone).toBeDefined();
-          expect(sparseCard).toBeDefined();
-          if (!zone || !sparseCard) continue;
+          expect(singleCard).toBeDefined();
+          if (!zone || !singleCard) continue;
 
           const tangent: [number, number] = [
             Math.cos(zone.faceAngle),
             -Math.sin(zone.faceAngle),
           ];
-          const sparseOffset = dot(
+          const singleOffset = dot(
             [
-              sparseCard.position[0] - zone.position[0],
-              sparseCard.position[2] - zone.position[2],
+              singleCard.position[0] - zone.position[0],
+              singleCard.position[2] - zone.position[2],
             ],
             tangent,
           );
-          const towardOrigin = dot(
-            [-zone.position[0], -zone.position[2]],
-            tangent,
-          );
-          const crowdedAverage =
-            crowdedCards.reduce((sum, placement) => sum + dot(
+          const growingOffsets = growingCards.map((placement) =>
+            dot(
               [
                 placement.position[0] - zone.position[0],
                 placement.position[2] - zone.position[2],
               ],
               tangent,
-            ), 0)
-            / crowdedCards.length;
+            ),
+          );
 
-          expect(sparseOffset * towardOrigin).toBeGreaterThan(0);
-          expect(Math.abs(sparseOffset)).toBeGreaterThan(0.25);
-          expect(crowdedAverage).toBeCloseTo(0);
+          expect(singleOffset).toBeCloseTo(0);
+          expect(growingOffsets[0]).toBeLessThan(0);
+          expect(growingOffsets[1]).toBeCloseTo(0);
+          expect(growingOffsets[2]).toBeGreaterThan(0);
+          expect(growingOffsets[0]).toBeCloseTo(-growingOffsets[2]);
         }
       }
     },
