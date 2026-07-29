@@ -1096,6 +1096,7 @@ mod otherwise_conditional_effects;
 mod outrageous_robbery_look_and_play;
 mod overlord_impending_offer_2859;
 mod owner_life_change_routing_3351;
+mod ozai_phoenix_king_unspent_mana;
 mod pact_of_negation_upkeep_payment;
 mod park_heights_pegasus_draw_condition_runtime;
 mod parker_luck;

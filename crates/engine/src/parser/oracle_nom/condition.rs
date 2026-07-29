@@ -3333,6 +3333,12 @@ fn parse_you_have_conditions(input: &str) -> OracleResult<'_, StaticCondition> {
     }
 
     if let Ok((after_or_more, _)) = tag::<_, _, OracleError<'_>>(" or more ").parse(rest) {
+        if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("unspent mana").parse(after_or_more) {
+            return Ok((
+                rest,
+                make_quantity_ge(QuantityRef::UnspentMana { color: None }, n),
+            ));
+        }
         // CR 603.4 + CR 404.2: Oversold Cemetery's intervening-if predicate
         // counts face-up creature cards in its controller's graveyard.
         if let Ok((rest, type_filters)) =
@@ -14046,6 +14052,29 @@ mod tests {
                 rhs: QuantityExpr::Fixed { value: 5 },
             },
         );
+    }
+
+    #[test]
+    fn you_have_or_more_unspent_mana_parses_word_and_digit_thresholds() {
+        for (text, expected) in [
+            ("you have six or more unspent mana", 6),
+            ("you have 6 or more unspent mana", 6),
+            ("you have five or more unspent mana", 5),
+        ] {
+            let (rest, condition) = parse_inner_condition(text).unwrap();
+            assert_eq!(rest, "", "must fully consume {text:?}");
+            assert_eq!(
+                condition,
+                StaticCondition::QuantityComparison {
+                    lhs: QuantityExpr::Ref {
+                        qty: QuantityRef::UnspentMana { color: None },
+                    },
+                    comparator: Comparator::GE,
+                    rhs: QuantityExpr::Fixed { value: expected },
+                },
+                "expected total unspent mana threshold for {text:?}",
+            );
+        }
     }
 
     #[test]

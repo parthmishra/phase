@@ -1533,7 +1533,7 @@ fn world_acquisition_timestamp(
                     layers::evaluate_condition_with_recipient(
                         state,
                         condition,
-                        effect.controller,
+                        layers::active_effect_condition_controller(state, effect),
                         effect.source_id,
                         obj.id,
                     )

@@ -2,8 +2,9 @@ use crate::game::filter::{
     matches_target_filter, matches_target_filter_in_owner_zone, FilterContext,
 };
 use crate::game::layers::{
-    active_continuous_effects_from_base_static_source, collect_shared_active_continuous_effects,
-    evaluate_condition_with_recipient, order_active_continuous_effects,
+    active_continuous_effects_from_base_static_source, active_effect_condition_controller,
+    collect_shared_active_continuous_effects, evaluate_condition_with_recipient,
+    order_active_continuous_effects,
 };
 use crate::game::quantity::resolve_quantity;
 use crate::types::ability::{ContinuousModification, TargetFilter, TriggerProducerOrigin};
@@ -187,7 +188,7 @@ pub(crate) fn collect_applicable_off_zone_keyword_effects(
                     evaluate_condition_with_recipient(
                         state,
                         condition,
-                        effect.controller,
+                        active_effect_condition_controller(state, effect),
                         effect.source_id,
                         object_id,
                     )
