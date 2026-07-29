@@ -165,15 +165,18 @@ function ArenaCardZone({
           <mesh
             rotation={[-Math.PI / 2, 0, 0]}
             position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
+            castShadow
+            receiveShadow
           >
             <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
-            <meshBasicMaterial
+            <meshStandardMaterial
               key={texture?.uuid ?? "arena-zone-loading"}
               map={texture}
               color={texture ? "#ffffff" : "#29343f"}
               transparent
               alphaTest={0.04}
-              toneMapped={false}
+              roughness={0.76}
+              metalness={0.015}
             />
           </mesh>
         </>

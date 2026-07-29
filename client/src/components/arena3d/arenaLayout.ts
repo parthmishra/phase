@@ -45,14 +45,17 @@ interface ArenaSeatFrame {
   attackVector: [number, number];
   centers: Record<ArenaLane, [number, number]>;
   widths: Record<ArenaLane, number>;
+  alignments: Record<ArenaLane, LaneAlignment>;
 }
+
+type LaneAlignment = -1 | 0 | 1;
 
 const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
 const LANE_DEPTH = 1.98;
 const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
-const SIDE_ROW_SPLIT = 1.75;
+const SIDE_ROW_SPLIT = 2.2;
 const CARD_ROTATION_FOOTPRINT = Math.max(
   ARENA_CARD_WIDTH,
   ARENA_CARD_DEPTH,
@@ -79,8 +82,14 @@ const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
   creatures: 4.2,
-  support: 3,
-  lands: 3,
+  support: 4,
+  lands: 4,
+};
+
+const CENTERED_LANE_ALIGNMENTS: Record<ArenaLane, LaneAlignment> = {
+  creatures: 0,
+  support: 0,
+  lands: 0,
 };
 
 export function layoutArenaSeat(
@@ -166,7 +175,7 @@ export function arenaZoneLayout(
     return arenaZoneRow(
       faceAngle,
       podPresentation === "kitchen"
-        ? [-7.45, 0.08, -3.8]
+        ? [-7.6, 0.08, -4.3]
         : [-6.3, 0.08, -3.3],
     );
   }
@@ -177,7 +186,7 @@ export function arenaZoneLayout(
   return arenaZoneRow(
     faceAngle,
     podPresentation === "kitchen"
-      ? [7.45, 0.08, 2.8]
+      ? [7.6, 0.08, 3]
       : [6.3, 0.08, 2.55],
   );
 }
@@ -227,6 +236,11 @@ function layoutLane(
   frame: ArenaSeatFrame,
 ): ArenaPlacement[] {
   const fit = fitArenaLaneCards(groups.length, frame.widths[lane]);
+  const offsets = alignArenaLaneCards(
+    fit,
+    frame.widths[lane],
+    frame.alignments[lane],
+  );
   const [centerX, centerZ] = frame.centers[lane];
   const tangentX = Math.cos(frame.faceAngle);
   const tangentZ = -Math.sin(frame.faceAngle);
@@ -235,14 +249,29 @@ function layoutLane(
     pileCount: group.count,
     lane,
     position: [
-      centerX + tangentX * fit.offsets[index],
+      centerX + tangentX * offsets[index],
       0.07,
-      centerZ + tangentZ * fit.offsets[index],
+      centerZ + tangentZ * offsets[index],
     ],
     faceAngle: frame.faceAngle,
     attackVector: frame.attackVector,
     cardScale: fit.cardScale,
   }));
+}
+
+function alignArenaLaneCards(
+  fit: ReturnType<typeof fitArenaLaneCards>,
+  laneWidth: number,
+  alignment: LaneAlignment,
+): number[] {
+  if (alignment === 0 || fit.offsets.length === 0) return fit.offsets;
+
+  const innerWidth = Math.max(laneWidth - LANE_EDGE_PADDING * 2, 0);
+  const occupiedWidth =
+    CARD_ROTATION_FOOTPRINT * fit.cardScale * fit.offsets.length
+    + fit.gap * Math.max(fit.offsets.length - 1, 0);
+  const shift = alignment * Math.max((innerWidth - occupiedWidth) / 2, 0);
+  return fit.offsets.map((offset) => offset + shift);
 }
 
 export function fitArenaLaneCards(
@@ -300,18 +329,21 @@ function arenaSeatFrame(
         lands: [2.4, 2.5],
       },
       widths: DUEL_WIDTHS,
+      alignments: CENTERED_LANE_ALIGNMENTS,
     };
   }
   if (seat === "far") {
+    const centers: Record<ArenaLane, [number, number]> = {
+      creatures: [0, -1.9],
+      support: [2.4, -4.2],
+      lands: [-2.4, -4.2],
+    };
     return {
       faceAngle: Math.PI,
       attackVector: [0, 1],
-      centers: {
-        creatures: [0, -1.9],
-        support: [2.4, -4.2],
-        lands: [-2.4, -4.2],
-      },
+      centers,
       widths: DUEL_WIDTHS,
+      alignments: opponentLaneAlignments(centers, Math.PI),
     };
   }
   return podSeatFrame(seat, podPresentation);
@@ -331,20 +363,23 @@ function podSeatFrame(
         lands: [1.8, 2.35],
       },
       widths: POD_LOCAL_WIDTHS,
+      alignments: CENTERED_LANE_ALIGNMENTS,
     };
   }
   if (seat === "far") {
     const widths =
       podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
+    const centers: Record<ArenaLane, [number, number]> = {
+      creatures: [0, -2.3],
+      support: [-2.6, -4.75],
+      lands: [0.8, -4.75],
+    };
     return {
       faceAngle: Math.PI,
       attackVector: [0, 1],
-      centers: {
-        creatures: [0, -2.3],
-        support: [-2.6, -4.75],
-        lands: [0.8, -4.75],
-      },
+      centers,
       widths,
+      alignments: opponentLaneAlignments(centers, Math.PI),
     };
   }
   const sideAngle =
@@ -361,17 +396,40 @@ function sideSeatFrame(
 ): ArenaSeatFrame {
   const side = seat === "left" ? -1 : 1;
   const faceAngle = side * sideAngle;
-  const backRowX = side * (podPresentation === "kitchen" ? 4.95 : 4.9);
+  const backRowX = side * (podPresentation === "kitchen" ? 5.45 : 5.35);
+  const centers: Record<ArenaLane, [number, number]> = {
+    creatures: [side * 3.95, 0],
+    support: [backRowX, -side * SIDE_ROW_SPLIT],
+    lands: [backRowX, side * SIDE_ROW_SPLIT],
+  };
   return {
     faceAngle,
     attackVector: [-Math.sin(faceAngle), -Math.cos(faceAngle)],
-    centers: {
-      creatures: [side * 3.95, 0],
-      support: [backRowX, -side * SIDE_ROW_SPLIT],
-      lands: [backRowX, side * SIDE_ROW_SPLIT],
-    },
+    centers,
     widths: POD_SIDE_WIDTHS,
+    alignments: opponentLaneAlignments(centers, faceAngle),
   };
+}
+
+function opponentLaneAlignments(
+  centers: Record<ArenaLane, [number, number]>,
+  faceAngle: number,
+): Record<ArenaLane, LaneAlignment> {
+  return {
+    creatures: 0,
+    support: innerEdgeAlignment(centers.support, faceAngle),
+    lands: innerEdgeAlignment(centers.lands, faceAngle),
+  };
+}
+
+function innerEdgeAlignment(
+  center: [number, number],
+  faceAngle: number,
+): LaneAlignment {
+  const tangentX = Math.cos(faceAngle);
+  const tangentZ = -Math.sin(faceAngle);
+  const towardOrigin = -center[0] * tangentX - center[1] * tangentZ;
+  return towardOrigin < 0 ? -1 : towardOrigin > 0 ? 1 : 0;
 }
 
 export function spreadPositions(count: number, availableWidth: number): number[] {

@@ -292,6 +292,69 @@ describe("four-player pod footprint", () => {
     },
   );
 
+  it.each(["inward", "kitchen"] as const)(
+    "anchors sparse opponent land and support rows to their %s inner edges",
+    (presentation) => {
+      for (const seat of ["far", "left", "right"] as const) {
+        const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
+        const sparse = layoutArenaSeat(
+          singlePermanentInEachLane(),
+          seat,
+          "pod",
+          presentation,
+        );
+        const crowded = layoutArenaSeat(
+          crowdedBattlefieldView(),
+          seat,
+          "pod",
+          presentation,
+        );
+
+        for (const lane of ["support", "lands"] as const) {
+          const zone = zones.find((candidate) => candidate.lane === lane);
+          const sparseCard = sparse.find(
+            (placement) => placement.lane === lane,
+          );
+          const crowdedCards = crowded.filter(
+            (placement) => placement.lane === lane,
+          );
+          expect(zone).toBeDefined();
+          expect(sparseCard).toBeDefined();
+          if (!zone || !sparseCard) continue;
+
+          const tangent: [number, number] = [
+            Math.cos(zone.faceAngle),
+            -Math.sin(zone.faceAngle),
+          ];
+          const sparseOffset = dot(
+            [
+              sparseCard.position[0] - zone.position[0],
+              sparseCard.position[2] - zone.position[2],
+            ],
+            tangent,
+          );
+          const towardOrigin = dot(
+            [-zone.position[0], -zone.position[2]],
+            tangent,
+          );
+          const crowdedAverage =
+            crowdedCards.reduce((sum, placement) => sum + dot(
+              [
+                placement.position[0] - zone.position[0],
+                placement.position[2] - zone.position[2],
+              ],
+              tangent,
+            ), 0)
+            / crowdedCards.length;
+
+          expect(sparseOffset * towardOrigin).toBeGreaterThan(0);
+          expect(Math.abs(sparseOffset)).toBeGreaterThan(0.25);
+          expect(crowdedAverage).toBeCloseTo(0);
+        }
+      }
+    },
+  );
+
   it("points diagonal side seats toward the center and local battlefield", () => {
     const view = singlePermanentInEachLane();
     const left = layoutArenaSeat(view, "left", "pod");
@@ -314,9 +377,6 @@ describe("four-player pod footprint", () => {
     );
     expect(leftByLane.creatures.position[2]).toBeGreaterThan(
       leftByLane.lands.position[2],
-    );
-    expect(leftByLane.lands.position[0]).toBe(
-      -rightByLane.lands.position[0],
     );
     expect(leftByLane.creatures.attackVector[0]).toBeGreaterThan(0);
     expect(rightByLane.creatures.attackVector[0]).toBeLessThan(0);

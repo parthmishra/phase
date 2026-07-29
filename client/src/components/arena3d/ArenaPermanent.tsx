@@ -203,13 +203,14 @@ export function ArenaPermanent({
           castShadow
           receiveShadow
         >
-          <meshBasicMaterial
+          <meshStandardMaterial
             key={texture?.uuid ?? "arena-loading"}
             map={texture}
             color={texture ? "#ffffff" : "#19221f"}
             transparent
             alphaTest={0.06}
-            toneMapped={false}
+            roughness={0.76}
+            metalness={0.015}
           />
         </mesh>
       </group>
