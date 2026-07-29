@@ -129,7 +129,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
       </div>
       {tableLayout === "pod" && (
         <div
-          className="absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full border border-slate-500/35 bg-[#08101bd9] p-1 pl-3 shadow-[0_8px_24px_rgba(0,0,0,0.38)] backdrop-blur-md"
+          className="absolute left-3 top-3 z-40 flex items-center gap-1 rounded-full border border-slate-500/35 bg-[#08101bd9] p-1 pl-3 shadow-[0_8px_24px_rgba(0,0,0,0.38)] backdrop-blur-md"
           role="group"
           aria-label={t("arena3d.layoutLabel")}
         >

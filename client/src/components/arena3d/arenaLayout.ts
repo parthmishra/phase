@@ -50,6 +50,7 @@ const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
 const LANE_DEPTH = 1.24;
 const LANE_SPACING = 1.15;
+const ZONE_PILE_GAP = 1.45;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
   creatures: 9.4,
@@ -127,12 +128,7 @@ export function arenaZoneLayout(
 ): ArenaZoneLayout {
   if (seat === "local") {
     return tableLayout === "pod"
-      ? {
-          faceAngle: 0,
-          library: [-5.7, 0.08, 4.35],
-          graveyard: [-4.25, 0.08, 4.35],
-          exile: [-2.8, 0.08, 4.35],
-        }
+      ? arenaZoneRow(0, [-5.7, 0.08, 4.35])
       : {
           faceAngle: 0,
           library: [-5.55, 0.08, 3.46],
@@ -142,21 +138,12 @@ export function arenaZoneLayout(
   }
   if (seat === "far") {
     return tableLayout === "pod"
-      ? {
-          faceAngle: Math.PI,
-          library:
-            podPresentation === "kitchen"
-              ? [5.7, 0.08, -4.35]
-              : [3.5, 0.08, -4.55],
-          graveyard:
-            podPresentation === "kitchen"
-              ? [4.25, 0.08, -4.35]
-              : [2.05, 0.08, -4.55],
-          exile:
-            podPresentation === "kitchen"
-              ? [2.8, 0.08, -4.35]
-              : [0.6, 0.08, -4.55],
-        }
+      ? arenaZoneRow(
+          Math.PI,
+          podPresentation === "kitchen"
+            ? [5.7, 0.08, -4.75]
+            : [3.5, 0.08, -5.05],
+        )
       : {
           faceAngle: Math.PI,
           library: [5.55, 0.08, -3.46],
@@ -165,24 +152,35 @@ export function arenaZoneLayout(
         };
   }
   if (seat === "left") {
-    return {
-      faceAngle:
-        podPresentation === "kitchen"
-          ? -KITCHEN_SIDE_SEAT_ANGLE
-          : -INWARD_SIDE_SEAT_ANGLE,
-      library: [-6.3, 0.08, -2.8],
-      graveyard: [-4.85, 0.08, -2.8],
-      exile: [-3.4, 0.08, -2.8],
-    };
-  }
-  return {
-    faceAngle:
+    const faceAngle =
       podPresentation === "kitchen"
-        ? KITCHEN_SIDE_SEAT_ANGLE
-        : INWARD_SIDE_SEAT_ANGLE,
-    library: [4.85, 0.08, -2.8],
-    graveyard: [6.3, 0.08, -2.8],
-    exile: [3.4, 0.08, -2.8],
+        ? -KITCHEN_SIDE_SEAT_ANGLE
+        : -INWARD_SIDE_SEAT_ANGLE;
+    return arenaZoneRow(faceAngle, [-6.3, 0.08, -3.3]);
+  }
+  const faceAngle =
+    podPresentation === "kitchen"
+      ? KITCHEN_SIDE_SEAT_ANGLE
+      : INWARD_SIDE_SEAT_ANGLE;
+  return arenaZoneRow(faceAngle, [6.3, 0.08, -2.8]);
+}
+
+function arenaZoneRow(
+  faceAngle: number,
+  library: [number, number, number],
+): ArenaZoneLayout {
+  const rightX = Math.cos(faceAngle);
+  const rightZ = -Math.sin(faceAngle);
+  const offset = (distance: number): [number, number, number] => [
+    library[0] + rightX * distance,
+    library[1],
+    library[2] + rightZ * distance,
+  ];
+  return {
+    faceAngle,
+    library,
+    graveyard: offset(ZONE_PILE_GAP),
+    exile: offset(ZONE_PILE_GAP * 2),
   };
 }
 
