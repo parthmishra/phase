@@ -73,7 +73,7 @@ export function ArenaPermanent({
     texture,
   ]);
 
-  useFrame((_state, delta) => {
+  useFrame((state, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
@@ -107,6 +107,13 @@ export function ArenaPermanent({
     group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
     group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, response);
     group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, response);
+    // A whisper of hover drift keeps the cards aloft over the stone — slow
+    // enough to read as weight, not animation. Combat and hover pin the card.
+    if (!interaction.isAttacking && !interaction.isHovered) {
+      const hoverPhase = (Number(objectId) % 89) / 89 * Math.PI * 2;
+      group.position.y +=
+        Math.sin(state.clock.elapsedTime * 0.85 + hoverPhase) * 0.012;
+    }
     group.rotation.y = lerpAngle(group.rotation.y, targetRotation, response);
     const nextScale = THREE.MathUtils.lerp(
       group.scale.x,
@@ -206,11 +213,15 @@ export function ArenaPermanent({
           <meshStandardMaterial
             key={texture?.uuid ?? "arena-loading"}
             map={texture}
-            color={texture ? "#ffffff" : "#19221f"}
+            color={texture ? "#ffffff" : "#171d1d"}
             transparent
             alphaTest={0.06}
-            roughness={0.76}
-            metalness={0.015}
+            roughness={0.68}
+            metalness={0.025}
+            emissive={texture ? "#ffffff" : "#0b1212"}
+            emissiveMap={texture}
+            emissiveIntensity={texture ? 0.045 : 0.3}
+            shadowSide={THREE.DoubleSide}
           />
         </mesh>
       </group>

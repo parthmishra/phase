@@ -4,7 +4,6 @@ import type { PlayerBattlefieldView } from "../../viewmodel/gameStateView.ts";
 
 export type ArenaSeat = "local" | "far" | "left" | "right";
 export type ArenaTableLayout = "duel" | "pod";
-export type ArenaPodPresentation = "inward" | "kitchen";
 export type ArenaLane = "creatures" | "support" | "lands";
 
 export const ARENA_CARD_WIDTH = 1.3;
@@ -74,12 +73,6 @@ const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
   lands: 2.3,
 };
 
-const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 4.6,
-  support: 2.3,
-  lands: 2.3,
-};
-
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
   creatures: 4.2,
   support: 3,
@@ -90,9 +83,8 @@ export function layoutArenaSeat(
   view: PlayerBattlefieldView,
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
-  podPresentation: ArenaPodPresentation = "inward",
 ): ArenaPlacement[] {
-  const frame = arenaSeatFrame(seat, tableLayout, podPresentation);
+  const frame = arenaSeatFrame(seat, tableLayout);
   const support = [...view.support, ...view.planeswalkers, ...view.other];
 
   return [
@@ -134,7 +126,6 @@ export function assignArenaOpponentSeats(
 export function arenaZoneLayout(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
-  podPresentation: ArenaPodPresentation = "inward",
 ): ArenaZoneLayout {
   if (seat === "local") {
     return tableLayout === "pod"
@@ -161,20 +152,10 @@ export function arenaZoneLayout(
   }
   if (seat === "left") {
     const faceAngle = -CARDINAL_SIDE_SEAT_ANGLE;
-    return arenaZoneRow(
-      faceAngle,
-      podPresentation === "kitchen"
-        ? [-SIDE_PILE_ROW_X, 0.08, -4.3]
-        : [-SIDE_PILE_ROW_X, 0.08, -3.3],
-    );
+    return arenaZoneRow(faceAngle, [-SIDE_PILE_ROW_X, 0.08, -4.3]);
   }
   const faceAngle = CARDINAL_SIDE_SEAT_ANGLE;
-  return arenaZoneRow(
-    faceAngle,
-    podPresentation === "kitchen"
-      ? [SIDE_PILE_ROW_X, 0.08, 3]
-      : [SIDE_PILE_ROW_X, 0.08, 2.55],
-  );
+  return arenaZoneRow(faceAngle, [SIDE_PILE_ROW_X, 0.08, 3]);
 }
 
 function arenaZoneRow(
@@ -199,9 +180,8 @@ function arenaZoneRow(
 export function arenaLaneZoneLayouts(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
-  podPresentation: ArenaPodPresentation = "inward",
 ): ArenaLaneZoneLayout[] {
-  const frame = arenaSeatFrame(seat, tableLayout, podPresentation);
+  const frame = arenaSeatFrame(seat, tableLayout);
   const lanes: ArenaLane[] = ["creatures", "support", "lands"];
   return lanes.map((lane) => ({
     lane,
@@ -231,7 +211,9 @@ function layoutLane(
     lane,
     position: [
       centerX + tangentX * fit.offsets[index],
-      0.07,
+      // Cards hover above the stone rather than lying on it: enough clearance
+      // for the sun to drop a readable shadow beside each permanent.
+      0.16,
       centerZ + tangentZ * fit.offsets[index],
     ],
     faceAngle: frame.faceAngle,
@@ -280,10 +262,9 @@ export function fitArenaLaneCards(
 function arenaSeatFrame(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout,
-  podPresentation: ArenaPodPresentation,
 ): ArenaSeatFrame {
   if (tableLayout === "pod") {
-    return podSeatFrame(seat, podPresentation);
+    return podSeatFrame(seat);
   }
   if (seat === "local") {
     return {
@@ -310,13 +291,10 @@ function arenaSeatFrame(
       widths: DUEL_WIDTHS,
     };
   }
-  return podSeatFrame(seat, podPresentation);
+  return podSeatFrame(seat);
 }
 
-function podSeatFrame(
-  seat: ArenaSeat,
-  podPresentation: ArenaPodPresentation,
-): ArenaSeatFrame {
+function podSeatFrame(seat: ArenaSeat): ArenaSeatFrame {
   if (seat === "local") {
     return {
       faceAngle: 0,
@@ -330,8 +308,6 @@ function podSeatFrame(
     };
   }
   if (seat === "far") {
-    const widths =
-      podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
     const centers: Record<ArenaLane, [number, number]> = {
       creatures: [0, -2.42],
       support: [-1.22, -4.55],
@@ -341,7 +317,7 @@ function podSeatFrame(
       faceAngle: Math.PI,
       attackVector: [0, 1],
       centers,
-      widths,
+      widths: POD_LOCAL_WIDTHS,
     };
   }
   return sideSeatFrame(seat, CARDINAL_SIDE_SEAT_ANGLE);

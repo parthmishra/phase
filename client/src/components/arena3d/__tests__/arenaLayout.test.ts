@@ -108,18 +108,16 @@ describe("fitArenaLaneCards", () => {
   });
 
   it("keeps each player's lane zones separated by base padding", () => {
-    for (const presentation of ["inward", "kitchen"] as const) {
-      for (const seat of ["local", "far", "left", "right"] as const) {
-        const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
-        for (let index = 1; index < zones.length; index += 1) {
-          const previous = zones[index - 1];
-          const current = zones[index];
-          const separation = Math.hypot(
-            current.position[0] - previous.position[0],
-            current.position[2] - previous.position[2],
-          );
-          expect(separation).toBeGreaterThan(previous.depth);
-        }
+    for (const seat of ["local", "far", "left", "right"] as const) {
+      const zones = arenaLaneZoneLayouts(seat, "pod");
+      for (let index = 1; index < zones.length; index += 1) {
+        const previous = zones[index - 1];
+        const current = zones[index];
+        const separation = Math.hypot(
+          current.position[0] - previous.position[0],
+          current.position[2] - previous.position[2],
+        );
+        expect(separation).toBeGreaterThan(previous.depth);
       }
     }
   });
@@ -150,139 +148,125 @@ describe("assignArenaOpponentSeats", () => {
 });
 
 describe("four-player pod footprint", () => {
-  it.each(["inward", "kitchen"] as const)(
-    "keeps every player's %s playable rectangles disjoint",
-    (presentation) => {
-      const seats: ArenaSeat[] = ["local", "far", "left", "right"];
-      const zones = seats.flatMap((seat) =>
-        arenaLaneZoneLayouts(seat, "pod", presentation).map((zone) => ({
-          seat,
-          zone,
-        })),
-      );
-      const overlaps: string[] = [];
+  it("keeps every player's playable rectangles disjoint", () => {
+    const seats: ArenaSeat[] = ["local", "far", "left", "right"];
+    const zones = seats.flatMap((seat) =>
+      arenaLaneZoneLayouts(seat, "pod").map((zone) => ({
+        seat,
+        zone,
+      })),
+    );
+    const overlaps: string[] = [];
 
-      for (let leftIndex = 0; leftIndex < zones.length; leftIndex += 1) {
-        for (
-          let rightIndex = leftIndex + 1;
-          rightIndex < zones.length;
-          rightIndex += 1
-        ) {
-          const left = zones[leftIndex];
-          const right = zones[rightIndex];
-          if (!zonesHaveVisualPadding(left.zone, right.zone)) {
-            overlaps.push(
-              JSON.stringify({
+    for (let leftIndex = 0; leftIndex < zones.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < zones.length;
+        rightIndex += 1
+      ) {
+        const left = zones[leftIndex];
+        const right = zones[rightIndex];
+        if (!zonesHaveVisualPadding(left.zone, right.zone)) {
+          overlaps.push(
+            JSON.stringify({
               left: { seat: left.seat, lane: left.zone.lane },
               right: { seat: right.seat, lane: right.zone.lane },
-              }),
-            );
-          }
+            }),
+          );
         }
       }
+    }
 
-      expect(overlaps).toEqual([]);
-    },
-  );
+    expect(overlaps).toEqual([]);
+  });
 
-  it.each(["inward", "kitchen"] as const)(
-    "keeps every %s pile footprint outside all playable rectangles",
-    (presentation) => {
-      const seats: ArenaSeat[] = ["local", "far", "left", "right"];
-      const playableZones = seats.flatMap((seat) =>
-        arenaLaneZoneLayouts(seat, "pod", presentation).map((zone) => ({
-          seat,
-          zone,
-        })),
+  it("keeps every pile footprint outside all playable rectangles", () => {
+    const seats: ArenaSeat[] = ["local", "far", "left", "right"];
+    const playableZones = seats.flatMap((seat) =>
+      arenaLaneZoneLayouts(seat, "pod").map((zone) => ({
+        seat,
+        zone,
+      })),
+    );
+    const piles = seats.flatMap((seat) => {
+      const layout = arenaZoneLayout(seat, "pod");
+      return (["library", "graveyard", "exile"] as const).map((zone) => ({
+        seat,
+        zone,
+        rectangle: pileRectangle(layout[zone], layout.faceAngle),
+      }));
+    });
+    const overlaps: string[] = [];
+
+    for (const pile of piles) {
+      for (const playable of playableZones) {
+        if (
+          !rectanglesHaveVisualPadding(
+            pile.rectangle,
+            zoneRectangle(playable.zone),
+          )
+        ) {
+          overlaps.push(
+            JSON.stringify({
+              pile: { seat: pile.seat, zone: pile.zone },
+              playable: {
+                seat: playable.seat,
+                lane: playable.zone.lane,
+              },
+            }),
+          );
+        }
+      }
+    }
+
+    expect(overlaps).toEqual([]);
+  });
+
+  it("keeps the local support and land row clear of the near-edge nameplate", () => {
+    const zones = arenaLaneZoneLayouts("local", "pod");
+    const creatures = zones.find(({ lane }) => lane === "creatures");
+    const support = zones.find(({ lane }) => lane === "support");
+    const lands = zones.find(({ lane }) => lane === "lands");
+
+    expect(creatures).toBeDefined();
+    expect(support).toBeDefined();
+    expect(lands).toBeDefined();
+    if (!creatures || !support || !lands) return;
+
+    expect(support.position[2]).toBeLessThan(2);
+    expect(lands.position[2]).toBe(support.position[2]);
+    expect(support.position[2]).toBeGreaterThan(creatures.position[2]);
+  });
+
+  it("uses the library and graveyard as the side seats' final row", () => {
+    for (const seat of ["left", "right"] as const) {
+      const placements = layoutArenaSeat(
+        singlePermanentInEachLane(),
+        seat,
+        "pod",
       );
-      const piles = seats.flatMap((seat) => {
-        const layout = arenaZoneLayout(seat, "pod", presentation);
-        return (["library", "graveyard", "exile"] as const).map((zone) => ({
-          seat,
-          zone,
-          rectangle: pileRectangle(layout[zone], layout.faceAngle),
-        }));
-      });
-      const overlaps: string[] = [];
+      const piles = arenaZoneLayout(seat, "pod");
+      const battlefieldRow = Math.max(
+        ...placements.map(({ position }) => Math.abs(position[0])),
+      );
+      const pileRow = Math.min(
+        Math.abs(piles.library[0]),
+        Math.abs(piles.graveyard[0]),
+      );
 
-      for (const pile of piles) {
-        for (const playable of playableZones) {
-          if (
-            !rectanglesHaveVisualPadding(
-              pile.rectangle,
-              zoneRectangle(playable.zone),
-            )
-          ) {
-            overlaps.push(
-              JSON.stringify({
-                pile: { seat: pile.seat, zone: pile.zone },
-                playable: {
-                  seat: playable.seat,
-                  lane: playable.zone.lane,
-                },
-              }),
-            );
-          }
-        }
-      }
+      expect(pileRow).toBeGreaterThan(battlefieldRow);
+    }
+  });
 
-      expect(overlaps).toEqual([]);
-    },
-  );
-
-  it.each(["inward", "kitchen"] as const)(
-    "keeps the local %s support and land row clear of the near-edge nameplate",
-    (presentation) => {
-      const zones = arenaLaneZoneLayouts("local", "pod", presentation);
-      const creatures = zones.find(({ lane }) => lane === "creatures");
-      const support = zones.find(({ lane }) => lane === "support");
-      const lands = zones.find(({ lane }) => lane === "lands");
-
-      expect(creatures).toBeDefined();
-      expect(support).toBeDefined();
-      expect(lands).toBeDefined();
-      if (!creatures || !support || !lands) return;
-
-      expect(support.position[2]).toBeLessThan(2);
-      expect(lands.position[2]).toBe(support.position[2]);
-      expect(support.position[2]).toBeGreaterThan(creatures.position[2]);
-    },
-  );
-
-  it.each(["inward", "kitchen"] as const)(
-    "uses the library and graveyard as the %s side seats' final row",
-    (presentation) => {
-      for (const seat of ["left", "right"] as const) {
-        const placements = layoutArenaSeat(
-          singlePermanentInEachLane(),
-          seat,
-          "pod",
-          presentation,
-        );
-        const piles = arenaZoneLayout(seat, "pod", presentation);
-        const battlefieldRow = Math.max(
-          ...placements.map(({ position }) => Math.abs(position[0])),
-        );
-        const pileRow = Math.min(
-          Math.abs(piles.library[0]),
-          Math.abs(piles.graveyard[0]),
-        );
-
-        expect(pileRow).toBeGreaterThan(battlefieldRow);
-      }
-    },
-  );
-
-  it("keeps kitchen side seats inside the table with piles as the final row", () => {
+  it("keeps side seats inside the table with piles as the final row", () => {
     const kitchenTableHalfWidth = 17.2 / 2;
     for (const seat of ["left", "right"] as const) {
       const placements = layoutArenaSeat(
         battlefieldWithLaneCount(3),
         seat,
         "pod",
-        "kitchen",
       );
-      const piles = arenaZoneLayout(seat, "pod", "kitchen");
+      const piles = arenaZoneLayout(seat, "pod");
       const battlefieldOuterEdge = Math.max(
         ...placements.map(
           ({ position, cardScale }) =>
@@ -308,152 +292,141 @@ describe("four-player pod footprint", () => {
     }
   });
 
-  it.each(["inward", "kitchen"] as const)(
-    "keeps sparse full-size cards separated across %s seat boundaries",
-    (presentation) => {
-      const seatViews: [ArenaSeat, PlayerBattlefieldView][] = [
-        ["local", battlefieldWithLaneCount(3)],
-        ["far", battlefieldWithLaneCount(3)],
-        ["left", battlefieldWithLaneCount(1)],
-        ["right", battlefieldWithLaneCount(1)],
-      ];
-      const placements = seatViews.flatMap(([seat, view]) =>
-        layoutArenaSeat(view, seat, "pod", presentation)
-          .map((placement) => ({ placement, seat })),
-      );
+  it("keeps sparse full-size cards separated across seat boundaries", () => {
+    const seatViews: [ArenaSeat, PlayerBattlefieldView][] = [
+      ["local", battlefieldWithLaneCount(3)],
+      ["far", battlefieldWithLaneCount(3)],
+      ["left", battlefieldWithLaneCount(1)],
+      ["right", battlefieldWithLaneCount(1)],
+    ];
+    const placements = seatViews.flatMap(([seat, view]) =>
+      layoutArenaSeat(view, seat, "pod")
+        .map((placement) => ({ placement, seat })),
+    );
 
-      for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
-        for (
-          let rightIndex = leftIndex + 1;
-          rightIndex < placements.length;
-          rightIndex += 1
-        ) {
-          const left = placements[leftIndex];
-          const right = placements[rightIndex];
-          if (left.seat === right.seat) continue;
-          for (const leftTapped of [false, true]) {
-            for (const rightTapped of [false, true]) {
-              expect(
-                cardsHaveVisualPadding(
-                  left.placement,
-                  leftTapped,
-                  right.placement,
-                  rightTapped,
-                ),
-                JSON.stringify({
-                  left: {
-                    seat: left.seat,
-                    lane: left.placement.lane,
-                    tapped: leftTapped,
-                  },
-                  right: {
-                    seat: right.seat,
-                    lane: right.placement.lane,
-                    tapped: rightTapped,
-                  },
-                }),
-              ).toBe(true);
-            }
+    for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < placements.length;
+        rightIndex += 1
+      ) {
+        const left = placements[leftIndex];
+        const right = placements[rightIndex];
+        if (left.seat === right.seat) continue;
+        for (const leftTapped of [false, true]) {
+          for (const rightTapped of [false, true]) {
+            expect(
+              cardsHaveVisualPadding(
+                left.placement,
+                leftTapped,
+                right.placement,
+                rightTapped,
+              ),
+              JSON.stringify({
+                left: {
+                  seat: left.seat,
+                  lane: left.placement.lane,
+                  tapped: leftTapped,
+                },
+                right: {
+                  seat: right.seat,
+                  lane: right.placement.lane,
+                  tapped: rightTapped,
+                },
+              }),
+            ).toBe(true);
           }
         }
       }
-    },
-  );
+    }
+  });
 
-  it.each(["inward", "kitchen"] as const)(
-    "keeps crowded card edges inside every %s lane rectangle",
-    (presentation) => {
-      const view = crowdedBattlefieldView();
-      const seats: ArenaSeat[] = ["local", "far", "left", "right"];
+  it("keeps crowded card edges inside every lane rectangle", () => {
+    const view = crowdedBattlefieldView();
+    const seats: ArenaSeat[] = ["local", "far", "left", "right"];
 
-      for (const seat of seats) {
-        const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
-        const placements = layoutArenaSeat(view, seat, "pod", presentation);
-        for (const placement of placements) {
-          const zone = zones.find(({ lane }) => lane === placement.lane);
-          expect(zone).toBeDefined();
-          if (!zone) continue;
-          const deltaX = placement.position[0] - zone.position[0];
-          const deltaZ = placement.position[2] - zone.position[2];
-          const tangentOffset =
-            deltaX * Math.cos(zone.faceAngle)
-            - deltaZ * Math.sin(zone.faceAngle);
-          expect(
-            Math.abs(tangentOffset)
-              + Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH)
-                * placement.cardScale
-                / 2,
-          ).toBeLessThanOrEqual(zone.width / 2 + Number.EPSILON);
-          expect(
-            ARENA_CARD_DEPTH * placement.cardScale,
-          ).toBeLessThan(zone.depth);
-        }
+    for (const seat of seats) {
+      const zones = arenaLaneZoneLayouts(seat, "pod");
+      const placements = layoutArenaSeat(view, seat, "pod");
+      for (const placement of placements) {
+        const zone = zones.find(({ lane }) => lane === placement.lane);
+        expect(zone).toBeDefined();
+        if (!zone) continue;
+        const deltaX = placement.position[0] - zone.position[0];
+        const deltaZ = placement.position[2] - zone.position[2];
+        const tangentOffset =
+          deltaX * Math.cos(zone.faceAngle)
+          - deltaZ * Math.sin(zone.faceAngle);
+        expect(
+          Math.abs(tangentOffset)
+            + Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH)
+              * placement.cardScale
+              / 2,
+        ).toBeLessThanOrEqual(zone.width / 2 + Number.EPSILON);
+        expect(
+          ARENA_CARD_DEPTH * placement.cardScale,
+        ).toBeLessThan(zone.depth);
       }
-    },
-  );
+    }
+  });
 
-  it.each(["inward", "kitchen"] as const)(
-    "starts every %s seat lane at its center and grows symmetrically outward",
-    (presentation) => {
-      for (const seat of ["local", "far", "left", "right"] as const) {
-        const zones = arenaLaneZoneLayouts(seat, "pod", presentation);
-        const single = layoutArenaSeat(
-          singlePermanentInEachLane(),
-          seat,
-          "pod",
-          presentation,
+  it("starts every seat lane at its center and grows symmetrically outward", () => {
+    for (const seat of ["local", "far", "left", "right"] as const) {
+      const zones = arenaLaneZoneLayouts(seat, "pod");
+      const single = layoutArenaSeat(
+        singlePermanentInEachLane(),
+        seat,
+        "pod",
+      );
+      const growing = layoutArenaSeat(
+        battlefieldWithLaneCount(3),
+        seat,
+        "pod",
+      );
+
+      for (const lane of ["creatures", "support", "lands"] as const) {
+        const zone = zones.find((candidate) => candidate.lane === lane);
+        const singleCard = single.find(
+          (placement) => placement.lane === lane,
         );
-        const growing = layoutArenaSeat(
-          battlefieldWithLaneCount(3),
-          seat,
-          "pod",
-          presentation,
+        const growingCards = growing.filter(
+          (placement) => placement.lane === lane,
         );
+        expect(zone).toBeDefined();
+        expect(singleCard).toBeDefined();
+        if (!zone || !singleCard) continue;
 
-        for (const lane of ["creatures", "support", "lands"] as const) {
-          const zone = zones.find((candidate) => candidate.lane === lane);
-          const singleCard = single.find(
-            (placement) => placement.lane === lane,
-          );
-          const growingCards = growing.filter(
-            (placement) => placement.lane === lane,
-          );
-          expect(zone).toBeDefined();
-          expect(singleCard).toBeDefined();
-          if (!zone || !singleCard) continue;
-
-          const tangent: [number, number] = [
-            Math.cos(zone.faceAngle),
-            -Math.sin(zone.faceAngle),
-          ];
-          const singleOffset = dot(
+        const tangent: [number, number] = [
+          Math.cos(zone.faceAngle),
+          -Math.sin(zone.faceAngle),
+        ];
+        const singleOffset = dot(
+          [
+            singleCard.position[0] - zone.position[0],
+            singleCard.position[2] - zone.position[2],
+          ],
+          tangent,
+        );
+        const growingOffsets = growingCards.map((placement) =>
+          dot(
             [
-              singleCard.position[0] - zone.position[0],
-              singleCard.position[2] - zone.position[2],
+              placement.position[0] - zone.position[0],
+              placement.position[2] - zone.position[2],
             ],
             tangent,
-          );
-          const growingOffsets = growingCards.map((placement) =>
-            dot(
-              [
-                placement.position[0] - zone.position[0],
-                placement.position[2] - zone.position[2],
-              ],
-              tangent,
-            ),
-          );
+          ),
+        );
 
-          expect(singleOffset).toBeCloseTo(0);
-          expect(growingOffsets[0]).toBeLessThan(0);
-          expect(growingOffsets[1]).toBeCloseTo(0);
-          expect(growingOffsets[2]).toBeGreaterThan(0);
-          expect(growingOffsets[0]).toBeCloseTo(-growingOffsets[2]);
-        }
+        expect(singleOffset).toBeCloseTo(0);
+        expect(growingOffsets[0]).toBeLessThan(0);
+        expect(growingOffsets[1]).toBeCloseTo(0);
+        expect(growingOffsets[2]).toBeGreaterThan(0);
+        expect(growingOffsets[0]).toBeCloseTo(-growingOffsets[2]);
       }
-    },
-  );
+    }
+  });
 
-  it("keeps adjacent side seats perpendicular in the inward presentation", () => {
+  it("keeps adjacent side seats perpendicular", () => {
     const view = singlePermanentInEachLane();
     const left = layoutArenaSeat(view, "left", "pod");
     const right = layoutArenaSeat(view, "right", "pod");
@@ -484,10 +457,10 @@ describe("four-player pod footprint", () => {
     expect(rightByLane.creatures.faceAngle).toBe(Math.PI / 2);
   });
 
-  it("uses cardinal side seats in the kitchen-table alternative", () => {
+  it("uses cardinal side seats for the pod table", () => {
     const view = singlePermanentInEachLane();
-    const left = layoutArenaSeat(view, "left", "pod", "kitchen");
-    const right = layoutArenaSeat(view, "right", "pod", "kitchen");
+    const left = layoutArenaSeat(view, "left", "pod");
+    const right = layoutArenaSeat(view, "right", "pod");
 
     expect(left[0].faceAngle).toBe(-Math.PI / 2);
     expect(right[0].faceAngle).toBe(Math.PI / 2);

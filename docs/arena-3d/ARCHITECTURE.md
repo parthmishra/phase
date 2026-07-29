@@ -85,17 +85,26 @@ object mount rather than guessed from card text or zone names.
 
 ## Visual language
 
-- Deep Slate felt surface: neutral enough for multicolor art and visually
-  distinct from a marked sports field.
-- Cool overhead light with restrained warmth on interaction feedback.
+- Weathered flagstone slab in a spring woodland clearing: moss-tinged stone,
+  a moss-and-leaf-litter floor, and a flat-shaded treeline closing in through
+  soft green mist. The pod presentation is the kitchen table — one square
+  seat per side; the inward diagonal variant was dropped.
+- Warm afternoon sun filtered through the canopy, with dappled light pooled
+  on the stone and a faint carved ring at the table's heart. Permanents hover
+  above the slab with real cast shadows (`shadowSide` must stay double-sided —
+  three.js renders only a front-side plane's culled back face into the shadow
+  map, so flat card meshes otherwise cast nothing).
+- Restrained ambient life: pollen-gold and faintly arcane motes drifting on a
+  30 fps tick, and a near-still hover bob on idle permanents.
 - Cyan: an available action.
 - Acid green: a legal target.
 - Ember orange: declared combat.
 - Warm ivory: selected/inspected.
 - Green edge filament on a card face: engine-attributed live modification.
 
-The scene avoids constant ambient movement. Motion is reserved for state
-changes and direct input so the board stays calm while the player thinks.
+Ambient motion is capped at the mote tick and the hover bob. Everything else
+is reserved for state changes and direct input so the board stays calm while
+the player thinks.
 
 ## Live game-feel review
 
@@ -135,7 +144,8 @@ What should be rejected or changed in the next slice:
 - Texture entries are revision-keyed, shared, reference-counted, and disposed
   after a short reuse window.
 - Canvas DPR is capped at 1.5.
-- The R3F loop uses `frameloop="demand"`; springs invalidate only while moving.
+- The R3F loop uses `frameloop="demand"`; springs invalidate only while moving,
+  and the ambient motes/dapple invalidate on a throttled 30 fps tick.
 - Geometry is deliberately flat and post-processing is absent in the first
   slice.
 - Full-card text remains DOM-only; battlefield textures prioritize glance

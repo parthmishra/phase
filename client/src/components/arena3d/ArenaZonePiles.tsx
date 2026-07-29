@@ -13,7 +13,6 @@ import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
   arenaZoneLayout,
-  type ArenaPodPresentation,
   type ArenaSeat,
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
@@ -26,7 +25,6 @@ interface ArenaZonePilesProps {
   playerId: PlayerId;
   seat: ArenaSeat;
   tableLayout?: ArenaTableLayout;
-  podPresentation?: ArenaPodPresentation;
   onViewZone?: (zone: ViewableZone, playerId: PlayerId) => void;
 }
 
@@ -34,7 +32,6 @@ export function ArenaZonePiles({
   playerId,
   seat,
   tableLayout = "duel",
-  podPresentation = "inward",
   onViewZone,
 }: ArenaZonePilesProps) {
   const gameState = useGameStore((state) => state.gameState);
@@ -52,7 +49,7 @@ export function ArenaZonePiles({
     faceName: graveyardLookup?.faceName,
     faceIndex: graveyardLookup?.faceIndex,
   });
-  const layout = arenaZoneLayout(seat, tableLayout, podPresentation);
+  const layout = arenaZoneLayout(seat, tableLayout);
   const handleView = (zone: ViewableZone) => onViewZone?.(zone, playerId);
 
   return (
@@ -157,9 +154,9 @@ function ArenaCardZone({
               args={[ARENA_CARD_WIDTH, stackHeight, ARENA_CARD_DEPTH]}
             />
             <meshStandardMaterial
-              color={stack ? "#111820" : "#22262b"}
-              roughness={0.72}
-              metalness={0.08}
+              color={stack ? "#0b0e0f" : "#15191a"}
+              roughness={0.78}
+              metalness={0.05}
             />
           </mesh>
           <mesh
@@ -172,11 +169,15 @@ function ArenaCardZone({
             <meshStandardMaterial
               key={texture?.uuid ?? "arena-zone-loading"}
               map={texture}
-              color={texture ? "#ffffff" : "#29343f"}
+              color={texture ? "#ffffff" : "#2f2a21"}
               transparent
               alphaTest={0.04}
               roughness={0.76}
               metalness={0.015}
+              emissive={texture ? "#ffffff" : "#081110"}
+              emissiveMap={texture}
+              emissiveIntensity={texture ? 0.04 : 0.24}
+              shadowSide={THREE.DoubleSide}
             />
           </mesh>
         </>
