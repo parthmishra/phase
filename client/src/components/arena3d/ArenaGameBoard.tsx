@@ -1,5 +1,6 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
+import { useTranslation } from "react-i18next";
 import * as THREE from "three";
 
 import type { PlayerId } from "../../adapter/types.ts";
@@ -11,11 +12,13 @@ import {
   getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
+import { ArenaSeatZones } from "./ArenaSeatZones.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import {
   assignArenaOpponentSeats,
   layoutArenaSeat,
+  type ArenaPodPresentation,
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
 
@@ -40,6 +43,9 @@ interface ArenaGameBoardProps {
 export const ArenaGameBoard = memo(function ArenaGameBoard(
   props: ArenaGameBoardProps,
 ) {
+  const { t } = useTranslation("game");
+  const [podPresentation, setPodPresentation] =
+    useState<ArenaPodPresentation>("inward");
   const gameState = useGameStore((state) => state.gameState);
   const perspectivePlayerId = usePerspectivePlayerId();
   const opponents = useMemo(
@@ -80,13 +86,31 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
   );
   const placements = useMemo(
     () => [
-      ...layoutArenaSeat(playerView, "local", tableLayout),
+      ...layoutArenaSeat(
+        playerView,
+        "local",
+        tableLayout,
+        podPresentation,
+      ),
       ...opponentSeats.flatMap(({ playerId, seat }) => {
         const view = opponentViews.get(playerId);
-        return view ? layoutArenaSeat(view, seat, tableLayout) : [];
+        return view
+          ? layoutArenaSeat(
+              view,
+              seat,
+              tableLayout,
+              podPresentation,
+            )
+          : [];
       }),
     ],
-    [opponentSeats, opponentViews, playerView, tableLayout],
+    [
+      opponentSeats,
+      opponentViews,
+      playerView,
+      podPresentation,
+      tableLayout,
+    ],
   );
 
   if (!gameState) return null;
@@ -95,6 +119,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
     <div
       className="relative min-h-0 flex-1 overflow-visible"
       data-arena-table-layout={tableLayout}
+      data-arena-pod-presentation={podPresentation}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex -translate-y-[calc(100%+0.4rem)] justify-center">
         <div className="contents pointer-events-auto">{props.oppHud}</div>
@@ -102,6 +127,44 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center">
         <div className="contents pointer-events-auto">{props.playerHud}</div>
       </div>
+      {tableLayout === "pod" && (
+        <div
+          className="absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full border border-slate-500/35 bg-[#08101bd9] p-1 pl-3 shadow-[0_8px_24px_rgba(0,0,0,0.38)] backdrop-blur-md"
+          role="group"
+          aria-label={t("arena3d.layoutLabel")}
+        >
+          <span className="mr-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+            {t("arena3d.layoutLabel")}
+          </span>
+          {(["inward", "kitchen"] as const).map((presentation) => {
+            const active = podPresentation === presentation;
+            const label =
+              presentation === "inward"
+                ? t("arena3d.inwardLayout")
+                : t("arena3d.kitchenLayout");
+            const description =
+              presentation === "inward"
+                ? t("arena3d.inwardLayoutDescription")
+                : t("arena3d.kitchenLayoutDescription");
+            return (
+              <button
+                key={presentation}
+                type="button"
+                title={description}
+                aria-pressed={active}
+                onClick={() => setPodPresentation(presentation)}
+                className={`rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                  active
+                    ? "bg-amber-200/95 text-slate-950 shadow-[0_0_16px_rgba(245,208,120,0.2)]"
+                    : "text-slate-300 hover:bg-white/8 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div
         className="absolute inset-x-0 top-0 overflow-hidden"
@@ -147,11 +210,28 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             color="#7596c7"
           />
 
-          <ArenaTable tableLayout={tableLayout} />
+          <ArenaTable
+            tableLayout={tableLayout}
+            podPresentation={podPresentation}
+          />
+          <ArenaSeatZones
+            seat="local"
+            tableLayout={tableLayout}
+            podPresentation={podPresentation}
+          />
+          {opponentSeats.map(({ playerId, seat }) => (
+            <ArenaSeatZones
+              key={`zones-${playerId}`}
+              seat={seat}
+              tableLayout={tableLayout}
+              podPresentation={podPresentation}
+            />
+          ))}
           <ArenaZonePiles
             playerId={perspectivePlayerId}
             seat="local"
             tableLayout={tableLayout}
+            podPresentation={podPresentation}
             onViewZone={props.onViewZone}
           />
           {opponentSeats.map(({ playerId, seat }) => (
@@ -160,6 +240,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
               playerId={playerId}
               seat={seat}
               tableLayout={tableLayout}
+              podPresentation={podPresentation}
               onViewZone={props.onViewZone}
             />
           ))}

@@ -11,6 +11,7 @@ import { getPlayerZoneIds } from "../../viewmodel/gameStateView.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
 import {
   arenaZoneLayout,
+  type ArenaPodPresentation,
   type ArenaSeat,
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
@@ -23,6 +24,7 @@ interface ArenaZonePilesProps {
   playerId: PlayerId;
   seat: ArenaSeat;
   tableLayout?: ArenaTableLayout;
+  podPresentation?: ArenaPodPresentation;
   onViewZone?: (zone: ViewableZone, playerId: PlayerId) => void;
 }
 
@@ -33,6 +35,7 @@ export function ArenaZonePiles({
   playerId,
   seat,
   tableLayout = "duel",
+  podPresentation = "inward",
   onViewZone,
 }: ArenaZonePilesProps) {
   const gameState = useGameStore((state) => state.gameState);
@@ -50,7 +53,7 @@ export function ArenaZonePiles({
     faceName: graveyardLookup?.faceName,
     faceIndex: graveyardLookup?.faceIndex,
   });
-  const layout = arenaZoneLayout(seat, tableLayout);
+  const layout = arenaZoneLayout(seat, tableLayout, podPresentation);
   const handleView = (zone: ViewableZone) => onViewZone?.(zone, playerId);
 
   return (

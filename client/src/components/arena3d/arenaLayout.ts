@@ -4,7 +4,11 @@ import type { PlayerBattlefieldView } from "../../viewmodel/gameStateView.ts";
 
 export type ArenaSeat = "local" | "far" | "left" | "right";
 export type ArenaTableLayout = "duel" | "pod";
+export type ArenaPodPresentation = "inward" | "kitchen";
 export type ArenaLane = "creatures" | "support" | "lands";
+
+export const ARENA_PERMANENT_WIDTH = 1.78;
+export const ARENA_PERMANENT_DEPTH = 1.16;
 
 export interface ArenaSeatAssignment {
   playerId: PlayerId;
@@ -27,6 +31,14 @@ export interface ArenaZoneLayout {
   exile: [number, number, number];
 }
 
+export interface ArenaLaneZoneLayout {
+  lane: ArenaLane;
+  position: [number, number, number];
+  faceAngle: number;
+  width: number;
+  depth: number;
+}
+
 interface ArenaSeatFrame {
   faceAngle: number;
   attackVector: [number, number];
@@ -34,7 +46,10 @@ interface ArenaSeatFrame {
   widths: Record<ArenaLane, number>;
 }
 
-const SIDE_SEAT_ANGLE = Math.PI * 0.34;
+const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
+const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
+const LANE_DEPTH = 1.24;
+const LANE_SPACING = 1.15;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
   creatures: 9.4,
@@ -43,9 +58,9 @@ const DUEL_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 8.4,
-  support: 7.4,
-  lands: 6.2,
+  creatures: 7.1,
+  support: 6.8,
+  lands: 6.4,
 };
 
 const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
@@ -55,17 +70,18 @@ const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 2.4,
-  support: 2.2,
-  lands: 2,
+  creatures: 3.2,
+  support: 3.2,
+  lands: 3.2,
 };
 
 export function layoutArenaSeat(
   view: PlayerBattlefieldView,
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
+  podPresentation: ArenaPodPresentation = "inward",
 ): ArenaPlacement[] {
-  const frame = arenaSeatFrame(seat, tableLayout);
+  const frame = arenaSeatFrame(seat, tableLayout, podPresentation);
   const support = [...view.support, ...view.planeswalkers, ...view.other];
 
   return [
@@ -107,22 +123,39 @@ export function assignArenaOpponentSeats(
 export function arenaZoneLayout(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
+  podPresentation: ArenaPodPresentation = "inward",
 ): ArenaZoneLayout {
   if (seat === "local") {
-    return {
-      faceAngle: 0,
-      library: [-5.55, 0.08, 3.46],
-      graveyard: [-4.1, 0.08, 3.46],
-      exile: [-2.65, 0.08, 3.46],
-    };
+    return tableLayout === "pod"
+      ? {
+          faceAngle: 0,
+          library: [-5.7, 0.08, 4.35],
+          graveyard: [-4.25, 0.08, 4.35],
+          exile: [-2.8, 0.08, 4.35],
+        }
+      : {
+          faceAngle: 0,
+          library: [-5.55, 0.08, 3.46],
+          graveyard: [-4.1, 0.08, 3.46],
+          exile: [-2.65, 0.08, 3.46],
+        };
   }
   if (seat === "far") {
     return tableLayout === "pod"
       ? {
           faceAngle: Math.PI,
-          library: [4.45, 0.08, -3.5],
-          graveyard: [3, 0.08, -3.5],
-          exile: [1.55, 0.08, -3.5],
+          library:
+            podPresentation === "kitchen"
+              ? [5.7, 0.08, -4.35]
+              : [3.5, 0.08, -4.55],
+          graveyard:
+            podPresentation === "kitchen"
+              ? [4.25, 0.08, -4.35]
+              : [2.05, 0.08, -4.55],
+          exile:
+            podPresentation === "kitchen"
+              ? [2.8, 0.08, -4.35]
+              : [0.6, 0.08, -4.55],
         }
       : {
           faceAngle: Math.PI,
@@ -133,18 +166,44 @@ export function arenaZoneLayout(
   }
   if (seat === "left") {
     return {
-      faceAngle: -SIDE_SEAT_ANGLE,
-      library: [-6.2, 0.08, 1.55],
-      graveyard: [-5.55, 0.08, 0.25],
-      exile: [-4.9, 0.08, -1.05],
+      faceAngle:
+        podPresentation === "kitchen"
+          ? -KITCHEN_SIDE_SEAT_ANGLE
+          : -INWARD_SIDE_SEAT_ANGLE,
+      library: [-6.3, 0.08, -2.8],
+      graveyard: [-4.85, 0.08, -2.8],
+      exile: [-3.4, 0.08, -2.8],
     };
   }
   return {
-    faceAngle: SIDE_SEAT_ANGLE,
-    library: [6.2, 0.08, 1.55],
-    graveyard: [5.55, 0.08, 0.25],
-    exile: [4.9, 0.08, -1.05],
+    faceAngle:
+      podPresentation === "kitchen"
+        ? KITCHEN_SIDE_SEAT_ANGLE
+        : INWARD_SIDE_SEAT_ANGLE,
+    library: [4.85, 0.08, -2.8],
+    graveyard: [6.3, 0.08, -2.8],
+    exile: [3.4, 0.08, -2.8],
   };
+}
+
+export function arenaLaneZoneLayouts(
+  seat: ArenaSeat,
+  tableLayout: ArenaTableLayout = "duel",
+  podPresentation: ArenaPodPresentation = "inward",
+): ArenaLaneZoneLayout[] {
+  const frame = arenaSeatFrame(seat, tableLayout, podPresentation);
+  const lanes: ArenaLane[] = ["creatures", "support", "lands"];
+  return lanes.map((lane) => ({
+    lane,
+    position: [
+      frame.centers[lane][0],
+      0.018,
+      frame.centers[lane][1],
+    ],
+    faceAngle: frame.faceAngle,
+    width: frame.widths[lane],
+    depth: LANE_DEPTH,
+  }));
 }
 
 function layoutLane(
@@ -152,7 +211,11 @@ function layoutLane(
   lane: ArenaLane,
   frame: ArenaSeatFrame,
 ): ArenaPlacement[] {
-  const offsets = spreadPositions(groups.length, frame.widths[lane]);
+  const usableCenterWidth = Math.max(
+    frame.widths[lane] - ARENA_PERMANENT_WIDTH,
+    0,
+  );
+  const offsets = spreadPositions(groups.length, usableCenterWidth);
   const [centerX, centerZ] = frame.centers[lane];
   const tangentX = Math.cos(frame.faceAngle);
   const tangentZ = -Math.sin(frame.faceAngle);
@@ -173,7 +236,11 @@ function layoutLane(
 function arenaSeatFrame(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout,
+  podPresentation: ArenaPodPresentation,
 ): ArenaSeatFrame {
+  if (tableLayout === "pod") {
+    return podSeatFrame(seat, podPresentation);
+  }
   if (seat === "local") {
     return {
       faceAngle: 0,
@@ -183,7 +250,7 @@ function arenaSeatFrame(
         support: [0, 1.15],
         lands: [0, 2],
       },
-      widths: tableLayout === "pod" ? POD_LOCAL_WIDTHS : DUEL_WIDTHS,
+      widths: DUEL_WIDTHS,
     };
   }
   if (seat === "far") {
@@ -195,30 +262,54 @@ function arenaSeatFrame(
         support: [0, -1.15],
         lands: [0, -2],
       },
-      widths: tableLayout === "pod" ? POD_FAR_WIDTHS : DUEL_WIDTHS,
+      widths: DUEL_WIDTHS,
     };
   }
+  return podSeatFrame(seat, podPresentation);
+}
+
+function podSeatFrame(
+  seat: ArenaSeat,
+  podPresentation: ArenaPodPresentation,
+): ArenaSeatFrame {
+  if (seat === "local") {
+    return seatFrameFromCenter(0, [0, 1.15], POD_LOCAL_WIDTHS);
+  }
+  if (seat === "far") {
+    const widths =
+      podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
+    return seatFrameFromCenter(Math.PI, [0, -2.4], widths);
+  }
+  const sideAngle =
+    podPresentation === "kitchen"
+      ? KITCHEN_SIDE_SEAT_ANGLE
+      : INWARD_SIDE_SEAT_ANGLE;
   if (seat === "left") {
-    return {
-      faceAngle: -SIDE_SEAT_ANGLE,
-      attackVector: [0.84, -0.54],
-      centers: {
-        creatures: [-2.85, -0.75],
-        support: [-3.55, 0.1],
-        lands: [-4.25, 0.95],
-      },
-      widths: POD_SIDE_WIDTHS,
-    };
+    return seatFrameFromCenter(-sideAngle, [-5.7, -0.35], POD_SIDE_WIDTHS);
   }
+  return seatFrameFromCenter(sideAngle, [5.7, -0.35], POD_SIDE_WIDTHS);
+}
+
+function seatFrameFromCenter(
+  faceAngle: number,
+  center: [number, number],
+  widths: Record<ArenaLane, number>,
+): ArenaSeatFrame {
+  const towardCenterX = -Math.sin(faceAngle);
+  const towardCenterZ = -Math.cos(faceAngle);
+  const laneCenter = (offset: number): [number, number] => [
+    center[0] + towardCenterX * offset,
+    center[1] + towardCenterZ * offset,
+  ];
   return {
-    faceAngle: SIDE_SEAT_ANGLE,
-    attackVector: [-0.84, -0.54],
+    faceAngle,
+    attackVector: [towardCenterX, towardCenterZ],
     centers: {
-      creatures: [2.85, -0.75],
-      support: [3.55, 0.1],
-      lands: [4.25, 0.95],
+      creatures: laneCenter(LANE_SPACING),
+      support: laneCenter(0),
+      lands: laneCenter(-LANE_SPACING),
     },
-    widths: POD_SIDE_WIDTHS,
+    widths,
   };
 }
 

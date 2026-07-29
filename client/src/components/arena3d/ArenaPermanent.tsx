@@ -2,14 +2,18 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { ArenaPlacement } from "./arenaLayout.ts";
+import {
+  ARENA_PERMANENT_DEPTH,
+  ARENA_PERMANENT_WIDTH,
+  type ArenaPlacement,
+} from "./arenaLayout.ts";
 import { ArenaCardGlow } from "./ArenaCardGlow.tsx";
 import { useArenaCardTexture } from "./useArenaCardTexture.ts";
 import { useArenaPermanentInteraction } from "./useArenaPermanentInteraction.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 
-const CARD_WIDTH = 1.78;
-const CARD_HEIGHT = 1.16;
+const CARD_WIDTH = ARENA_PERMANENT_WIDTH;
+const CARD_HEIGHT = ARENA_PERMANENT_DEPTH;
 const CARD_CORNER_RADIUS = 0.09;
 const CARD_GEOMETRY = makeRoundedCardGeometry();
 

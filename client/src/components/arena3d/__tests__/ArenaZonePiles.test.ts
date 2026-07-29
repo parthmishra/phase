@@ -16,23 +16,26 @@ describe("arenaZoneLayout", () => {
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 
-  it("converges mirrored pod side zones toward the narrow far edge", () => {
+  it("keeps both side libraries on the far side without mirroring pile order", () => {
     const left = arenaZoneLayout("left", "pod");
     const right = arenaZoneLayout("right", "pod");
 
-    expect(left.library[0]).toBe(-right.library[0]);
-    expect(left.graveyard[0]).toBe(-right.graveyard[0]);
+    expect(left.library[2]).toBeLessThan(0);
+    expect(right.library[2]).toBeLessThan(0);
+    expect(left.library[0]).not.toBe(-right.library[0]);
+    expect(left.graveyard[0]).not.toBe(-right.graveyard[0]);
     expect(left.exile[0]).toBe(-right.exile[0]);
     expect(left.library[2]).toBe(right.library[2]);
-    expect(Math.abs(left.library[0])).toBeGreaterThan(
-      Math.abs(left.graveyard[0]),
+    expect(left.faceAngle).toBe(-Math.PI * 0.555);
+    expect(right.faceAngle).toBe(Math.PI * 0.555);
+  });
+
+  it("uses square side-seat orientation for the kitchen-table view", () => {
+    expect(arenaZoneLayout("left", "pod", "kitchen").faceAngle).toBe(
+      -Math.PI / 2,
     );
-    expect(Math.abs(left.graveyard[0])).toBeGreaterThan(
-      Math.abs(left.exile[0]),
+    expect(arenaZoneLayout("right", "pod", "kitchen").faceAngle).toBe(
+      Math.PI / 2,
     );
-    expect(left.library[2]).toBeGreaterThan(left.graveyard[2]);
-    expect(left.graveyard[2]).toBeGreaterThan(left.exile[2]);
-    expect(left.faceAngle).toBe(-Math.PI * 0.34);
-    expect(right.faceAngle).toBe(Math.PI * 0.34);
   });
 });

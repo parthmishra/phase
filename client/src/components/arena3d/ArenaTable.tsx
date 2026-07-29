@@ -1,7 +1,10 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
-import type { ArenaTableLayout } from "./arenaLayout.ts";
+import type {
+  ArenaPodPresentation,
+  ArenaTableLayout,
+} from "./arenaLayout.ts";
 
 const ARENA_TABLE_LOCAL_WIDTH = 17.2;
 const ARENA_TABLE_FAR_WIDTH = 13.2;
@@ -11,11 +14,15 @@ const ARENA_TABLE_THICKNESS = 0.36;
 
 export function ArenaTable({
   tableLayout = "duel",
+  podPresentation = "inward",
 }: {
   tableLayout?: ArenaTableLayout;
+  podPresentation?: ArenaPodPresentation;
 }) {
   const farWidth =
-    tableLayout === "pod" ? ARENA_TABLE_FAR_WIDTH : ARENA_TABLE_LOCAL_WIDTH;
+    tableLayout === "pod" && podPresentation === "inward"
+      ? ARENA_TABLE_FAR_WIDTH
+      : ARENA_TABLE_LOCAL_WIDTH;
   const surfaceTexture = useMemo(makeSurfaceTexture, []);
   const surfaceGeometry = useMemo(
     () => makeRoundedSurfaceGeometry(

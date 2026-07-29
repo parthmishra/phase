@@ -1,4 +1,11 @@
 {
+  "arena3d": {
+    "layoutLabel": "Four-player table",
+    "inwardLayout": "Inward",
+    "inwardLayoutDescription": "Gameplay-focused diagonal seats facing the player battlefield",
+    "kitchenLayout": "Kitchen table",
+    "kitchenLayoutDescription": "One square seat on each side of the table"
+  },
   "abilityBlock": {
     "badge": "Blocked",
     "cantBeActivated": "This ability can't be activated",
