@@ -5583,6 +5583,11 @@ pub struct PendingCast {
     /// through a cost-payment continuation without conflating it with cost legs.
     #[serde(default, skip_serializing_if = "ActivationTargetSelection::is_pending")]
     pub activation_target_selection: ActivationTargetSelection,
+    /// CR 601.2h + CR 602.2b: An activation cannot be cancelled once any
+    /// component of its cost has been paid, because that payment is not a
+    /// rollback-able announcement choice.
+    #[serde(default)]
+    pub activation_cost_committed: bool,
     /// CR 118.9 + CR 601.2b: When this cast is offered a once-per-turn
     /// `CastWithAlternativeCost` grant (As Foretold), the granting permanent's id.
     /// Carried across the `OptionalCostChoice` round-trip so the accept handler can
@@ -5590,6 +5595,16 @@ pub struct PendingCast {
     /// `Unlimited` grants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt_cost_grant_source: Option<ObjectId>,
+    /// CR 602.2a-b + CR 603.2: Trigger consequences from a target-bearing
+    /// activation are collected while its targets and costs are announced, but
+    /// become globally visible only when the ability reaches the stack.
+    ///
+    /// The carrier is durable across interactive cost prompts and is redacted
+    /// from every per-viewer state projection; its journal is engine-private
+    /// implementation state, not public pending-cast information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) activation_trigger_collection:
+        Option<Box<crate::game::triggers::PendingActivationTriggerCollection>>,
 }
 
 fn default_origin_zone() -> Zone {
@@ -5914,6 +5929,14 @@ pub enum PendingCostMoveResume {
         pending: Box<PendingManaAbility>,
         cursor: ManaAbilityCostCursor,
     },
+    /// CR 602.2b + CR 701.17a + CR 616.1: An activation's deterministic mill
+    /// cost paused while a replacement choice settles. Resume the serialized
+    /// activation suffix only after the mill event has reached a terminal
+    /// replacement outcome.
+    ActivationMillPayment {
+        player: PlayerId,
+        pending: Box<PendingCast>,
+    },
     /// CR 606.4 + CR 614.1a + CR 616.1: A loyalty activation paused on a
     /// counter-cost replacement-ordering choice (e.g. Doubling Season vs an
     /// opponent's Vorinclex halving the loyalty counters). The counter is
@@ -5983,13 +6006,82 @@ impl PendingCast {
             assist_state: AssistState::NotOffered,
             activation_residual: ActivationResidual::None,
             activation_target_selection: ActivationTargetSelection::Pending,
+            activation_cost_committed: false,
             alt_cost_grant_source: None,
+            activation_trigger_collection: None,
         }
     }
 
     pub fn with_payment_mode(mut self, payment_mode: CastPaymentMode) -> Self {
         self.payment_mode = payment_mode;
         self
+    }
+
+    /// Starts the trigger transaction for an announced, target-bearing
+    /// activated ability.
+    ///
+    /// CR 602.2a-b + CR 603.2: Target declaration can make triggers fire
+    /// before costs are paid, while the activated ability does not exist on
+    /// the physical stack until the announcement completes.
+    pub(crate) fn begin_activation_trigger_collection(&mut self) {
+        if self.activation_trigger_collection.is_none() {
+            let ability_index = self
+                .activation_ability_index
+                .expect("target-bearing activation session requires an ability index");
+            self.activation_trigger_collection = Some(Box::new(
+                crate::game::triggers::PendingActivationTriggerCollection::for_prepared_activated_ability(
+                    self.object_id,
+                    self.ability.controller,
+                    ability_index,
+                    &self.ability,
+                ),
+            ));
+        }
+    }
+
+    /// CR 601.2h + CR 602.2b: Marks an announced activation as having paid an
+    /// irreversible cost component, so it can no longer be cancelled.
+    pub(crate) fn mark_activation_cost_committed(&mut self) {
+        if self.activation_ability_index.is_some() {
+            self.activation_cost_committed = true;
+        }
+    }
+}
+
+impl GameState {
+    /// Temporarily removes the activation-local trigger transaction from the
+    /// pending cast that currently owns it.
+    ///
+    /// `ManaPayment` stores its `PendingCast` in `GameState::pending_cast`;
+    /// every other interactive casting prompt embeds it in `WaitingFor`.
+    /// Keeping that routing distinction here prevents individual cost handlers
+    /// from choosing the wrong continuation carrier.
+    pub(crate) fn take_pending_activation_trigger_collection(
+        &mut self,
+    ) -> Option<Box<crate::game::triggers::PendingActivationTriggerCollection>> {
+        if let Some(pending) = self.pending_cast.as_mut() {
+            return pending.activation_trigger_collection.take();
+        }
+        self.waiting_for
+            .pending_cast_mut()?
+            .activation_trigger_collection
+            .take()
+    }
+
+    /// Restores the transaction removed by
+    /// [`Self::take_pending_activation_trigger_collection`] to the same active
+    /// casting continuation.
+    pub(crate) fn restore_pending_activation_trigger_collection(
+        &mut self,
+        collection: Box<crate::game::triggers::PendingActivationTriggerCollection>,
+    ) {
+        if let Some(pending) = self.pending_cast.as_mut() {
+            pending.activation_trigger_collection = Some(collection);
+            return;
+        }
+        if let Some(pending) = self.waiting_for.pending_cast_mut() {
+            pending.activation_trigger_collection = Some(collection);
+        }
     }
 }
 
@@ -21238,7 +21330,9 @@ mod tests {
                 assist_state: AssistState::NotOffered,
                 activation_residual: ActivationResidual::None,
                 activation_target_selection: ActivationTargetSelection::Pending,
+                activation_cost_committed: false,
                 alt_cost_grant_source: None,
+                activation_trigger_collection: None,
             })
         }
 
@@ -21647,7 +21741,9 @@ mod tests {
             assist_state: AssistState::NotOffered,
             activation_residual: ActivationResidual::None,
             activation_target_selection: ActivationTargetSelection::Pending,
+            activation_cost_committed: false,
             alt_cost_grant_source: None,
+            activation_trigger_collection: None,
         });
         let choose_x = WaitingFor::ChooseXValue {
             player: PlayerId(0),
