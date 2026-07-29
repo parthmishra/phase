@@ -27,14 +27,14 @@ describe("arenaZoneLayout", () => {
     },
   );
 
-  it("keeps the left library farther away than the right library", () => {
+  it("keeps inward side libraries perpendicular to local and far seats", () => {
     const left = arenaZoneLayout("left", "pod");
     const right = arenaZoneLayout("right", "pod");
 
     expect(left.library[2]).toBeLessThan(0);
     expect(left.library[2]).toBeLessThan(right.library[2]);
-    expect(left.faceAngle).toBe(-Math.PI * 0.555);
-    expect(right.faceAngle).toBe(Math.PI * 0.555);
+    expect(left.faceAngle).toBe(-Math.PI / 2);
+    expect(right.faceAngle).toBe(Math.PI / 2);
   });
 
   it.each([

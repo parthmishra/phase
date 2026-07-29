@@ -6,8 +6,8 @@ import type {
   ArenaTableLayout,
 } from "./arenaLayout.ts";
 
-const ARENA_TABLE_LOCAL_WIDTH = 17.2;
-const ARENA_TABLE_FAR_WIDTH = 13.2;
+const ARENA_TABLE_LOCAL_WIDTH = 17.4;
+const ARENA_TABLE_FAR_WIDTH = 17.1;
 const ARENA_TABLE_DEPTH = 18;
 const ARENA_TABLE_CORNER_RADIUS = 2.15;
 const ARENA_TABLE_THICKNESS = 0.36;

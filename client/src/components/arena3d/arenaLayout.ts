@@ -47,13 +47,15 @@ interface ArenaSeatFrame {
   widths: Record<ArenaLane, number>;
 }
 
-const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
-const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
+const CARDINAL_SIDE_SEAT_ANGLE = Math.PI / 2;
 const LANE_DEPTH = 1.98;
 const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
-const SIDE_ROW_SPLIT = 2.2;
-const LOCAL_BACK_ROW_Z = 1.6;
+const SIDE_ROW_SPLIT = 1.7;
+const SIDE_CREATURE_CENTER_X = 3.5;
+const SIDE_BACK_ROW_X = 5.62;
+const SIDE_PILE_ROW_X = 7.65;
+const LOCAL_BACK_ROW_Z = 1.8;
 const CARD_ROTATION_FOOTPRINT = Math.max(
   ARENA_CARD_WIDTH,
   ARENA_CARD_DEPTH,
@@ -67,21 +69,21 @@ const DUEL_WIDTHS: Record<ArenaLane, number> = {
 };
 
 const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 6,
-  support: 3.2,
-  lands: 3.2,
+  creatures: 4.6,
+  support: 2.3,
+  lands: 2.3,
 };
 
 const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
-  creatures: 5.2,
-  support: 3,
-  lands: 3,
+  creatures: 4.6,
+  support: 2.3,
+  lands: 2.3,
 };
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
   creatures: 4.2,
-  support: 4,
-  lands: 4,
+  support: 3,
+  lands: 3,
 };
 
 export function layoutArenaSeat(
@@ -148,9 +150,7 @@ export function arenaZoneLayout(
     return tableLayout === "pod"
       ? arenaZoneRow(
           Math.PI,
-          podPresentation === "kitchen"
-            ? [5.7, 0.08, -5.35]
-            : [5.4, 0.08, -5.35],
+          [6.2, 0.08, -5.35],
         )
       : {
           faceAngle: Math.PI,
@@ -160,26 +160,20 @@ export function arenaZoneLayout(
         };
   }
   if (seat === "left") {
-    const faceAngle =
-      podPresentation === "kitchen"
-        ? -KITCHEN_SIDE_SEAT_ANGLE
-        : -INWARD_SIDE_SEAT_ANGLE;
+    const faceAngle = -CARDINAL_SIDE_SEAT_ANGLE;
     return arenaZoneRow(
       faceAngle,
       podPresentation === "kitchen"
-        ? [-7.6, 0.08, -4.3]
-        : [-6.3, 0.08, -3.3],
+        ? [-SIDE_PILE_ROW_X, 0.08, -4.3]
+        : [-SIDE_PILE_ROW_X, 0.08, -3.3],
     );
   }
-  const faceAngle =
-    podPresentation === "kitchen"
-      ? KITCHEN_SIDE_SEAT_ANGLE
-      : INWARD_SIDE_SEAT_ANGLE;
+  const faceAngle = CARDINAL_SIDE_SEAT_ANGLE;
   return arenaZoneRow(
     faceAngle,
     podPresentation === "kitchen"
-      ? [7.6, 0.08, 3]
-      : [6.3, 0.08, 2.55],
+      ? [SIDE_PILE_ROW_X, 0.08, 3]
+      : [SIDE_PILE_ROW_X, 0.08, 2.55],
   );
 }
 
@@ -328,9 +322,9 @@ function podSeatFrame(
       faceAngle: 0,
       attackVector: [0, -1],
       centers: {
-        creatures: [0, 0],
-        support: [-1.8, LOCAL_BACK_ROW_Z],
-        lands: [1.8, LOCAL_BACK_ROW_Z],
+        creatures: [0, -0.3],
+        support: [-1.22, LOCAL_BACK_ROW_Z],
+        lands: [1.22, LOCAL_BACK_ROW_Z],
       },
       widths: POD_LOCAL_WIDTHS,
     };
@@ -339,9 +333,9 @@ function podSeatFrame(
     const widths =
       podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
     const centers: Record<ArenaLane, [number, number]> = {
-      creatures: [0, -2.3],
-      support: [-2.6, -4.75],
-      lands: [0.8, -4.75],
+      creatures: [0, -2.42],
+      support: [-1.22, -4.55],
+      lands: [1.22, -4.55],
     };
     return {
       faceAngle: Math.PI,
@@ -350,23 +344,18 @@ function podSeatFrame(
       widths,
     };
   }
-  const sideAngle =
-    podPresentation === "kitchen"
-      ? KITCHEN_SIDE_SEAT_ANGLE
-      : INWARD_SIDE_SEAT_ANGLE;
-  return sideSeatFrame(seat, sideAngle, podPresentation);
+  return sideSeatFrame(seat, CARDINAL_SIDE_SEAT_ANGLE);
 }
 
 function sideSeatFrame(
   seat: Extract<ArenaSeat, "left" | "right">,
   sideAngle: number,
-  podPresentation: ArenaPodPresentation,
 ): ArenaSeatFrame {
   const side = seat === "left" ? -1 : 1;
   const faceAngle = side * sideAngle;
-  const backRowX = side * (podPresentation === "kitchen" ? 5.45 : 5.35);
+  const backRowX = side * SIDE_BACK_ROW_X;
   const centers: Record<ArenaLane, [number, number]> = {
-    creatures: [side * 3.95, 0],
+    creatures: [side * SIDE_CREATURE_CENTER_X, 0],
     support: [backRowX, -side * SIDE_ROW_SPLIT],
     lands: [backRowX, side * SIDE_ROW_SPLIT],
   };

@@ -11,6 +11,7 @@ import {
   spreadPositions,
   type ArenaPlacement,
   type ArenaSeat,
+  type ArenaLaneZoneLayout,
 } from "../arenaLayout.ts";
 import type { GroupedPermanent } from "../../../viewmodel/battlefieldProps.ts";
 import type { PlayerBattlefieldView } from "../../../viewmodel/gameStateView.ts";
@@ -149,6 +150,86 @@ describe("assignArenaOpponentSeats", () => {
 });
 
 describe("four-player pod footprint", () => {
+  it.each(["inward", "kitchen"] as const)(
+    "keeps every player's %s playable rectangles disjoint",
+    (presentation) => {
+      const seats: ArenaSeat[] = ["local", "far", "left", "right"];
+      const zones = seats.flatMap((seat) =>
+        arenaLaneZoneLayouts(seat, "pod", presentation).map((zone) => ({
+          seat,
+          zone,
+        })),
+      );
+      const overlaps: string[] = [];
+
+      for (let leftIndex = 0; leftIndex < zones.length; leftIndex += 1) {
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < zones.length;
+          rightIndex += 1
+        ) {
+          const left = zones[leftIndex];
+          const right = zones[rightIndex];
+          if (!zonesHaveVisualPadding(left.zone, right.zone)) {
+            overlaps.push(
+              JSON.stringify({
+              left: { seat: left.seat, lane: left.zone.lane },
+              right: { seat: right.seat, lane: right.zone.lane },
+              }),
+            );
+          }
+        }
+      }
+
+      expect(overlaps).toEqual([]);
+    },
+  );
+
+  it.each(["inward", "kitchen"] as const)(
+    "keeps every %s pile footprint outside all playable rectangles",
+    (presentation) => {
+      const seats: ArenaSeat[] = ["local", "far", "left", "right"];
+      const playableZones = seats.flatMap((seat) =>
+        arenaLaneZoneLayouts(seat, "pod", presentation).map((zone) => ({
+          seat,
+          zone,
+        })),
+      );
+      const piles = seats.flatMap((seat) => {
+        const layout = arenaZoneLayout(seat, "pod", presentation);
+        return (["library", "graveyard", "exile"] as const).map((zone) => ({
+          seat,
+          zone,
+          rectangle: pileRectangle(layout[zone], layout.faceAngle),
+        }));
+      });
+      const overlaps: string[] = [];
+
+      for (const pile of piles) {
+        for (const playable of playableZones) {
+          if (
+            !rectanglesHaveVisualPadding(
+              pile.rectangle,
+              zoneRectangle(playable.zone),
+            )
+          ) {
+            overlaps.push(
+              JSON.stringify({
+                pile: { seat: pile.seat, zone: pile.zone },
+                playable: {
+                  seat: playable.seat,
+                  lane: playable.zone.lane,
+                },
+              }),
+            );
+          }
+        }
+      }
+
+      expect(overlaps).toEqual([]);
+    },
+  );
+
   it.each(["inward", "kitchen"] as const)(
     "keeps the local %s support and land row clear of the near-edge nameplate",
     (presentation) => {
@@ -372,7 +453,7 @@ describe("four-player pod footprint", () => {
     },
   );
 
-  it("points diagonal side seats toward the center and local battlefield", () => {
+  it("keeps adjacent side seats perpendicular in the inward presentation", () => {
     const view = singlePermanentInEachLane();
     const left = layoutArenaSeat(view, "left", "pod");
     const right = layoutArenaSeat(view, "right", "pod");
@@ -397,8 +478,10 @@ describe("four-player pod footprint", () => {
     );
     expect(leftByLane.creatures.attackVector[0]).toBeGreaterThan(0);
     expect(rightByLane.creatures.attackVector[0]).toBeLessThan(0);
-    expect(leftByLane.creatures.attackVector[1]).toBeGreaterThan(0);
-    expect(rightByLane.creatures.attackVector[1]).toBeGreaterThan(0);
+    expect(leftByLane.creatures.attackVector[1]).toBeCloseTo(0);
+    expect(rightByLane.creatures.attackVector[1]).toBeCloseTo(0);
+    expect(leftByLane.creatures.faceAngle).toBe(-Math.PI / 2);
+    expect(rightByLane.creatures.faceAngle).toBe(Math.PI / 2);
   });
 
   it("uses cardinal side seats in the kitchen-table alternative", () => {
@@ -476,6 +559,72 @@ function cardsHaveVisualPadding(
       + rightRect.halfDepth * Math.abs(dot(rightRect.axes[1], axis));
     return centerDistance >= leftRadius + rightRadius + padding;
   });
+}
+
+function zonesHaveVisualPadding(
+  left: ArenaLaneZoneLayout,
+  right: ArenaLaneZoneLayout,
+): boolean {
+  return rectanglesHaveVisualPadding(
+    zoneRectangle(left),
+    zoneRectangle(right),
+  );
+}
+
+interface TableRectangle {
+  position: [number, number];
+  axes: [[number, number], [number, number]];
+  halfWidth: number;
+  halfDepth: number;
+}
+
+function rectanglesHaveVisualPadding(
+  leftRect: TableRectangle,
+  rightRect: TableRectangle,
+): boolean {
+  const padding = 0.12;
+  const centerDelta: [number, number] = [
+    rightRect.position[0] - leftRect.position[0],
+    rightRect.position[1] - leftRect.position[1],
+  ];
+
+  return [...leftRect.axes, ...rightRect.axes].some((axis) => {
+    const centerDistance = Math.abs(dot(centerDelta, axis));
+    const leftRadius =
+      leftRect.halfWidth * Math.abs(dot(leftRect.axes[0], axis))
+      + leftRect.halfDepth * Math.abs(dot(leftRect.axes[1], axis));
+    const rightRadius =
+      rightRect.halfWidth * Math.abs(dot(rightRect.axes[0], axis))
+      + rightRect.halfDepth * Math.abs(dot(rightRect.axes[1], axis));
+    return centerDistance >= leftRadius + rightRadius + padding;
+  });
+}
+
+function zoneRectangle(zone: ArenaLaneZoneLayout) {
+  return {
+    position: [zone.position[0], zone.position[2]] as [number, number],
+    axes: [
+      [Math.cos(zone.faceAngle), -Math.sin(zone.faceAngle)],
+      [Math.sin(zone.faceAngle), Math.cos(zone.faceAngle)],
+    ] as [[number, number], [number, number]],
+    halfWidth: zone.width / 2,
+    halfDepth: zone.depth / 2,
+  };
+}
+
+function pileRectangle(
+  position: [number, number, number],
+  faceAngle: number,
+): TableRectangle {
+  return {
+    position: [position[0], position[2]],
+    axes: [
+      [Math.cos(faceAngle), -Math.sin(faceAngle)],
+      [Math.sin(faceAngle), Math.cos(faceAngle)],
+    ],
+    halfWidth: ARENA_CARD_WIDTH / 2,
+    halfDepth: ARENA_CARD_DEPTH / 2,
+  };
 }
 
 function cardRectangle(placement: ArenaPlacement, tapped: boolean) {
