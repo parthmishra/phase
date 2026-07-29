@@ -59,8 +59,8 @@ describe("arenaZoneLayout", () => {
   );
 
   it("pushes the top library farther toward the far edge", () => {
-    expect(arenaZoneLayout("far", "pod", "inward").library[2]).toBe(-5.05);
-    expect(arenaZoneLayout("far", "pod", "kitchen").library[2]).toBe(-4.75);
+    expect(arenaZoneLayout("far", "pod", "inward").library[2]).toBe(-5.35);
+    expect(arenaZoneLayout("far", "pod", "kitchen").library[2]).toBe(-5.35);
   });
 
   it("uses square side-seat orientation for the kitchen-table view", () => {

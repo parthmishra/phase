@@ -259,8 +259,8 @@ function ArenaCameraRig({
       : new THREE.Vector3(0, 0.8, 0.6).normalize();
     const halfFov = (ARENA_CAMERA_FOV * Math.PI) / 360;
     const fitRadius = compact
-      ? tableLayout === "pod" ? 9.75 : 9.2
-      : tableLayout === "pod" ? 9 : 8.25;
+      ? tableLayout === "pod" ? 10.05 : 9.2
+      : tableLayout === "pod" ? 9.25 : 8.25;
     const horizontalDistance = fitRadius / (Math.tan(halfFov) * aspect);
     const verticalDistance = fitRadius / Math.tan(halfFov);
     const distance = Math.max(

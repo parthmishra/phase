@@ -7,8 +7,8 @@ export type ArenaTableLayout = "duel" | "pod";
 export type ArenaPodPresentation = "inward" | "kitchen";
 export type ArenaLane = "creatures" | "support" | "lands";
 
-export const ARENA_PERMANENT_WIDTH = 1.28;
-export const ARENA_PERMANENT_DEPTH = 1.78;
+export const ARENA_CARD_WIDTH = 1.3;
+export const ARENA_CARD_DEPTH = 1.82;
 
 export interface ArenaSeatAssignment {
   playerId: PlayerId;
@@ -49,32 +49,32 @@ interface ArenaSeatFrame {
 
 const INWARD_SIDE_SEAT_ANGLE = Math.PI * 0.555;
 const KITCHEN_SIDE_SEAT_ANGLE = Math.PI / 2;
-const LANE_DEPTH = 1.5;
-const LANE_SPACING = 1.6;
-const LANE_EDGE_PADDING = 0.1;
+const LANE_DEPTH = 1.98;
+const LANE_SPACING = 2.08;
+const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
 const CARD_ROTATION_FOOTPRINT = Math.max(
-  ARENA_PERMANENT_WIDTH,
-  ARENA_PERMANENT_DEPTH,
+  ARENA_CARD_WIDTH,
+  ARENA_CARD_DEPTH,
 );
 const ZONE_PILE_GAP = 1.45;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
   creatures: 9.4,
-  support: 8.8,
-  lands: 5.8,
+  support: 4,
+  lands: 4,
 };
 
 const POD_LOCAL_WIDTHS: Record<ArenaLane, number> = {
   creatures: 6,
-  support: 5.8,
-  lands: 5.5,
+  support: 3.2,
+  lands: 3.2,
 };
 
 const POD_FAR_WIDTHS: Record<ArenaLane, number> = {
   creatures: 5.2,
-  support: 4.6,
-  lands: 3.8,
+  support: 3,
+  lands: 3,
 };
 
 const POD_SIDE_WIDTHS: Record<ArenaLane, number> = {
@@ -148,8 +148,8 @@ export function arenaZoneLayout(
       ? arenaZoneRow(
           Math.PI,
           podPresentation === "kitchen"
-            ? [5.7, 0.08, -4.75]
-            : [3.5, 0.08, -5.05],
+            ? [5.7, 0.08, -5.35]
+            : [5.4, 0.08, -5.35],
         )
       : {
           faceAngle: Math.PI,
@@ -249,7 +249,7 @@ export function fitArenaLaneCards(
 
   const innerWidth = Math.max(laneWidth - LANE_EDGE_PADDING * 2, 0);
   const depthScale = Math.max(
-    (LANE_DEPTH - LANE_EDGE_PADDING * 2) / ARENA_PERMANENT_DEPTH,
+    (LANE_DEPTH - LANE_EDGE_PADDING * 2) / ARENA_CARD_DEPTH,
     0,
   );
   const gap =
@@ -289,9 +289,9 @@ function arenaSeatFrame(
       faceAngle: 0,
       attackVector: [0, -1],
       centers: {
-        creatures: [0, 0.35],
-        support: [0, 1.15],
-        lands: [0, 2],
+        creatures: [0, 0.2],
+        support: [-2.4, 2.5],
+        lands: [2.4, 2.5],
       },
       widths: DUEL_WIDTHS,
     };
@@ -301,9 +301,9 @@ function arenaSeatFrame(
       faceAngle: Math.PI,
       attackVector: [0, 1],
       centers: {
-        creatures: [0, -0.35],
-        support: [0, -1.15],
-        lands: [0, -2],
+        creatures: [0, -1.9],
+        support: [2.4, -4.2],
+        lands: [-2.4, -4.2],
       },
       widths: DUEL_WIDTHS,
     };
@@ -316,21 +316,39 @@ function podSeatFrame(
   podPresentation: ArenaPodPresentation,
 ): ArenaSeatFrame {
   if (seat === "local") {
-    return seatFrameFromCenter(0, [0, 1.15], POD_LOCAL_WIDTHS);
+    return {
+      faceAngle: 0,
+      attackVector: [0, -1],
+      centers: {
+        creatures: [0, 0],
+        support: [-1.8, 2.35],
+        lands: [1.8, 2.35],
+      },
+      widths: POD_LOCAL_WIDTHS,
+    };
   }
   if (seat === "far") {
     const widths =
       podPresentation === "kitchen" ? POD_LOCAL_WIDTHS : POD_FAR_WIDTHS;
-    return seatFrameFromCenter(Math.PI, [0, -3.75], widths);
+    return {
+      faceAngle: Math.PI,
+      attackVector: [0, 1],
+      centers: {
+        creatures: [0, -2.3],
+        support: [-2.6, -4.75],
+        lands: [0.8, -4.75],
+      },
+      widths,
+    };
   }
   const sideAngle =
     podPresentation === "kitchen"
       ? KITCHEN_SIDE_SEAT_ANGLE
       : INWARD_SIDE_SEAT_ANGLE;
   if (seat === "left") {
-    return seatFrameFromCenter(-sideAngle, [-5.65, -0.35], POD_SIDE_WIDTHS);
+    return seatFrameFromCenter(-sideAngle, [-6, -0.35], POD_SIDE_WIDTHS);
   }
-  return seatFrameFromCenter(sideAngle, [5.65, -0.35], POD_SIDE_WIDTHS);
+  return seatFrameFromCenter(sideAngle, [6, -0.35], POD_SIDE_WIDTHS);
 }
 
 function seatFrameFromCenter(

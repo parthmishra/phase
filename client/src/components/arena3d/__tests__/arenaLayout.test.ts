@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ARENA_PERMANENT_DEPTH,
-  ARENA_PERMANENT_WIDTH,
+  ARENA_CARD_DEPTH,
+  ARENA_CARD_WIDTH,
   arenaLaneZoneLayouts,
   assignArenaOpponentSeats,
   fitArenaLaneCards,
   layoutArenaSeat,
   spreadPositions,
-  type ArenaLaneZoneLayout,
+  type ArenaPlacement,
   type ArenaSeat,
 } from "../arenaLayout.ts";
 import type { GroupedPermanent } from "../../../viewmodel/battlefieldProps.ts";
@@ -41,6 +41,16 @@ function crowdedBattlefieldView(): PlayerBattlefieldView {
   };
 }
 
+function battlefieldWithLaneCount(count: number): PlayerBattlefieldView {
+  return {
+    creatures: Array.from({ length: count }, (_, index) => permanent(index + 1)),
+    support: Array.from({ length: count }, (_, index) => permanent(index + 11)),
+    lands: Array.from({ length: count }, (_, index) => permanent(index + 21)),
+    planeswalkers: [],
+    other: [],
+  };
+}
+
 describe("spreadPositions", () => {
   it("centers a single permanent", () => {
     expect(spreadPositions(1, 8)).toEqual([0]);
@@ -62,13 +72,17 @@ describe("spreadPositions", () => {
 
 describe("fitArenaLaneCards", () => {
   it("uses portrait proportions for untapped battlefield cards", () => {
-    expect(ARENA_PERMANENT_DEPTH).toBeGreaterThan(ARENA_PERMANENT_WIDTH);
+    expect(ARENA_CARD_DEPTH).toBeGreaterThan(ARENA_CARD_WIDTH);
+  });
+
+  it("keeps an uncrowded battlefield card at the shared zone-card size", () => {
+    expect(fitArenaLaneCards(1, 3.2).cardScale).toBe(1);
   });
 
   it("shrinks crowded cards while preserving a visible gap", () => {
     const fit = fitArenaLaneCards(7, 3.2);
     const rotationFootprint =
-      Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH) * fit.cardScale;
+      Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH) * fit.cardScale;
 
     expect(fit.cardScale).toBeLessThan(1);
     expect(fit.gap).toBeGreaterThan(0);
@@ -82,7 +96,7 @@ describe("fitArenaLaneCards", () => {
   it("keeps even a very crowded lane non-overlapping", () => {
     const fit = fitArenaLaneCards(40, 3.2);
     const rotationFootprint =
-      Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH) * fit.cardScale;
+      Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH) * fit.cardScale;
     const occupiedWidth =
       rotationFootprint * 40 + fit.gap * (fit.offsets.length - 1);
 
@@ -134,21 +148,57 @@ describe("assignArenaOpponentSeats", () => {
 });
 
 describe("four-player pod footprint", () => {
-  it("keeps every seat in a non-overlapping rectangular footprint", () => {
-    const seats: ArenaSeat[] = ["local", "far", "left", "right"];
-    const bounds = Object.fromEntries(
-      seats.map((seat) => [
-        seat,
-        zoneBounds(arenaLaneZoneLayouts(seat, "pod", "inward")),
-      ]),
-    );
+  it.each(["inward", "kitchen"] as const)(
+    "keeps sparse full-size cards separated across %s seat boundaries",
+    (presentation) => {
+      const seatViews: [ArenaSeat, PlayerBattlefieldView][] = [
+        ["local", battlefieldWithLaneCount(3)],
+        ["far", battlefieldWithLaneCount(3)],
+        ["left", battlefieldWithLaneCount(1)],
+        ["right", battlefieldWithLaneCount(1)],
+      ];
+      const placements = seatViews.flatMap(([seat, view]) =>
+        layoutArenaSeat(view, seat, "pod", presentation)
+          .map((placement) => ({ placement, seat })),
+      );
 
-    expect(bounds.left.maxX).toBeLessThan(bounds.local.minX);
-    expect(bounds.right.minX).toBeGreaterThan(bounds.local.maxX);
-    expect(bounds.left.maxX).toBeLessThan(bounds.far.minX);
-    expect(bounds.right.minX).toBeGreaterThan(bounds.far.maxX);
-    expect(bounds.far.maxZ).toBeLessThan(bounds.local.minZ);
-  });
+      for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < placements.length;
+          rightIndex += 1
+        ) {
+          const left = placements[leftIndex];
+          const right = placements[rightIndex];
+          if (left.seat === right.seat) continue;
+          for (const leftTapped of [false, true]) {
+            for (const rightTapped of [false, true]) {
+              expect(
+                cardsHaveVisualPadding(
+                  left.placement,
+                  leftTapped,
+                  right.placement,
+                  rightTapped,
+                ),
+                JSON.stringify({
+                  left: {
+                    seat: left.seat,
+                    lane: left.placement.lane,
+                    tapped: leftTapped,
+                  },
+                  right: {
+                    seat: right.seat,
+                    lane: right.placement.lane,
+                    tapped: rightTapped,
+                  },
+                }),
+              ).toBe(true);
+            }
+          }
+        }
+      }
+    },
+  );
 
   it.each(["inward", "kitchen"] as const)(
     "keeps crowded card edges inside every %s lane rectangle",
@@ -170,12 +220,12 @@ describe("four-player pod footprint", () => {
             - deltaZ * Math.sin(zone.faceAngle);
           expect(
             Math.abs(tangentOffset)
-              + Math.max(ARENA_PERMANENT_WIDTH, ARENA_PERMANENT_DEPTH)
+              + Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH)
                 * placement.cardScale
                 / 2,
           ).toBeLessThanOrEqual(zone.width / 2 + Number.EPSILON);
           expect(
-            ARENA_PERMANENT_DEPTH * placement.cardScale,
+            ARENA_CARD_DEPTH * placement.cardScale,
           ).toBeLessThan(zone.depth);
         }
       }
@@ -228,27 +278,81 @@ describe("four-player pod footprint", () => {
   });
 });
 
-function zoneBounds(zones: ArenaLaneZoneLayout[]) {
-  return zones.reduce(
-    (bounds, zone) => {
-      const halfX =
-        Math.abs(Math.cos(zone.faceAngle)) * zone.width / 2
-        + Math.abs(Math.sin(zone.faceAngle)) * zone.depth / 2;
-      const halfZ =
-        Math.abs(Math.sin(zone.faceAngle)) * zone.width / 2
-        + Math.abs(Math.cos(zone.faceAngle)) * zone.depth / 2;
-      return {
-        minX: Math.min(bounds.minX, zone.position[0] - halfX),
-        maxX: Math.max(bounds.maxX, zone.position[0] + halfX),
-        minZ: Math.min(bounds.minZ, zone.position[2] - halfZ),
-        maxZ: Math.max(bounds.maxZ, zone.position[2] + halfZ),
-      };
-    },
-    {
-      minX: Number.POSITIVE_INFINITY,
-      maxX: Number.NEGATIVE_INFINITY,
-      minZ: Number.POSITIVE_INFINITY,
-      maxZ: Number.NEGATIVE_INFINITY,
-    },
-  );
+describe("two-player battlefield footprint", () => {
+  it("keeps full-size cards separated across both duel seats", () => {
+    const seatViews: [ArenaSeat, PlayerBattlefieldView][] = [
+      ["local", battlefieldWithLaneCount(3)],
+      ["far", battlefieldWithLaneCount(3)],
+    ];
+    const placements = seatViews.flatMap(([seat, view]) =>
+      layoutArenaSeat(view, seat, "duel")
+        .map((placement) => ({ placement, seat })),
+    );
+
+    for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < placements.length;
+        rightIndex += 1
+      ) {
+        const left = placements[leftIndex];
+        const right = placements[rightIndex];
+        if (left.seat === right.seat) continue;
+        for (const leftTapped of [false, true]) {
+          for (const rightTapped of [false, true]) {
+            expect(
+              cardsHaveVisualPadding(
+                left.placement,
+                leftTapped,
+                right.placement,
+                rightTapped,
+              ),
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});
+
+function cardsHaveVisualPadding(
+  left: ArenaPlacement,
+  leftTapped: boolean,
+  right: ArenaPlacement,
+  rightTapped: boolean,
+): boolean {
+  const padding = 0.04;
+  const leftRect = cardRectangle(left, leftTapped);
+  const rightRect = cardRectangle(right, rightTapped);
+  const centerDelta: [number, number] = [
+    right.position[0] - left.position[0],
+    right.position[2] - left.position[2],
+  ];
+
+  return [...leftRect.axes, ...rightRect.axes].some((axis) => {
+    const centerDistance = Math.abs(dot(centerDelta, axis));
+    const leftRadius =
+      leftRect.halfWidth * Math.abs(dot(leftRect.axes[0], axis))
+      + leftRect.halfDepth * Math.abs(dot(leftRect.axes[1], axis));
+    const rightRadius =
+      rightRect.halfWidth * Math.abs(dot(rightRect.axes[0], axis))
+      + rightRect.halfDepth * Math.abs(dot(rightRect.axes[1], axis));
+    return centerDistance >= leftRadius + rightRadius + padding;
+  });
+}
+
+function cardRectangle(placement: ArenaPlacement, tapped: boolean) {
+  const angle = placement.faceAngle + (tapped ? Math.PI / 2 : 0);
+  return {
+    axes: [
+      [Math.cos(angle), -Math.sin(angle)],
+      [Math.sin(angle), Math.cos(angle)],
+    ] as [[number, number], [number, number]],
+    halfWidth: ARENA_CARD_WIDTH * placement.cardScale / 2,
+    halfDepth: ARENA_CARD_DEPTH * placement.cardScale / 2,
+  };
+}
+
+function dot(left: [number, number], right: [number, number]): number {
+  return left[0] * right[0] + left[1] * right[1];
 }

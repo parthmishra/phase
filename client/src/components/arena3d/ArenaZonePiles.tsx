@@ -10,6 +10,8 @@ import { useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerZoneIds } from "../../viewmodel/gameStateView.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
 import {
+  ARENA_CARD_DEPTH,
+  ARENA_CARD_WIDTH,
   arenaZoneLayout,
   type ArenaPodPresentation,
   type ArenaSeat,
@@ -27,9 +29,6 @@ interface ArenaZonePilesProps {
   podPresentation?: ArenaPodPresentation;
   onViewZone?: (zone: ViewableZone, playerId: PlayerId) => void;
 }
-
-const CARD_WIDTH = 1.3;
-const CARD_HEIGHT = 1.82;
 
 export function ArenaZonePiles({
   playerId,
@@ -154,7 +153,9 @@ function ArenaCardZone({
             castShadow
             receiveShadow
           >
-            <boxGeometry args={[CARD_WIDTH, stackHeight, CARD_HEIGHT]} />
+            <boxGeometry
+              args={[ARENA_CARD_WIDTH, stackHeight, ARENA_CARD_DEPTH]}
+            />
             <meshStandardMaterial
               color={stack ? "#111820" : "#22262b"}
               roughness={0.72}
@@ -165,7 +166,7 @@ function ArenaCardZone({
             rotation={[-Math.PI / 2, 0, 0]}
             position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
           >
-            <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+            <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
             <meshBasicMaterial
               key={texture?.uuid ?? "arena-zone-loading"}
               map={texture}
@@ -181,7 +182,7 @@ function ArenaCardZone({
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, 0.006, 0]}
         >
-          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+          <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
           <meshBasicMaterial
             map={emptyTexture}
             transparent
@@ -230,7 +231,7 @@ function ArenaExileZone({
       }}
     >
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+        <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
         <meshStandardMaterial
           color="#17142b"
           emissive="#4b3490"
