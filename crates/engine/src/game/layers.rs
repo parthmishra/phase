@@ -949,6 +949,8 @@ fn combat_effect_condition_controller(
 
 /// Resolves the player named by "you" for a condition on either a printed or
 /// resolution-created continuous effect.
+// CR 109.5: "you"/"your" on a static ability refers to the current controller
+// of its source, while a resolved spell or ability retains its controller.
 fn condition_controller(
     state: &GameState,
     transient_id: Option<u64>,
@@ -5990,7 +5992,7 @@ fn apply_continuous_effect_filtered(
         let condition_uses_recipient = effect
             .condition
             .as_ref()
-            .is_some_and(|condition| condition_uses_recipient_context(condition));
+            .is_some_and(condition_uses_recipient_context);
         let non_recipient_condition_passes = effect.condition.as_ref().is_none_or(|condition| {
             condition_uses_recipient
                 || evaluate_condition(state, condition, condition_controller, effect.source_id)
