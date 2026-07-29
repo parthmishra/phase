@@ -927,27 +927,41 @@ pub(crate) fn active_effect_condition_controller(
     state: &GameState,
     effect: &ActiveContinuousEffect,
 ) -> PlayerId {
-    if effect.transient_id.is_some() {
-        effect.controller
-    } else {
-        state
-            .objects
-            .get(&effect.source_id)
-            .map_or(effect.controller, |source| source.controller)
-    }
+    condition_controller(
+        state,
+        effect.transient_id,
+        effect.controller,
+        effect.source_id,
+    )
 }
 
 fn combat_effect_condition_controller(
     state: &GameState,
     effect: &ActiveCombatAssignmentRuleEffect,
 ) -> PlayerId {
-    if effect.transient_id.is_some() {
-        effect.controller
+    condition_controller(
+        state,
+        effect.transient_id,
+        effect.controller,
+        effect.source_id,
+    )
+}
+
+/// Resolves the player named by "you" for a condition on either a printed or
+/// resolution-created continuous effect.
+fn condition_controller(
+    state: &GameState,
+    transient_id: Option<u64>,
+    controller: PlayerId,
+    source_id: ObjectId,
+) -> PlayerId {
+    if transient_id.is_some() {
+        controller
     } else {
         state
             .objects
-            .get(&effect.source_id)
-            .map_or(effect.controller, |source| source.controller)
+            .get(&source_id)
+            .map_or(controller, |source| source.controller)
     }
 }
 
@@ -5970,11 +5984,17 @@ fn apply_continuous_effect_filtered(
         // `MustAttackAwayFromSource` affected filter intact
         // (`effects/effect.rs`) — see the T13 regression
         // (`affected_population_does_not_follow_a_stolen_source`).
-        let ctx = if effect.transient_id.is_some() {
-            FilterContext::from_source_with_controller(effect.source_id, effect.controller)
-        } else {
-            FilterContext::from_source(state, effect.source_id)
-        };
+        let condition_controller = active_effect_condition_controller(state, effect);
+        let ctx =
+            FilterContext::from_source_with_controller(effect.source_id, condition_controller);
+        let condition_uses_recipient = effect
+            .condition
+            .as_ref()
+            .is_some_and(|condition| condition_uses_recipient_context(condition));
+        let non_recipient_condition_passes = effect.condition.as_ref().is_none_or(|condition| {
+            condition_uses_recipient
+                || evaluate_condition(state, condition, condition_controller, effect.source_id)
+        });
         newly_affected_ids = scan_ids
             .iter()
             // Incremental fast path: re-apply only to the freshly-entered objects.
@@ -5983,15 +6003,17 @@ fn apply_continuous_effect_filtered(
             .filter(|&&id| restrict_to.is_none_or(|ids| ids.contains(&id)))
             .filter(|&&id| matches_target_filter(state, id, &effect.affected_filter, &ctx))
             .filter(|&&id| {
-                effect.condition.as_ref().is_none_or(|condition| {
-                    evaluate_condition_with_recipient(
-                        state,
-                        condition,
-                        active_effect_condition_controller(state, effect),
-                        effect.source_id,
-                        id,
-                    )
-                })
+                non_recipient_condition_passes
+                    && effect.condition.as_ref().is_none_or(|condition| {
+                        !condition_uses_recipient
+                            || evaluate_condition_with_recipient(
+                                state,
+                                condition,
+                                condition_controller,
+                                effect.source_id,
+                                id,
+                            )
+                    })
             })
             .copied()
             .collect();

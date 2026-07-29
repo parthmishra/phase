@@ -2,6 +2,7 @@ use engine::game::keywords::has_keyword;
 use engine::game::layers::flush_layers;
 use engine::game::mana_payment;
 use engine::game::scenario::{GameRunner, GameScenario, P0, P1};
+use engine::game::turns::advance_phase;
 use engine::types::ability::{ContinuousModification, Duration, TargetFilter};
 use engine::types::identifiers::ObjectId;
 use engine::types::keywords::Keyword;
@@ -122,4 +123,57 @@ fn ozai_unspent_mana_gate_tracks_live_controller_and_cast_payment() {
         has_keyword(&runner.state().objects[&ozai], &Keyword::Indestructible,),
         "P1's six mana enables the stolen Ozai"
     );
+}
+
+#[test]
+fn ozai_recolors_unspent_mana_when_entering_cleanup() {
+    // CR 500.5 + CR 614.1a: Ozai replaces the loss of its controller's
+    // unspent mana at the cleanup-step boundary, preserving the six-mana gate.
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::End);
+    let ozai = scenario
+        .add_creature(P0, "Ozai, the Phoenix King", 4, 4)
+        .from_oracle_text_with_keywords(&["trample", "firebending", "haste"], OZAI_ORACLE)
+        .id();
+    let mut runner = scenario.build();
+
+    produce_blue(&mut runner, ozai, P0, 6);
+    assert!(has_keyword_after_layers(
+        &mut runner,
+        ozai,
+        &Keyword::Flying
+    ));
+    assert!(has_keyword_after_layers(
+        &mut runner,
+        ozai,
+        &Keyword::Indestructible
+    ));
+
+    advance_phase(runner.state_mut(), &mut Vec::new());
+
+    assert_eq!(runner.state().phase, Phase::Cleanup);
+    assert_eq!(runner.state().players[P0.0 as usize].mana_pool.total(), 6);
+    assert_eq!(
+        runner.state().players[P0.0 as usize]
+            .mana_pool
+            .count_color(ManaType::Red),
+        6,
+        "Ozai turns would-be-lost mana red rather than letting it empty"
+    );
+    assert_eq!(
+        runner.state().players[P0.0 as usize]
+            .mana_pool
+            .count_color(ManaType::Blue),
+        0
+    );
+    assert!(has_keyword_after_layers(
+        &mut runner,
+        ozai,
+        &Keyword::Flying
+    ));
+    assert!(has_keyword_after_layers(
+        &mut runner,
+        ozai,
+        &Keyword::Indestructible
+    ));
 }
