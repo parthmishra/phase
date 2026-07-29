@@ -162,7 +162,12 @@ export function arenaZoneLayout(
     podPresentation === "kitchen"
       ? KITCHEN_SIDE_SEAT_ANGLE
       : INWARD_SIDE_SEAT_ANGLE;
-  return arenaZoneRow(faceAngle, [6.3, 0.08, -2.8]);
+  return {
+    faceAngle,
+    library: [4.85, 0.08, -2.8],
+    graveyard: [6.3, 0.08, -2.8],
+    exile: [3.4, 0.08, -2.8],
+  };
 }
 
 function arenaZoneRow(

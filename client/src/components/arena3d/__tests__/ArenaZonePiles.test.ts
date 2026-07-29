@@ -16,14 +16,17 @@ describe("arenaZoneLayout", () => {
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 
-  it("mirrors the side libraries while pushing the left anchor farther away", () => {
+  it("keeps the right library closer to the local player than its graveyard", () => {
     const left = arenaZoneLayout("left", "pod");
     const right = arenaZoneLayout("right", "pod");
 
     expect(left.library[2]).toBeLessThan(0);
     expect(right.library[2]).toBeLessThan(0);
-    expect(left.library[0]).toBe(-right.library[0]);
     expect(left.library[2]).toBeLessThan(right.library[2]);
+    expect(Math.abs(right.library[0])).toBeLessThan(
+      Math.abs(right.graveyard[0]),
+    );
+    expect(right.graveyard[0]).toBeGreaterThan(right.library[0]);
     expect(left.faceAngle).toBe(-Math.PI * 0.555);
     expect(right.faceAngle).toBe(Math.PI * 0.555);
   });
@@ -32,11 +35,9 @@ describe("arenaZoneLayout", () => {
     ["local", "inward"],
     ["far", "inward"],
     ["left", "inward"],
-    ["right", "inward"],
     ["local", "kitchen"],
     ["far", "kitchen"],
     ["left", "kitchen"],
-    ["right", "kitchen"],
   ] as const)(
     "places the %s graveyard to that player's right in %s mode",
     (seat, presentation) => {
