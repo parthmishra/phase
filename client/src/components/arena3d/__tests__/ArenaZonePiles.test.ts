@@ -16,17 +16,23 @@ describe("arenaZoneLayout", () => {
     expect(opponent.faceAngle).toBe(Math.PI);
   });
 
-  it("keeps the right library closer to the local player than its graveyard", () => {
+  it.each(["inward", "kitchen"] as const)(
+    "places the right library at the near corner in %s mode",
+    (presentation) => {
+      const right = arenaZoneLayout("right", "pod", presentation);
+
+      expect(right.library[2]).toBeGreaterThan(0);
+      expect(right.graveyard[2]).toBeLessThan(right.library[2]);
+      expect(right.graveyard[0]).toBeLessThanOrEqual(right.library[0]);
+    },
+  );
+
+  it("keeps the left library farther away than the right library", () => {
     const left = arenaZoneLayout("left", "pod");
     const right = arenaZoneLayout("right", "pod");
 
     expect(left.library[2]).toBeLessThan(0);
-    expect(right.library[2]).toBeLessThan(0);
     expect(left.library[2]).toBeLessThan(right.library[2]);
-    expect(Math.abs(right.library[0])).toBeLessThan(
-      Math.abs(right.graveyard[0]),
-    );
-    expect(right.graveyard[0]).toBeGreaterThan(right.library[0]);
     expect(left.faceAngle).toBe(-Math.PI * 0.555);
     expect(right.faceAngle).toBe(Math.PI * 0.555);
   });
