@@ -5,16 +5,19 @@ import * as THREE from "three";
 import type { PlayerId } from "../../adapter/types.ts";
 import { usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
-import { useUiStore } from "../../stores/uiStore.ts";
 import {
   buildPlayerBattlefieldView,
   getOpponentIds,
-  resolveFocusedOpponent,
+  getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaTable } from "./ArenaTable.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
-import { layoutArenaSeat } from "./arenaLayout.ts";
+import {
+  assignArenaOpponentSeats,
+  layoutArenaSeat,
+  type ArenaTableLayout,
+} from "./arenaLayout.ts";
 
 const ARENA_CAMERA_FOV = 34;
 
@@ -39,41 +42,65 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
 ) {
   const gameState = useGameStore((state) => state.gameState);
   const perspectivePlayerId = usePerspectivePlayerId();
-  const focusedOpponent = useUiStore((state) => state.focusedOpponent);
   const opponents = useMemo(
     () => getOpponentIds(gameState, perspectivePlayerId),
     [gameState, perspectivePlayerId],
   );
-  const opponentId =
-    resolveFocusedOpponent(focusedOpponent, opponents) ?? opponents[0] ?? null;
+  const seatOrder = useMemo(
+    () =>
+      gameState?.seat_order
+      ?? gameState?.players.map((player) => player.id)
+      ?? [],
+    [gameState],
+  );
+  const tableLayout: ArenaTableLayout =
+    getSeatCount(gameState) > 2 ? "pod" : "duel";
+  const opponentSeats = useMemo(
+    () =>
+      assignArenaOpponentSeats(
+        seatOrder,
+        perspectivePlayerId,
+        opponents,
+      ),
+    [opponents, perspectivePlayerId, seatOrder],
+  );
   const playerView = useMemo(
     () => buildPlayerBattlefieldView(gameState, perspectivePlayerId),
     [gameState, perspectivePlayerId],
   );
-  const opponentView = useMemo(
+  const opponentViews = useMemo(
     () =>
-      opponentId == null
-        ? null
-        : buildPlayerBattlefieldView(gameState, opponentId),
-    [gameState, opponentId],
+      new Map(
+        opponentSeats.map(({ playerId }) => [
+          playerId,
+          buildPlayerBattlefieldView(gameState, playerId),
+        ]),
+      ),
+    [gameState, opponentSeats],
   );
   const placements = useMemo(
     () => [
-      ...layoutArenaSeat(playerView, "local"),
-      ...(opponentView ? layoutArenaSeat(opponentView, "opponent") : []),
+      ...layoutArenaSeat(playerView, "local", tableLayout),
+      ...opponentSeats.flatMap(({ playerId, seat }) => {
+        const view = opponentViews.get(playerId);
+        return view ? layoutArenaSeat(view, seat, tableLayout) : [];
+      }),
     ],
-    [opponentView, playerView],
+    [opponentSeats, opponentViews, playerView, tableLayout],
   );
 
   if (!gameState) return null;
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-visible">
+    <div
+      className="relative min-h-0 flex-1 overflow-visible"
+      data-arena-table-layout={tableLayout}
+    >
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex -translate-y-[calc(100%+0.4rem)] justify-center">
-        {props.oppHud}
+        <div className="contents pointer-events-auto">{props.oppHud}</div>
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center">
-        {props.playerHud}
+        <div className="contents pointer-events-auto">{props.playerHud}</div>
       </div>
 
       <div
@@ -95,7 +122,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           }}
           style={{ position: "absolute", inset: 0 }}
         >
-          <ArenaCameraRig />
+          <ArenaCameraRig tableLayout={tableLayout} />
           <fog attach="fog" args={["#0d1420", 24, 42]} />
           <ambientLight intensity={0.78} color="#dce7f5" />
           <hemisphereLight
@@ -124,15 +151,18 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           <ArenaZonePiles
             playerId={perspectivePlayerId}
             seat="local"
+            tableLayout={tableLayout}
             onViewZone={props.onViewZone}
           />
-          {opponentId != null && (
+          {opponentSeats.map(({ playerId, seat }) => (
             <ArenaZonePiles
-              playerId={opponentId}
-              seat="opponent"
+              key={playerId}
+              playerId={playerId}
+              seat={seat}
+              tableLayout={tableLayout}
               onViewZone={props.onViewZone}
             />
-          )}
+          ))}
           {placements.map((placement) => (
             <ArenaPermanent key={placement.objectId} {...placement} />
           ))}
@@ -143,7 +173,11 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
   );
 });
 
-function ArenaCameraRig() {
+function ArenaCameraRig({
+  tableLayout,
+}: {
+  tableLayout: ArenaTableLayout;
+}) {
   const { camera, size, invalidate } = useThree();
 
   useEffect(() => {
@@ -152,12 +186,14 @@ function ArenaCameraRig() {
     const compact = aspect < 1.35;
     const target = compact
       ? new THREE.Vector3(0, 0, 0.65)
-      : new THREE.Vector3(0, 0, 1.15);
+      : new THREE.Vector3(0, 0, tableLayout === "pod" ? 0.82 : 1.15);
     const direction = compact
       ? new THREE.Vector3(0, 0.86, 0.51).normalize()
       : new THREE.Vector3(0, 0.8, 0.6).normalize();
     const halfFov = (ARENA_CAMERA_FOV * Math.PI) / 360;
-    const fitRadius = compact ? 9.2 : 8.25;
+    const fitRadius = compact
+      ? tableLayout === "pod" ? 9.75 : 9.2
+      : tableLayout === "pod" ? 9 : 8.25;
     const horizontalDistance = fitRadius / (Math.tan(halfFov) * aspect);
     const verticalDistance = fitRadius / Math.tan(halfFov);
     const distance = Math.max(
@@ -172,7 +208,7 @@ function ArenaCameraRig() {
     perspective.updateProjectionMatrix();
     perspective.lookAt(target);
     invalidate();
-  }, [camera, invalidate, size.height, size.width]);
+  }, [camera, invalidate, size.height, size.width, tableLayout]);
 
   return null;
 }

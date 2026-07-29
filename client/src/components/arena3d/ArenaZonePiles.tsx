@@ -9,7 +9,11 @@ import { CARD_BACK_URL } from "../../services/scryfall.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerZoneIds } from "../../viewmodel/gameStateView.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
-import { arenaZoneLayout, type ArenaSeat } from "./arenaLayout.ts";
+import {
+  arenaZoneLayout,
+  type ArenaSeat,
+  type ArenaTableLayout,
+} from "./arenaLayout.ts";
 import { useArenaImageTexture } from "./useArenaImageTexture.ts";
 
 type ViewableZone = "graveyard" | "exile" | "library";
@@ -18,6 +22,7 @@ type ArenaCardZoneKind = "graveyard" | "library";
 interface ArenaZonePilesProps {
   playerId: PlayerId;
   seat: ArenaSeat;
+  tableLayout?: ArenaTableLayout;
   onViewZone?: (zone: ViewableZone, playerId: PlayerId) => void;
 }
 
@@ -27,6 +32,7 @@ const CARD_HEIGHT = 1.82;
 export function ArenaZonePiles({
   playerId,
   seat,
+  tableLayout = "duel",
   onViewZone,
 }: ArenaZonePilesProps) {
   const gameState = useGameStore((state) => state.gameState);
@@ -44,7 +50,7 @@ export function ArenaZonePiles({
     faceName: graveyardLookup?.faceName,
     faceIndex: graveyardLookup?.faceIndex,
   });
-  const layout = arenaZoneLayout(seat);
+  const layout = arenaZoneLayout(seat, tableLayout);
   const handleView = (zone: ViewableZone) => onViewZone?.(zone, playerId);
 
   return (

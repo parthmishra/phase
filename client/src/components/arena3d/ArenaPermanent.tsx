@@ -22,7 +22,7 @@ export function ArenaPermanent({
   pileCount,
   position,
   faceAngle,
-  attackDirection,
+  attackVector,
 }: ArenaPermanentProps) {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
   const texture = useArenaCardTexture(objectId, pileCount);
@@ -31,7 +31,7 @@ export function ArenaPermanent({
   const arrivalRingRef = useRef<THREE.Mesh>(null);
   const arrivalAgeRef = useRef(0);
   const initialPlacementRef = useRef({
-    attackDirection,
+    attackVector,
     faceAngle,
     position,
   });
@@ -42,9 +42,9 @@ export function ArenaPermanent({
     if (!group) return;
     const initial = initialPlacementRef.current;
     group.position.set(
-      initial.position[0],
+      initial.position[0] + initial.attackVector[0] * 0.14,
       initial.position[1] + 0.42,
-      initial.position[2] + initial.attackDirection * 0.14,
+      initial.position[2] + initial.attackVector[1] * 0.14,
     );
     group.rotation.y = initial.faceAngle;
     group.scale.setScalar(0.86);
@@ -85,9 +85,10 @@ export function ArenaPermanent({
     }
 
     const response = 1 - Math.exp(-delta * 14);
-    const targetX = position[0];
+    const targetX =
+      position[0] + (interaction.isAttacking ? attackVector[0] : 0);
     const targetZ =
-      position[2] + (interaction.isAttacking ? attackDirection : 0);
+      position[2] + (interaction.isAttacking ? attackVector[1] : 0);
     const targetY =
       position[1]
       + (interaction.isAttacking ? 0.07 : 0);

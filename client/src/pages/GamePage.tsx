@@ -27,8 +27,7 @@ import type {
 import { useDraftStore } from "../stores/draftStore";
 import { loadActiveQuickDraft } from "../services/quickDraftPersistence";
 import type { DraftMatchResult } from "../services/quickDraftPersistence";
-import { useResolvedGridRows, useResolvedSplitGridRows } from "../hooks/useResolvedGridRows.ts";
-import { useIsMobile } from "../hooks/useIsMobile.ts";
+import { useResolvedGridRows } from "../hooks/useResolvedGridRows.ts";
 import { useGameViewportLock } from "../hooks/useGameViewportLock.ts";
 import { FlexEditOverlay } from "../components/flexlayout/FlexEditOverlay.tsx";
 import { DraggableWidget } from "../components/flexlayout/DraggableWidget.tsx";
@@ -177,10 +176,7 @@ import { LoyaltyBadge } from "../components/ui/LoyaltyBadge.tsx";
 import {
   getCastableZoneViewerTarget,
   getBoardChoiceView,
-  getSeatCount,
   getWaitingForObjectChoiceIds,
-  isSplitBoardActive,
-  shouldRenderFocusedOpponentTopRow,
   type ZoneViewerTarget,
 } from "../viewmodel/gameStateView.ts";
 import { gameButtonClass } from "../components/ui/buttonStyles.ts";
@@ -829,10 +825,8 @@ function GamePageContent({
   const waitingFor = useGameStore((s) => s.waitingFor);
   const lobbyProgress = useGameStore((s) => s.lobbyProgress);
   const dispatch = useGameDispatch();
-  const isMobile = useIsMobile();
   useGameViewportLock();
   const focusedGridTemplateRows = useResolvedGridRows();
-  const splitGridTemplateRows = useResolvedSplitGridRows();
   const gameState = useGameStore((s) => s.gameState);
   const objects = useGameStore((s) => s.gameState?.objects);
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
@@ -907,8 +901,6 @@ function GamePageContent({
   const dismissedSandboxToolsNudge = usePreferencesStore((s) => s.dismissedSandboxToolsNudge);
   const dismissedReportCardNudge = usePreferencesStore((s) => s.dismissedReportCardNudge);
   const cardReportDialogOpen = useUiStore((s) => s.cardReportDialogOpen);
-  const multiplayerBoardLayout = usePreferencesStore((s) => s.multiplayerBoardLayout);
-  const setMultiplayerBoardLayout = usePreferencesStore((s) => s.setMultiplayerBoardLayout);
   const debugPanelOpen = useUiStore((s) => s.debugPanelOpen);
   const debugClickModeButtonVisible = useUiStore((s) => s.debugClickModeButtonVisible);
   const toggleDebugClickModeButtonVisible = useUiStore(
@@ -916,16 +908,6 @@ function GamePageContent({
   );
   const opponentDisplayName = useMultiplayerStore((s) => s.opponentDisplayName);
   const adapter = useGameStore((s) => s.adapter);
-  const seatCount = getSeatCount(gameState);
-  const splitBoardActive = isSplitBoardActive(multiplayerBoardLayout, seatCount);
-  const renderFocusedOpponentTopRow = shouldRenderFocusedOpponentTopRow(
-    multiplayerBoardLayout,
-    seatCount,
-  );
-  const handleToggleMultiplayerBoardLayout = useCallback(() => {
-    setMultiplayerBoardLayout(multiplayerBoardLayout === "split" ? "focused" : "split");
-  }, [multiplayerBoardLayout, setMultiplayerBoardLayout]);
-  const gridTemplateRows = splitBoardActive ? splitGridTemplateRows : focusedGridTemplateRows;
   const handleKickPlayer = useCallback((pid: number) => {
     const adapter = useGameStore.getState().adapter as
       | { kickPlayer?: (pid: number) => Promise<void> }
@@ -942,11 +924,10 @@ function GamePageContent({
     () => (
       <OpponentHud
         opponentName={isOnlineMode ? opponentDisplayName : undefined}
-        splitOverview={splitBoardActive}
         onKickPlayer={isP2PHost ? handleKickPlayer : undefined}
       />
     ),
-    [handleKickPlayer, isOnlineMode, opponentDisplayName, isP2PHost, splitBoardActive],
+    [handleKickPlayer, isOnlineMode, opponentDisplayName, isP2PHost],
   );
   const playerHud = useMemo(() => <PlayerHud />, []);
 
@@ -1185,9 +1166,7 @@ function GamePageContent({
   const gamePageStyle = {
     "--game-top-overlay-offset": `${topOverlayOffsetPx}px`,
     "--game-split-safe-top": "0px",
-    "--game-targeting-prompt-top": splitBoardActive
-      ? isMobile ? "4.25rem" : "4.75rem"
-      : "0.25rem",
+    "--game-targeting-prompt-top": "0.25rem",
   } as CSSProperties;
   const handleViewZone = useCallback(
     (zone: "graveyard" | "exile" | "library", zonePlayerId: number) => {
@@ -1332,27 +1311,23 @@ function GamePageContent({
         className={`relative ${boardChoiceLayerActive && !isReconnecting ? GAME_Z_LAYER.boardChoiceGrid : GAME_Z_LAYER.board} grid min-w-0 h-full${isReconnecting ? " pointer-events-none" : ""}`}
         style={{
           paddingTop: "var(--game-top-overlay-offset, 0px)",
-          gridTemplateRows,
+          gridTemplateRows: focusedGridTemplateRows,
           gridTemplateColumns: "1fr",
         }}
       >
         {/* Row 1: focused opponent hand. The Arena renderer owns the spatial
             library/graveyard/exile zones on the tabletop. */}
         <div
-          className={`relative z-20 min-w-0 w-full ${renderFocusedOpponentTopRow ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]" : "flex"} ${splitBoardActive ? "overflow-hidden" : "overflow-visible"}`}
+          className="relative z-20 grid min-w-0 w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] overflow-visible"
           data-flex-zone="opp-row"
         >
-          {renderFocusedOpponentTopRow && (
-            <>
-              <div aria-hidden />
-              <div className="flex min-w-0 items-start justify-center">
-                <OpponentHand showCards={showAiHand} />
-              </div>
-              <div className="flex min-w-0 items-start justify-start pt-1">
-                <ArenaFocusedOpponentCommandZone />
-              </div>
-            </>
-          )}
+          <div aria-hidden />
+          <div className="flex min-w-0 items-start justify-center">
+            <OpponentHand showCards={showAiHand} />
+          </div>
+          <div className="flex min-w-0 items-start justify-start pt-1">
+            <ArenaFocusedOpponentCommandZone />
+          </div>
         </div>
 
         {/* Row 2: Battlefield — takes remaining space; HUDs passed inline to PlayerAreas */}
@@ -1478,8 +1453,6 @@ function GamePageContent({
         isOnlineMode={isOnlineMode}
         showAiHand={showAiHand}
         onToggleAiHand={() => setShowAiHand((v) => !v)}
-        multiplayerBoardLayout={seatCount > 2 ? multiplayerBoardLayout : undefined}
-        onToggleMultiplayerBoardLayout={seatCount > 2 ? handleToggleMultiplayerBoardLayout : undefined}
         onSettingsClick={() => setPreferencesOpen({})}
         onHelpClick={() => setHelpSheetOpen(true)}
         onConcede={onShowConcedeDialog}
