@@ -4963,7 +4963,9 @@ fn apply_combat_assignment_rule_effects_filtered(
 
     for effect in effects {
         let scan_ids = effect_candidate_ids(state, &effect.affected_filter, &mut zone_cache);
-        let ctx = FilterContext::from_source(state, effect.source_id);
+        let condition_controller = combat_effect_condition_controller(state, &effect);
+        let ctx =
+            FilterContext::from_source_with_controller(effect.source_id, condition_controller);
         let affected_ids: Vec<ObjectId> = scan_ids
             .iter()
             .filter(|&&id| restrict_to.is_none_or(|ids| ids.contains(&id)))
@@ -4973,7 +4975,7 @@ fn apply_combat_assignment_rule_effects_filtered(
                     evaluate_condition_with_recipient(
                         state,
                         condition,
-                        combat_effect_condition_controller(state, &effect),
+                        condition_controller,
                         effect.source_id,
                         id,
                     )
@@ -7127,11 +7129,15 @@ pub(crate) fn compute_current_copiable_values(
         gather_active_effects_for_layer(state, Layer::Copy)
             .into_iter()
             .filter(|effect| {
+                let condition_controller = active_effect_condition_controller(state, effect);
                 matches_target_filter(
                     state,
                     object_id,
                     &effect.affected_filter,
-                    &FilterContext::from_source(state, effect.source_id),
+                    &FilterContext::from_source_with_controller(
+                        effect.source_id,
+                        condition_controller,
+                    ),
                 )
             })
             .filter(|effect| {
@@ -8447,6 +8453,45 @@ mod tests {
         assert!(
             !source.assigns_damage_from_toughness,
             "a transient combat rule must remain gated by its captured P0 controller"
+        );
+    }
+
+    #[test]
+    fn transient_combat_rule_filter_uses_captured_controller_after_source_is_stolen() {
+        // CR 109.5 + CR 613.11: a transient combat-assignment effect's
+        // controller-relative recipient filter remains bound to its creator,
+        // even after a later layer-2 effect changes the source's controller.
+        let mut state = setup();
+        let source = make_creature(&mut state, "Transient Combat Source", 2, 2, P0);
+        let p0_recipient = make_creature(&mut state, "P0 Combat Recipient", 2, 2, P0);
+        let p1_recipient = make_creature(&mut state, "P1 Combat Recipient", 2, 2, P1);
+        state.add_transient_continuous_effect(
+            source,
+            P0,
+            Duration::Permanent,
+            creature_you_ctrl(),
+            vec![ContinuousModification::AssignDamageFromToughness],
+            None,
+        );
+        state.add_transient_continuous_effect(
+            source,
+            P1,
+            Duration::Permanent,
+            TargetFilter::SpecificObject { id: source },
+            vec![ContinuousModification::ChangeController],
+            None,
+        );
+
+        evaluate_layers(&mut state);
+
+        assert_eq!(state.objects[&source].controller, P1);
+        assert!(
+            state.objects[&p0_recipient].assigns_damage_from_toughness,
+            "the captured P0 controller determines the transient effect's recipients"
+        );
+        assert!(
+            !state.objects[&p1_recipient].assigns_damage_from_toughness,
+            "stealing the source must not retarget the transient effect to P1's creatures"
         );
     }
 
