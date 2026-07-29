@@ -76,9 +76,9 @@ describe("arenaZoneLayout", () => {
     const left = arenaZoneLayout("left", "pod", "kitchen");
     const right = arenaZoneLayout("right", "pod", "kitchen");
 
-    expect(left.library[0]).toBeLessThan(-7);
-    expect(left.library[2]).toBeLessThan(-2.5);
-    expect(right.library[0]).toBeGreaterThan(7);
-    expect(right.library[2]).toBeGreaterThan(2.5);
+    expect(left.library[0]).toBeLessThan(-7.4);
+    expect(left.library[2]).toBeLessThan(-3.7);
+    expect(right.library[0]).toBeGreaterThan(7.4);
+    expect(right.library[2]).toBeGreaterThan(2.7);
   });
 });

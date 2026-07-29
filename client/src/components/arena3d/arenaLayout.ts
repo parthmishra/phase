@@ -166,7 +166,7 @@ export function arenaZoneLayout(
     return arenaZoneRow(
       faceAngle,
       podPresentation === "kitchen"
-        ? [-7.1, 0.08, -2.6]
+        ? [-7.45, 0.08, -3.8]
         : [-6.3, 0.08, -3.3],
     );
   }
@@ -177,7 +177,7 @@ export function arenaZoneLayout(
   return arenaZoneRow(
     faceAngle,
     podPresentation === "kitchen"
-      ? [7.1, 0.08, 2.6]
+      ? [7.45, 0.08, 2.8]
       : [6.3, 0.08, 2.55],
   );
 }
