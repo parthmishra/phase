@@ -14,12 +14,14 @@ import { useSeatColor } from "../../hooks/useSeatColor.ts";
 import { dispatchAction } from "../../game/dispatch.ts";
 import { cardImageLookup, tokenFiltersForObject } from "../../services/cardImageLookup.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
+import { useAnimationStore } from "../../stores/animationStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import { renderDescription } from "../../utils/description.ts";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 import { PopoverMenu } from "../menu/PopoverMenu.tsx";
 import { YieldMuteIcon } from "./YieldMuteIcon.tsx";
 import { RichLabel } from "../mana/RichLabel.tsx";
+import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 import type { StackEntry as StackEntryType, StackEntryDisplay, StackPaidFactView } from "../../adapter/types.ts";
 
 interface StackEntryProps {
@@ -53,6 +55,9 @@ export function StackEntry({ entry, index, isTop, isPending, cardSize, style, on
   const objects = useGameStore((s) => s.gameState?.objects);
   const waitingFor = useGameStore((s) => s.gameState?.waiting_for);
   const pendingCast = useGameStore((s) => s.gameState?.pending_cast);
+  const isCardInFlight = useAnimationStore(
+    (state) => state.inFlightObjectIds.has(entry.source_id),
+  );
   const inspectObject = useUiStore((s) => s.inspectObject);
 
   const setPreviewSticky = useUiStore((s) => s.setPreviewSticky);
@@ -201,8 +206,9 @@ export function StackEntry({ entry, index, isTop, isPending, cardSize, style, on
       }}
       style={style}
       data-stack-entry={entry.id}
+      data-object-id={isSpell ? entry.source_id : undefined}
       data-card-hover
-      className="relative cursor-pointer"
+      className={`relative cursor-pointer ${isCardInFlight ? "invisible" : ""}`}
       onClick={handleClick}
       onMouseEnter={isMobile ? undefined : () => {
         inspectObject(entry.source_id);
@@ -224,7 +230,17 @@ export function StackEntry({ entry, index, isTop, isPending, cardSize, style, on
         style={{ width: cardSize.width, height: cardSize.height }}
         className={`overflow-hidden rounded-lg shadow-lg ${ringClass}`}
       >
-        {isLoading ? (
+        {isSpell && sourceObj ? (
+          <ArenaCardFace
+            objectId={entry.source_id}
+            displayCost={displayManaCost}
+            className="h-full w-full rounded-lg"
+            style={{
+              "--hand-card-w": "100%",
+              "--hand-card-h": "100%",
+            } as CSSProperties}
+          />
+        ) : isLoading ? (
           <div
             className="animate-pulse rounded-lg bg-gray-700 border border-gray-600"
             style={{ width: cardSize.width, height: cardSize.height }}
@@ -264,7 +280,12 @@ export function StackEntry({ entry, index, isTop, isPending, cardSize, style, on
           battlefield cards already surface this through CardImage; a spell is
           most consequential while it is on the stack about to resolve, so the
           same badge is shown here from the same engine-provided projection. */}
-      <UnimplementedMechanicsBadge mechanics={sourceObj?.unimplemented_mechanics} variant="corner" />
+      {!isSpell && (
+        <UnimplementedMechanicsBadge
+          mechanics={sourceObj?.unimplemented_mechanics}
+          variant="corner"
+        />
+      )}
 
       {/* Badge: ×N coalesce count for engine-grouped mass triggers. */}
       {groupCount > 1 && (

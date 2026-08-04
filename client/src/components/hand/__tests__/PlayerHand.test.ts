@@ -13,9 +13,11 @@ import {
 import {
   HAND_FAN_HOVER_Y,
   HAND_FAN_RESTING_Y,
+  MOBILE_HAND_FAN_LIFT_Y,
   handFanGeometry,
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
+  playerHudBottomForCardTop,
 } from "../handFanPresentation.ts";
 
 describe("player hand fan presentation", () => {
@@ -34,6 +36,11 @@ describe("player hand fan presentation", () => {
     });
   });
 
+  it("uses a modest whole-hand lift for the mobile tap state", () => {
+    expect(MOBILE_HAND_FAN_LIFT_Y).toBeLessThan(0);
+    expect(MOBILE_HAND_FAN_LIFT_Y).toBeGreaterThan(-50);
+  });
+
   it("keeps resting cards lower than their hover position", () => {
     expect(HAND_FAN_RESTING_Y).toBeGreaterThan(HAND_FAN_HOVER_Y);
   });
@@ -42,9 +49,18 @@ describe("player hand fan presentation", () => {
     const compactMetrics = handFanVerticalMetrics(true);
     const compactFan = handFanGeometry(8, "--hand-card-w", compactMetrics.arcScale);
 
-    expect(compactMetrics.restingY).toBe(24);
-    expect(compactMetrics.hoverY).toBe(19);
-    expect(compactFan.arc(0)).toBeCloseTo(16);
+    expect(compactMetrics.restingY).toBeCloseTo(43.2);
+    expect(compactMetrics.hoverY).toBeCloseTo(34.2);
+    expect(compactFan.arc(0)).toBeCloseTo(28.8);
+  });
+
+  it("anchors the player HUD just above the center hand card", () => {
+    expect(playerHudBottomForCardTop(390, 336)).toBe(62);
+    expect(playerHudBottomForCardTop(390, 308)).toBe(90);
+  });
+
+  it("keeps the player HUD offset inside the game stage", () => {
+    expect(playerHudBottomForCardTop(390, 420)).toBe(0);
   });
 });
 

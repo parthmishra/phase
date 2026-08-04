@@ -209,7 +209,10 @@ export default defineConfig(({ mode }) => ({
     wasm(),
     topLevelAwait(),
     VitePWA({
-      registerType: "autoUpdate",
+      // The app still applies updates automatically in `onNeedRefresh`, but
+      // prompt mode prevents vite-plugin-pwa from independently activating
+      // and reloading behind our guarded/deferred update lifecycle.
+      registerType: "prompt",
       manifest: false, // Use public/manifest.json
       includeAssets: ["**/*.mp3", "**/*.m4a"],
       workbox: {

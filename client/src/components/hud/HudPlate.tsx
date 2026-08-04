@@ -33,19 +33,19 @@ interface HudPlateProps {
 }
 
 const TONE_CLASSES: Record<HudTone, string> = {
-  neutral: "border-white/12 bg-[#08111d]/86 text-slate-100 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
-  emerald: "border-emerald-300/24 bg-[#081712]/86 text-emerald-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
-  rose: "border-rose-300/24 bg-[#190c13]/86 text-rose-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
-  cyan: "border-cyan-300/25 bg-[#07151a]/86 text-cyan-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
-  amber: "border-amber-300/24 bg-[#19140a]/86 text-amber-50 shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-xl",
+  neutral: "border-[#9d9278]/30 text-stone-100",
+  emerald: "border-emerald-300/36 text-emerald-50",
+  rose: "border-rose-300/36 text-rose-50",
+  cyan: "border-cyan-300/38 text-cyan-50",
+  amber: "border-amber-300/36 text-amber-50",
 };
 
 const ACTIVE_TURN_CLASSES: Record<HudTone, string> = {
-  neutral: "border-white/32 ring-1 ring-white/22 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
-  emerald: "border-emerald-300/48 ring-1 ring-emerald-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
-  rose: "border-rose-300/48 ring-1 ring-rose-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
-  cyan: "border-cyan-300/48 ring-1 ring-cyan-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
-  amber: "border-amber-300/48 ring-1 ring-amber-300/34 shadow-[0_10px_28px_rgba(0,0,0,0.34)]",
+  neutral: "border-[#c9b98f]/48 ring-1 ring-[#d6c79f]/18",
+  emerald: "border-emerald-300/52 ring-1 ring-emerald-300/28",
+  rose: "border-rose-300/52 ring-1 ring-rose-300/28",
+  cyan: "border-cyan-300/52 ring-1 ring-cyan-300/30",
+  amber: "border-amber-300/52 ring-1 ring-amber-300/28",
 };
 
 export function HudPlate({
@@ -70,8 +70,8 @@ export function HudPlate({
   );
   const compact = density === "compact";
   const plateChrome = compact
-    ? "gap-1 rounded-lg px-1 py-0.5"
-    : "gap-2 rounded-[10px] px-1.5 py-1 lg:gap-2.5 lg:px-2.5 lg:py-1.5";
+    ? "min-h-11 gap-1 px-1.5 py-1"
+    : "min-h-12 gap-2 px-2 py-1.5 lg:gap-2.5 lg:px-3 lg:py-2";
   const labelClass = compact
     ? "truncate text-[8px] font-semibold uppercase tracking-[0.12em]"
     : "truncate text-[9px] font-semibold uppercase tracking-[0.18em]";
@@ -86,8 +86,10 @@ export function HudPlate({
       type={onClick ? "button" : undefined}
       onClick={onClick}
       data-hud-plate=""
-      className={`group relative inline-flex max-w-full items-center border transition-[border-color,background-color,box-shadow] duration-150 ${plateChrome} ${TONE_CLASSES[tone]}${activeChrome} ${
-        onClick ? "cursor-pointer hover:border-white/30 hover:bg-slate-900/92" : ""
+      data-hud-tone={tone}
+      data-active-turn={active ? "true" : undefined}
+      className={`arena-hud-plate group relative inline-flex max-w-full items-center border transition-[border-color,background-color,box-shadow] duration-150 ${plateChrome} ${TONE_CLASSES[tone]}${activeChrome} ${
+        onClick ? "cursor-pointer hover:border-[#d4c69f]/48 hover:brightness-110" : ""
       }`}
     >
       {underAttack && (
@@ -99,13 +101,13 @@ export function HudPlate({
       {isDebugHighlighted && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-30 rounded-[10px] outline-2 outline-fuchsia-300"
+          className="pointer-events-none absolute inset-0 z-30 outline-2 outline-fuchsia-300"
         />
       )}
       {cornerBadge ? (
         <div className="absolute -top-0.5 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2">{cornerBadge}</div>
       ) : null}
-      <div className="absolute inset-[1px] rounded-[9px] border-t border-white/8" />
+      <div className="pointer-events-none absolute inset-[1px] border-t border-[#f5eac8]/10" />
       {avatarUrl ? (
         <HudAvatar
           label={label}
@@ -162,7 +164,7 @@ function HudAvatar({
       label={label}
       seatColor={seatColor}
       title={label}
-      className={`relative shrink-0 overflow-hidden rounded-lg border border-white/15 bg-slate-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)] ${compact ? "h-8 w-7" : "h-12 w-10 lg:h-14 lg:w-12"}`}
+      className={`relative shrink-0 overflow-hidden rounded-full border border-white/15 bg-slate-950 shadow-[0_8px_18px_rgba(0,0,0,0.35)] ${compact ? "h-9 w-9" : "h-12 w-12 lg:h-14 lg:w-14"}`}
       style={seatColor ? {
         borderColor: `${seatColor}cc`,
         boxShadow: `0 0 0 1px ${seatColor}55, 0 10px 24px rgba(0,0,0,0.35)`,

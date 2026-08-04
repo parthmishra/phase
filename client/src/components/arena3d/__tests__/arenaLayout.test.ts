@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARENA_CARD_DEPTH,
+  ARENA_TAPPED_CARD_FOOTPRINT,
   ARENA_CARD_WIDTH,
   arenaHeldCardFan,
   arenaHeldHandLayout,
@@ -106,8 +107,34 @@ describe("arenaHeldHandLayout", () => {
     expect(arenaHeldHandLayout("right", "pod").faceAngle).toBe(-Math.PI / 2);
   });
 
-  it("keeps pod hands on their authored seat edges", () => {
-    expect(arenaHeldHandLayout("far", "pod").position[2]).toBeLessThan(-5.5);
+  it("keeps the far hand centered and visible inside the authored seat edge", () => {
+    expect(arenaHeldHandLayout("far", "pod").position[0]).toBe(0);
+    expect(arenaHeldHandLayout("far", "pod").position[2]).toBeGreaterThan(-5.5);
+    expect(arenaHeldHandLayout("far", "pod").position[2]).toBeLessThan(-4.5);
+  });
+
+  it("lowers the far hand into view on short landscape screens", () => {
+    const wide = arenaHeldHandLayout("far", "pod", "wide");
+    const compact = arenaHeldHandLayout("far", "pod", "compact");
+
+    expect(compact.position[1]).toBeLessThan(wide.position[1]);
+    expect(compact.position[2]).toBeGreaterThan(wide.position[2]);
+    expect(compact.scale).toBe(wide.scale);
+  });
+
+  it("mirrors side hands across one battlefield centerline", () => {
+    const left = arenaHeldHandLayout("left", "pod");
+    const right = arenaHeldHandLayout("right", "pod");
+
+    expect(left.position[0]).toBe(-right.position[0]);
+    expect(left.position[2]).toBe(0);
+    expect(right.position[2]).toBe(0);
+    expect(left.position[1]).toBe(right.position[1]);
+    expect(left.scale).toBe(right.scale);
+    expect(left.faceAngle).toBe(-right.faceAngle);
+  });
+
+  it("keeps pod side hands on their authored seat edges", () => {
     expect(arenaHeldHandLayout("left", "pod").position[0]).toBeLessThan(-8);
     expect(arenaHeldHandLayout("right", "pod").position[0]).toBeGreaterThan(8);
   });
@@ -115,7 +142,7 @@ describe("arenaHeldHandLayout", () => {
   it("elevates opponent hands and keeps side fans near library scale", () => {
     for (const seat of ["far", "left", "right"] as const) {
       const layout = arenaHeldHandLayout(seat, "pod");
-      expect(layout.position[1]).toBeGreaterThan(0.9);
+      expect(layout.position[1]).toBeGreaterThanOrEqual(1);
     }
     expect(arenaHeldHandLayout("left", "pod").scale).toBeGreaterThanOrEqual(
       0.8,
@@ -135,28 +162,27 @@ describe("fitArenaLaneCards", () => {
     expect(fitArenaLaneCards(1, 3.2).cardScale).toBe(1);
   });
 
-  it("shrinks crowded cards while preserving a visible gap", () => {
+  it("uses overlap before aggressive shrinking on crowded lanes", () => {
     const fit = fitArenaLaneCards(7, 3.2);
-    const rotationFootprint =
-      Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH) * fit.cardScale;
+    const cardWidth = ARENA_CARD_WIDTH * fit.cardScale;
 
     expect(fit.cardScale).toBeLessThan(1);
+    expect(fit.cardScale).toBeGreaterThanOrEqual(0.82);
     expect(fit.gap).toBeGreaterThan(0);
     for (let index = 1; index < fit.offsets.length; index += 1) {
-      expect(fit.offsets[index] - fit.offsets[index - 1]).toBeGreaterThan(
-        rotationFootprint,
+      expect(fit.offsets[index] - fit.offsets[index - 1]).toBeLessThan(
+        cardWidth,
       );
     }
   });
 
-  it("keeps even a very crowded lane non-overlapping", () => {
+  it("keeps even a very crowded lane readable and inside its lane", () => {
     const fit = fitArenaLaneCards(40, 3.2);
-    const rotationFootprint =
-      Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH) * fit.cardScale;
+    const cardWidth = ARENA_CARD_WIDTH * fit.cardScale;
     const occupiedWidth =
-      rotationFootprint * 40 + fit.gap * (fit.offsets.length - 1);
+      fit.offsets[fit.offsets.length - 1] - fit.offsets[0] + cardWidth;
 
-    expect(fit.cardScale).toBeGreaterThan(0);
+    expect(fit.cardScale).toBeGreaterThanOrEqual(0.7);
     expect(fit.gap).toBeGreaterThan(0);
     expect(occupiedWidth).toBeLessThan(3.2);
   });
@@ -287,9 +313,12 @@ describe("four-player pod footprint", () => {
     expect(lands).toBeDefined();
     if (!creatures || !support || !lands) return;
 
-    expect(support.position[2]).toBeLessThan(2);
+    expect(support.position[2]).toBeGreaterThan(2);
+    expect(support.position[2]).toBeLessThan(3);
     expect(lands.position[2]).toBe(support.position[2]);
     expect(support.position[2]).toBeGreaterThan(creatures.position[2]);
+    expect(lands.position[0]).toBeLessThan(0);
+    expect(support.position[0]).toBeGreaterThan(0);
   });
 
   it("uses the library and graveyard as the side seats' final row", () => {
@@ -413,8 +442,7 @@ describe("four-player pod footprint", () => {
           - deltaZ * Math.sin(zone.faceAngle);
         expect(
           Math.abs(tangentOffset)
-            + Math.max(ARENA_CARD_WIDTH, ARENA_CARD_DEPTH)
-              * placement.cardScale
+            + ARENA_TAPPED_CARD_FOOTPRINT * placement.cardScale
               / 2,
         ).toBeLessThanOrEqual(zone.width / 2 + Number.EPSILON);
         expect(

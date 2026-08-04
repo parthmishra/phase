@@ -28,6 +28,7 @@ import { useDraftStore } from "../stores/draftStore";
 import { loadActiveQuickDraft } from "../services/quickDraftPersistence";
 import type { DraftMatchResult } from "../services/quickDraftPersistence";
 import { useGameViewportLock } from "../hooks/useGameViewportLock.ts";
+import { useLandscapeGameRequirement } from "../hooks/useLandscapeGameRequirement.ts";
 import { FlexEditOverlay } from "../components/flexlayout/FlexEditOverlay.tsx";
 import { DraggableWidget } from "../components/flexlayout/DraggableWidget.tsx";
 import { BetweenGamesSideboardModal } from "../components/multiplayer/BetweenGamesSideboardModal.tsx";
@@ -40,6 +41,7 @@ import { DiceRollOverlay } from "../components/animation/DiceRollOverlay.tsx";
 import { flashStartingPlayerContest } from "../game/diceContest.ts";
 import { loopDetectionModeFromQuery } from "../game/loopDetectionMode.ts";
 import { BattlefieldBackground } from "../components/board/BattlefieldBackground.tsx";
+import { LandscapeGameBoundary } from "../components/board/LandscapeGameGate.tsx";
 import { BoardContextMenu } from "../components/board/BoardContextMenu.tsx";
 import { DebugCardContextMenu } from "../components/chrome/DebugCardContextMenu.tsx";
 import { DebugLibraryViewer } from "../components/chrome/DebugLibraryViewer.tsx";
@@ -49,6 +51,7 @@ import { BlockRequirementBadges } from "../components/combat/BlockRequirementBad
 import { AttackRequirementBadges } from "../components/combat/AttackRequirementBadges.tsx";
 import { BlockerConstraintBadges } from "../components/combat/BlockerConstraintBadges.tsx";
 import { ArenaGameBoard } from "../components/arena3d/ArenaGameBoard.tsx";
+import type { ArenaSeatAssignment } from "../components/arena3d/arenaLayout.ts";
 import {
   ArenaFocusedOpponentCommandZone,
   ArenaHandCommandZone,
@@ -62,8 +65,6 @@ import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
 import { MobilePhaseChip } from "../components/controls/MobilePhaseChip.tsx";
 import { MayTriggerAutoChoiceList } from "../components/board/MayTriggerAutoChoiceList.tsx";
 import { PriorityYieldList } from "../components/board/PriorityYieldList.tsx";
-import { MobileHandDrawer } from "../components/hand/MobileHandDrawer.tsx";
-import { HandBadge } from "../components/hand/HandBadge.tsx";
 import { PlayerHand } from "../components/hand/PlayerHand.tsx";
 import { FlowHelpNudge } from "../components/help/FlowHelpNudge.tsx";
 import { ReportCardNudge } from "../components/help/ReportCardNudge.tsx";
@@ -120,7 +121,6 @@ import { StackDisplay } from "../components/stack/StackDisplay.tsx";
 import { TargetingOverlay } from "../components/targeting/TargetingOverlay.tsx";
 import { PlayerHud } from "../components/hud/PlayerHud.tsx";
 import { OpponentHud } from "../components/hud/OpponentHud.tsx";
-import { TurnStatusLine } from "../components/hud/TurnStatusLine.tsx";
 import { ZoneViewer } from "../components/zone/ZoneViewer.tsx";
 import {
   PreferencesModal,
@@ -226,6 +226,7 @@ export function GamePage() {
   const { id: gameId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const location = useLocation();
+  const requiresLandscape = useLandscapeGameRequirement();
   // `useBroker` is threaded through React Router's location state from
   // `MultiplayerPage` — intentionally not a URL param, so a hard refresh
   // re-evaluates broker reachability instead of pinning the "no lobby"
@@ -695,63 +696,69 @@ export function GamePage() {
   if (!gameId) return null;
 
   return (
-    <GameProvider
-      gameId={gameId}
-      mode={mode}
-      difficulty={difficulty}
-      joinCode={joinCode || undefined}
-      formatConfig={formatConfig}
-      playerCount={playerCount}
-      matchConfig={matchConfig}
-      firstPlayer={firstPlayer}
-      useBroker={useBroker}
-      roomName={roomNameParam ?? undefined}
-      source={sourceParam}
-      draftId={draftIdParam}
-      onWsEvent={mode === "ai" || mode === "online" || mode === "spectate" ? handleWsEvent : undefined}
-      onP2PEvent={
-        mode === "p2p-host" || mode === "p2p-join" ? handleP2PEvent : undefined
-      }
-      onReady={
-        mode === "online" || mode === "spectate" || mode === "p2p-host" || mode === "p2p-join"
-          ? handleReady
-          : undefined
-      }
-      onCardDataMissing={handleCardDataMissing}
-      onNoDeck={handleNoDeck}
-      onResumeReset={handleResumeReset}
+    <LandscapeGameBoundary
+      requiresLandscape={requiresLandscape}
+      sessionId={gameId}
+      onExit={() => navigate("/")}
     >
-      <GamePageContent
+      <GameProvider
         gameId={gameId}
-        mode={rawMode}
-        isOnlineMode={isOnlineMode}
-        hostGameCode={hostGameCode}
-        waitingForOpponent={waitingForOpponent}
-        opponentDisconnected={opponentDisconnected}
-        reconnectState={reconnectState}
-        showCardDataMissing={showCardDataMissing}
-        onDismissCardDataMissing={() => setShowCardDataMissing(false)}
-        resumeResetReason={resumeResetReason}
-        onDismissResumeReset={() => setResumeResetReason(null)}
-        showConcedeDialog={showConcedeDialog}
-        onShowConcedeDialog={() => setShowConcedeDialog(true)}
-        onHideConcedeDialog={() => setShowConcedeDialog(false)}
-        receivedEmote={receivedEmote}
-        timerRemaining={timerRemaining}
-        gameStartedAt={gameStartedAt}
-        pendingTakeback={pendingTakeback}
-        onCloseTakebackDialog={() => setPendingTakeback(null)}
-        disconnectChoice={disconnectChoice}
-        onDismissDisconnectChoice={() => setDisconnectChoice(null)}
-        pauseReason={pauseReason}
-        isP2PHost={mode === "p2p-host"}
-        bracketViolationError={bracketViolationError}
-        onDismissBracketViolation={() => {
-          setBracketViolationError(null);
-          navigate("/setup");
-        }}
-      />
-    </GameProvider>
+        mode={mode}
+        difficulty={difficulty}
+        joinCode={joinCode || undefined}
+        formatConfig={formatConfig}
+        playerCount={playerCount}
+        matchConfig={matchConfig}
+        firstPlayer={firstPlayer}
+        useBroker={useBroker}
+        roomName={roomNameParam ?? undefined}
+        source={sourceParam}
+        draftId={draftIdParam}
+        onWsEvent={mode === "ai" || mode === "online" || mode === "spectate" ? handleWsEvent : undefined}
+        onP2PEvent={
+          mode === "p2p-host" || mode === "p2p-join" ? handleP2PEvent : undefined
+        }
+        onReady={
+          mode === "online" || mode === "spectate" || mode === "p2p-host" || mode === "p2p-join"
+            ? handleReady
+            : undefined
+        }
+        onCardDataMissing={handleCardDataMissing}
+        onNoDeck={handleNoDeck}
+        onResumeReset={handleResumeReset}
+      >
+        <GamePageContent
+          gameId={gameId}
+          mode={rawMode}
+          isOnlineMode={isOnlineMode}
+          hostGameCode={hostGameCode}
+          waitingForOpponent={waitingForOpponent}
+          opponentDisconnected={opponentDisconnected}
+          reconnectState={reconnectState}
+          showCardDataMissing={showCardDataMissing}
+          onDismissCardDataMissing={() => setShowCardDataMissing(false)}
+          resumeResetReason={resumeResetReason}
+          onDismissResumeReset={() => setResumeResetReason(null)}
+          showConcedeDialog={showConcedeDialog}
+          onShowConcedeDialog={() => setShowConcedeDialog(true)}
+          onHideConcedeDialog={() => setShowConcedeDialog(false)}
+          receivedEmote={receivedEmote}
+          timerRemaining={timerRemaining}
+          gameStartedAt={gameStartedAt}
+          pendingTakeback={pendingTakeback}
+          onCloseTakebackDialog={() => setPendingTakeback(null)}
+          disconnectChoice={disconnectChoice}
+          onDismissDisconnectChoice={() => setDisconnectChoice(null)}
+          pauseReason={pauseReason}
+          isP2PHost={mode === "p2p-host"}
+          bracketViolationError={bracketViolationError}
+          onDismissBracketViolation={() => {
+            setBracketViolationError(null);
+            navigate("/setup");
+          }}
+        />
+      </GameProvider>
+    </LandscapeGameBoundary>
   );
 }
 
@@ -912,15 +919,13 @@ function GamePageContent({
     void adapter?.kickPlayer?.(pid);
   }, []);
 
-  // Memoize the HUD elements passed to GameBoard. GameBoard is wrapped in
-  // React.memo, which shallow-compares props; without stable element
-  // references these inline JSX nodes would be new on every GamePageContent
-  // render, defeating the memo. Stable refs let GameBoard skip re-rendering
-  // when GamePageContent re-renders for reasons that don't touch these props.
-  const oppHud = useMemo(
-    () => (
+  // Keep the Arena HUD render callback stable so ArenaGameBoard's memoization
+  // is not defeated by unrelated GamePageContent updates.
+  const renderOpponentHud = useCallback(
+    (arenaSeats: readonly ArenaSeatAssignment[]) => (
       <OpponentHud
         opponentName={isOnlineMode ? opponentDisplayName : undefined}
+        arenaSeats={arenaSeats}
         onKickPlayer={isP2PHost ? handleKickPlayer : undefined}
       />
     ),
@@ -1311,7 +1316,7 @@ function GamePageContent({
         data-arena-game-stage
       >
         <ArenaGameBoard
-          oppHud={oppHud}
+          renderOpponentHud={renderOpponentHud}
           playerHud={playerHud}
           showOpponentCards={showAiHand}
           onKickPlayer={isP2PHost ? handleKickPlayer : undefined}
@@ -1354,7 +1359,12 @@ function GamePageContent({
                   main hand fan; the command zone has its own adjacent dock. */}
               <PlayerHand />
             </div>
-            <div aria-hidden />
+            <div className="pointer-events-auto flex min-w-0 items-end justify-start gap-2 pb-3 pl-4">
+              <MobilePhaseChip className="lg:hidden" />
+              <div className="mb-20 hidden lg:block">
+                <CombatPhaseIndicator />
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1365,7 +1375,7 @@ function GamePageContent({
         flexZone="actionRail"
         scaleKey="actionRail"
         resizeCorner="bl"
-        className="fixed z-30 flex flex-col items-end gap-1.5 rounded-[16px] border border-white/10 bg-[#07101c]/88 p-1.5 shadow-[0_16px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-end max-lg:portrait:justify-between max-lg:portrait:gap-2"
+        className="arena-command-shelf fixed z-30 flex flex-col items-end gap-1.5 border p-2 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
         style={{
           bottom:
             "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + 0.4rem)",
@@ -1380,10 +1390,6 @@ function GamePageContent({
             data-mobile-action-left
             className="hidden flex-col gap-1 max-lg:portrait:flex max-lg:portrait:min-w-0"
           >
-            <div className="flex flex-col gap-1 max-lg:gap-1">
-              <MobilePhaseChip className="w-full" />
-              <HandBadge className="w-full" />
-            </div>
             <div className="flex items-center gap-1.5">
               <PriorityYieldList />
               <MayTriggerAutoChoiceList />
@@ -1398,22 +1404,9 @@ function GamePageContent({
           {showFlowHelpNudge && <FlowHelpNudge />}
           {showSandboxToolsNudge && <SandboxToolsNudge />}
           {showReportCardNudge && <ReportCardNudge />}
-          <div className="hidden max-lg:landscape:block lg:block">
-            <CombatPhaseIndicator />
-          </div>
-          {isSpectatorMode ? (
-            <TurnStatusLine />
-          ) : (
+          {!isSpectatorMode && (
             <>
-              <div className="hidden max-lg:portrait:block max-lg:portrait:w-full">
-                <TurnStatusLine />
-              </div>
               <div className="hidden flex-row items-center gap-1.5 max-lg:landscape:flex lg:flex">
-                {/* <lg only: desktop conveys phase via the PhaseDot strips in
-                    PlayerHud, which are hidden on mobile. */}
-                <MobilePhaseChip className="lg:hidden" />
-                <TurnStatusLine />
-                <HandBadge />
                 {/* CR 117.3d: standing priority-yield summary chip, beside the
                     Full Control toggle (self-hides when no yields stand). */}
                 <PriorityYieldList />
@@ -1429,7 +1422,6 @@ function GamePageContent({
       </DraggableWidget>
 
       <GameLogPanel />
-      <MobileHandDrawer />
       <FlexEditOverlay />
 
       {/* Game menu — top-left hamburger */}

@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Drehe dein Gerät",
+    "description": "Das Schlachtfeld ist auf Smartphones und Tablets im Querformat verfügbar.",
+    "exit": "Zurück zum Menü"
+  },
   "abilityBlock": {
     "badge": "Blockiert",
     "cantBeActivated": "Diese Fähigkeit kann nicht aktiviert werden",

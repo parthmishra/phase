@@ -1,6 +1,6 @@
-import { registerSW } from "virtual:pwa-register";
 import { isBundledTauriOrigin } from "../services/platform";
 import { isMultiplayerGameLive, whenMultiplayerGameEnds } from "./multiplayerGuard";
+import { registerPwaServiceWorker } from "./serviceWorkerRegistrar";
 import { claimServiceWorkerReload, markPendingAutoUpdate } from "./updateMarker";
 import {
   claimUpdateStatus,
@@ -151,39 +151,16 @@ export function registerServiceWorker() {
 
   isRegistered = true;
   pushUpdateDebug("Registering service worker updater.");
-  let hasReloadedOnControllerChange = false;
+  let hasHandledUpdateReload = false;
 
-  // A `controllerchange` fires both on a genuine SW update AND on the first
-  // `clientsClaim()` of a page that loaded *uncontrolled* — a cold PWA
-  // launch, or after the OS evicted the SW. Only the former should reload;
-  // capture the controller now so the handler can tell them apart, mirroring
-  // the `!navigator.serviceWorker.controller` guard used for `updatefound`.
-  const hadControllerAtRegister = !!navigator.serviceWorker.controller;
-
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    // `hasReloadedOnControllerChange` latches true on the first event so we
-    // don't reload twice if the browser fires it again. Set *after* the
-    // deferral check so a second controllerchange during a deferred state
-    // isn't simply dropped — though in practice once this listener has
-    // deferred a reload, there's no way for a second controllerchange to
-    // do anything useful (the deferred reload, when it fires, fetches the
-    // live SW anyway).
-    if (hasReloadedOnControllerChange) return;
-
-    // Initial control handoff — the page loaded with no controller and the
-    // SW just claimed it. That is not an update: the page already loaded its
-    // current assets from the network, so reloading would only interrupt the
-    // user (e.g. mid game-setup). Skip without latching, so a genuine update
-    // later this session still reloads.
-    if (!hadControllerAtRegister) {
-      pushUpdateDebug(
-        "Service worker took initial control of an uncontrolled page; skipping reload.",
-      );
-      return;
-    }
-
+  const handleUpdateReload = () => {
+    // `virtual:pwa-register` calls this only when an installed update has
+    // taken control. Keeping reload ownership here avoids racing its internal
+    // Workbox lifecycle against a second raw `controllerchange` listener.
+    // The page latch also absorbs duplicate controlling events from WebKit.
+    if (hasHandledUpdateReload) return;
+    hasHandledUpdateReload = true;
     clearActivationTimeout();
-    hasReloadedOnControllerChange = true;
 
     const doReload = () => {
       // Circuit-breaker: allow only the first SW-driven reload per session.
@@ -192,12 +169,12 @@ export function registerServiceWorker() {
       // first breaks the loop that makes the early game unplayable.
       if (!claimServiceWorkerReload()) {
         pushUpdateDebug(
-          "Service worker controller changed again this session; suppressing reload to break a loop.",
+          "Service worker requested another reload this session; suppressing it to break a loop.",
           "warn",
         );
         return;
       }
-      pushUpdateDebug("Service worker controller changed; reloading.");
+      pushUpdateDebug("Service worker update took control; reloading.");
       window.location.reload();
     };
 
@@ -206,7 +183,7 @@ export function registerServiceWorker() {
     // into the disconnect grace window and breaking continuity.
     if (isMultiplayerGameLive()) {
       pushUpdateDebug(
-        "Service worker controller changed during multiplayer game; deferring reload until game ends.",
+        "Service worker update took control during multiplayer game; deferring reload until game ends.",
         "warn",
       );
       if (claimServiceWorkerUpdateStatus()) {
@@ -224,10 +201,14 @@ export function registerServiceWorker() {
     }
 
     doReload();
-  });
+  };
 
-  const updateSW = registerSW({
+  const updateSW = registerPwaServiceWorker({
     immediate: true,
+    // This callback makes the app the single owner of update reloads. Without
+    // it, vite-plugin-pwa reloads internally while our lifecycle handler also
+    // reloads, producing the startup loop seen in web tabs and installed PWAs.
+    onNeedReload: handleUpdateReload,
     onNeedRefresh() {
       const applyUpdate = () => {
         pushUpdateDebug("Service worker reported update ready; applying update.");

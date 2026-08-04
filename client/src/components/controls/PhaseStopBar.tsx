@@ -1,7 +1,6 @@
 import type { Phase, PhaseStop, PhaseStopScope } from "../../adapter/types";
 import { useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
 import { useGameStore } from "../../stores/gameStore";
 import { usePreferencesStore } from "../../stores/preferencesStore";
 import { GameplayTooltip } from "../ui/GameplayTooltip.tsx";
@@ -235,7 +234,7 @@ function PhaseDot({ phase }: { phase: Phase }) {
  *  Hidden on mobile (<lg) where the dots are too small to tap and crowd the HUD. */
 export function PhaseIndicatorLeft() {
   return (
-    <div className="hidden items-center gap-0.5 rounded-[10px] border border-white/10 bg-slate-950/88 px-1 py-1 lg:flex lg:px-1.5">
+    <div className="arena-phase-plaque hidden items-center gap-0.5 border border-white/10 px-1 py-1 lg:flex lg:px-1.5">
       {LEFT_PHASES.map((phase) => (
         <PhaseDot key={phase} phase={phase} />
       ))}
@@ -247,7 +246,7 @@ export function PhaseIndicatorLeft() {
  *  Hidden on mobile (<lg) where the dots are too small to tap and crowd the HUD. */
 export function PhaseIndicatorRight() {
   return (
-    <div className="hidden items-center gap-0.5 rounded-[10px] border border-white/10 bg-slate-950/88 px-1 py-1 lg:flex lg:px-1.5">
+    <div className="arena-phase-plaque hidden items-center gap-0.5 border border-white/10 px-1 py-1 lg:flex lg:px-1.5">
       {RIGHT_PHASES.map((phase) => (
         <PhaseDot key={phase} phase={phase} />
       ))}
@@ -257,14 +256,10 @@ export function PhaseIndicatorRight() {
 
 /** BeginCombat through EndCombat — placed near ActionButton on the right side */
 export function CombatPhaseIndicator() {
-  const isCompactHeight = useIsCompactHeight();
-  // Hide on landscape phones — non-essential and eats horizontal real estate
-  // next to the ActionButton. MobilePhaseChip conveys the current phase there.
-  if (isCompactHeight) return null;
   return (
     <div
       data-combat-phase-indicator
-      className="flex items-center gap-0.5 rounded-[10px] border border-white/10 bg-slate-950/88 px-1 py-1 lg:px-1.5"
+      className="arena-phase-plaque flex items-center gap-0.5 border border-white/10 px-1 py-1 lg:px-1.5"
     >
       {COMBAT_PHASES.map((phase) => (
         <PhaseDot key={phase} phase={phase} />

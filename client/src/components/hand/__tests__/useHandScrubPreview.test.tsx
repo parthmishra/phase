@@ -261,7 +261,22 @@ describe("useHandScrubPreview", () => {
     });
 
     expect(onReleaseToCast).toHaveBeenCalledOnce();
-    expect(onReleaseToCast).toHaveBeenCalledWith(11);
+    expect(onReleaseToCast).toHaveBeenCalledWith(
+      11,
+      expect.objectContaining({
+        rect: expect.any(DOMRect),
+        rotation: 0,
+        velocity: expect.objectContaining({
+          x: expect.any(Number),
+          y: expect.any(Number),
+        }),
+      }),
+    );
+    const releasedMotion = onReleaseToCast.mock.calls[0]?.[1];
+    expect(releasedMotion?.rect.x).toBe(12);
+    expect(releasedMotion?.rect.y).toBe(-50);
+    expect(releasedMotion?.rect.width).toBe(100);
+    expect(releasedMotion?.rect.height).toBe(140);
     expect(useUiStore.getState().mobileHandGesture).toBeNull();
     expect(onOpen).not.toHaveBeenCalled();
   });

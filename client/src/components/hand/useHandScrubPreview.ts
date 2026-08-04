@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 
 import { HAND_DRAG_PLAY_THRESHOLD } from "../../hooks/useDragToCast.ts";
+import type { ReleasedCardMotion } from "../../stores/animationStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 
 const HOLD_DELAY_MS = 400;
@@ -52,7 +53,10 @@ export function useHandScrubPreview(
   options: {
     isPlayable?: (objectId: number) => boolean;
     canReleaseToCast?: (objectId: number) => boolean;
-    onReleaseToCast?: (objectId: number) => void;
+    onReleaseToCast?: (
+      objectId: number,
+      motion: ReleasedCardMotion,
+    ) => void;
   } = {},
 ) {
   const { isPlayable, canReleaseToCast, onReleaseToCast } = options;
@@ -63,6 +67,13 @@ export function useHandScrubPreview(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerIdRef = useRef<number | null>(null);
   const startRef = useRef({ x: 0, y: 0 });
+  const pointerMotionRef = useRef({
+    x: 0,
+    y: 0,
+    time: 0,
+    velocityX: 0,
+    velocityY: 0,
+  });
   const scrubbingRef = useRef(false);
   const activeCardRef = useRef<HTMLElement | null>(null);
   const activeObjectIdRef = useRef<number | null>(null);
@@ -170,6 +181,7 @@ export function useHandScrubPreview(
     const wasScrubbing = scrubbingRef.current;
     const castObjectId =
       allowCast && castReadyRef.current ? activeObjectIdRef.current : null;
+    const releasedGesture = useUiStore.getState().mobileHandGesture;
     clearHoldTimer();
     scrubbingRef.current = false;
     pointerIdRef.current = null;
@@ -187,7 +199,28 @@ export function useHandScrubPreview(
         RELEASE_CLICK_SUPPRESSION_MS,
       );
     }
-    if (castObjectId != null) onReleaseToCast?.(castObjectId);
+    if (
+      castObjectId != null
+      && releasedGesture?.phase === "drag"
+      && releasedGesture.objectId === castObjectId
+    ) {
+      const { sourceOrigin } = releasedGesture;
+      onReleaseToCast?.(castObjectId, {
+        rect: new DOMRect(
+          sourceOrigin.centerX
+            - sourceOrigin.width / 2
+            + releasedGesture.offsetX,
+          sourceOrigin.top + releasedGesture.offsetY,
+          sourceOrigin.width,
+          sourceOrigin.height,
+        ),
+        rotation: sourceOrigin.rotation,
+        velocity: {
+          x: pointerMotionRef.current.velocityX,
+          y: pointerMotionRef.current.velocityY,
+        },
+      });
+    }
   }, [clearActiveCard, clearClickSuppression, clearHoldTimer, dismissPreview, onReleaseToCast, setMobileHandGesture]);
 
   useEffect(() => {
@@ -228,6 +261,13 @@ export function useHandScrubPreview(
       setMobileHandGesture(null);
       pointerIdRef.current = event.pointerId;
       startRef.current = { x: event.clientX, y: event.clientY };
+      pointerMotionRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: event.timeStamp,
+        velocityX: 0,
+        velocityY: 0,
+      };
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
@@ -248,6 +288,15 @@ export function useHandScrubPreview(
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       if (pointerIdRef.current !== event.pointerId) return;
+      const previous = pointerMotionRef.current;
+      const elapsed = Math.max(1, event.timeStamp - previous.time);
+      pointerMotionRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: event.timeStamp,
+        velocityX: (event.clientX - previous.x) * 1000 / elapsed,
+        velocityY: (event.clientY - previous.y) * 1000 / elapsed,
+      };
 
       // Claim the gesture throughout the hold delay as well as during active
       // scrubbing. Waiting until the preview opens lets WebKit start a native

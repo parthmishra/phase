@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type {
@@ -52,7 +53,10 @@ export function ArenaHeldHand({
   const backTexture = useArenaImageTexture(
     arenaComposableArtSource(CARD_BACK_URL),
   );
-  const layout = arenaHeldHandLayout(seat, tableLayout);
+  const viewportLayout = useThree(({ size }) =>
+    size.height < 500 ? "compact" : "wide",
+  );
+  const layout = arenaHeldHandLayout(seat, tableLayout, viewportLayout);
   const transforms = useMemo(
     () => arenaHeldCardFan(player?.hand.length ?? 0),
     [player?.hand.length],

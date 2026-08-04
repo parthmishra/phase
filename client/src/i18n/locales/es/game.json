@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Gira el dispositivo",
+    "description": "El campo de batalla está disponible en modo horizontal en teléfonos y tabletas.",
+    "exit": "Volver al menú"
+  },
   "abilityBlock": {
     "badge": "Bloqueada",
     "cantBeActivated": "Esta habilidad no puede activarse",

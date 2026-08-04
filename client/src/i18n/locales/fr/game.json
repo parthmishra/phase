@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Faites pivoter votre appareil",
+    "description": "Le champ de bataille est disponible en mode paysage sur téléphone et tablette.",
+    "exit": "Retour au menu"
+  },
   "abilityBlock": {
     "badge": "Bloquée",
     "cantBeActivated": "Cette capacité ne peut pas être activée",

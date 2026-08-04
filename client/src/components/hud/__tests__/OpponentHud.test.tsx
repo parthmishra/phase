@@ -99,6 +99,69 @@ describe("OpponentHud", () => {
     expect(screen.getByTitle("This player's turn is next.")).toHaveTextContent("Next Up");
   });
 
+  it("renders compact portrait-and-life markers at Arena opponent seats", () => {
+    render(
+      <OpponentHud
+        arenaSeats={[
+          { playerId: 1, seat: "left" },
+          { playerId: 2, seat: "far" },
+          { playerId: 3, seat: "right" },
+        ]}
+      />,
+    );
+
+    expect(document.querySelector("[data-opponent-hud-rail]")).toBeNull();
+    expect(
+      Array.from(
+        document.querySelectorAll("[data-arena-opponent-seat]"),
+      ).map((marker) => marker.getAttribute("data-arena-opponent-seat")),
+    ).toEqual(["left", "far", "right"]);
+    expect(
+      document.querySelector('[data-arena-opponent-seat="left"]'),
+    ).toHaveClass("col-start-1");
+    expect(
+      document.querySelector('[data-arena-opponent-seat="far"]'),
+    ).toHaveClass("col-start-2");
+    expect(
+      document.querySelector('[data-arena-opponent-seat="right"]'),
+    ).toHaveClass("col-start-3");
+
+    for (const playerId of [1, 2, 3]) {
+      const playerMarker = document.querySelector(
+        `[data-player-hud="${playerId}"][data-arena-opponent-marker]`,
+      );
+      const portrait = playerMarker?.querySelector<HTMLElement>(
+        "[data-arena-opponent-portrait]",
+      );
+      const life = playerMarker?.querySelector<HTMLElement>(
+        "[data-arena-opponent-life]",
+      );
+      expect(playerMarker).not.toBeNull();
+      expect(life).toHaveTextContent("40");
+      expect(portrait).toContainElement(life ?? null);
+      expect(
+        playerMarker?.querySelector(".arena-opponent-avatar"),
+      ).toHaveClass("arena-opponent-seat-avatar", "rounded-full");
+      expect(playerMarker).toHaveClass("arena-opponent-seat-marker");
+    }
+  });
+
+  it("keeps Arena seat markers wired to opponent focus", () => {
+    render(
+      <OpponentHud
+        arenaSeats={[
+          { playerId: 1, seat: "left" },
+          { playerId: 2, seat: "far" },
+          { playerId: 3, seat: "right" },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /view Opp 4's board/i }));
+
+    expect(useUiStore.getState().focusedOpponent).toBe(3);
+  });
+
   it("shows a tooltip and hover preview for opponent avatars with art", async () => {
     useMultiplayerStore.setState({
       playerAvatars: new Map([[1, "https://example.test/opponent-avatar.jpg"]]),

@@ -17,6 +17,11 @@ const GEOMETRY = {
   statsTextCenter: { x: 0.548, y: 0.447 },
 } as const;
 
+/** Shared crop boundaries used by the Three.js battlefield presentation. */
+export const ARENA_CARD_ART_BOTTOM_RATIO =
+  GEOMETRY.art.y + GEOMETRY.art.height;
+export const ARENA_CARD_STAT_RECT = GEOMETRY.stats;
+
 type FrameLetter = "W" | "U" | "B" | "R" | "G" | "M" | "A" | "V" | "L";
 
 interface RichLine {

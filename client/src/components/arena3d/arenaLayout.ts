@@ -1,6 +1,7 @@
 import type { ObjectId, PlayerId } from "../../adapter/types.ts";
 import type { GroupedPermanent } from "../../viewmodel/battlefieldProps.ts";
 import type { PlayerBattlefieldView } from "../../viewmodel/gameStateView.ts";
+import { ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO } from "./arenaCardCollapse.ts";
 
 export type ArenaSeat = "local" | "far" | "left" | "right";
 export type ArenaTableLayout = "duel" | "pod";
@@ -9,6 +10,12 @@ export type ArenaLane = "creatures" | "support" | "lands";
 
 export const ARENA_CARD_WIDTH = 1.3;
 export const ARENA_CARD_DEPTH = 1.82;
+export const ARENA_TAPPED_CARD_FOOTPRINT =
+  (
+    ARENA_CARD_WIDTH
+    + ARENA_CARD_DEPTH * ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO
+  )
+  / Math.SQRT2;
 
 export interface ArenaSeatAssignment {
   playerId: PlayerId;
@@ -65,15 +72,16 @@ const CARDINAL_SIDE_SEAT_ANGLE = Math.PI / 2;
 const LANE_DEPTH = 1.98;
 const LANE_EDGE_PADDING = 0.08;
 const CARD_GAP = 0.12;
+const CARD_OVERLAP_STRIDE_RATIO = 0.72;
 const SIDE_ROW_SPLIT = 1.7;
 const SIDE_CREATURE_CENTER_X = 3.5;
 const SIDE_BACK_ROW_X = 5.62;
 const SIDE_PILE_ROW_X = 7.65;
-const LOCAL_BACK_ROW_Z = 1.8;
-const CARD_ROTATION_FOOTPRINT = Math.max(
-  ARENA_CARD_WIDTH,
-  ARENA_CARD_DEPTH,
-);
+const LOCAL_BACK_ROW_Z = 2.75;
+const POD_SIDE_HAND_X = 8.15;
+const POD_HAND_CENTERLINE_Z = 0;
+const POD_FAR_HAND_Z = -5.05;
+const OPPONENT_HAND_SCALE = 0.9;
 const ZONE_PILE_GAP = 1.45;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
@@ -148,7 +156,7 @@ export function arenaZoneLayout(
       return arenaZoneRow(0, [-1.45, 0.08, 4.35]);
     }
     return tableLayout === "pod"
-      ? arenaZoneRow(0, [-5.7, 0.08, 4.35])
+      ? arenaZoneRow(0, [-6.35, 0.08, 4.35])
       : {
           faceAngle: 0,
           library: [-5.55, 0.08, 3.46],
@@ -188,6 +196,7 @@ export function arenaZoneLayout(
 export function arenaHeldHandLayout(
   seat: ArenaSeat,
   tableLayout: ArenaTableLayout = "duel",
+  viewportLayout: ArenaViewportLayout = "wide",
 ): ArenaHeldHandLayout {
   if (seat === "local") {
     return {
@@ -197,23 +206,38 @@ export function arenaHeldHandLayout(
     };
   }
   if (seat === "far") {
+    if (viewportLayout === "compact") {
+      return {
+        position: [
+          0,
+          0.48,
+          tableLayout === "pod" ? -4.45 : -4.15,
+        ],
+        faceAngle: 0,
+        scale: OPPONENT_HAND_SCALE,
+      };
+    }
     return {
-      position: [0, 0.92, tableLayout === "pod" ? -5.95 : -5.25],
+      position: [
+        0,
+        tableLayout === "pod" ? 1.02 : 0.98,
+        tableLayout === "pod" ? POD_FAR_HAND_Z : -4.75,
+      ],
       faceAngle: 0,
-      scale: tableLayout === "pod" ? 0.74 : 0.82,
+      scale: OPPONENT_HAND_SCALE,
     };
   }
   if (seat === "left") {
     return {
-      position: [-8.35, 0.94, -0.55],
+      position: [-POD_SIDE_HAND_X, 1, POD_HAND_CENTERLINE_Z],
       faceAngle: Math.PI / 2,
-      scale: 0.84,
+      scale: OPPONENT_HAND_SCALE,
     };
   }
   return {
-    position: [8.35, 0.94, 0.55],
+    position: [POD_SIDE_HAND_X, 1, POD_HAND_CENTERLINE_Z],
     faceAngle: -Math.PI / 2,
-    scale: 0.84,
+    scale: OPPONENT_HAND_SCALE,
   };
 }
 
@@ -318,15 +342,31 @@ export function fitArenaLaneCards(
     count === 1
       ? 0
       : Math.min(CARD_GAP, innerWidth / (count * 4));
-  // Reserve the larger card dimension along the lane so tapping a permanent
-  // cannot rotate it into its neighbors.
-  const widthScale = Math.max(
-    (innerWidth - gap * (count - 1))
-      / (count * CARD_ROTATION_FOOTPRINT),
+  // Arena keeps sparse and moderately busy boards at a readable scale, then
+  // progressively overlaps cards before resorting to aggressive shrinking.
+  // Using the compact face width as the layout footprint also avoids making
+  // every untapped card pay for a hypothetical 90-degree tap rotation.
+  const fullScaleFootprint =
+    ARENA_TAPPED_CARD_FOOTPRINT
+    + (count - 1) * ARENA_CARD_WIDTH * CARD_OVERLAP_STRIDE_RATIO;
+  const naturalScale = Math.max(
+    innerWidth / fullScaleFootprint,
     0,
   );
-  const cardScale = Math.min(1, depthScale, widthScale);
-  const stride = CARD_ROTATION_FOOTPRINT * cardScale + gap;
+  const crowdedFloor = count > 18 ? 0.7 : 0.82;
+  const cardScale = Math.min(
+    1,
+    depthScale,
+    Math.max(crowdedFloor, naturalScale),
+  );
+  const naturalStride = ARENA_CARD_WIDTH * cardScale + gap;
+  const centerSpan = Math.max(
+    innerWidth - ARENA_TAPPED_CARD_FOOTPRINT * cardScale,
+    0,
+  );
+  const stride = count === 1
+    ? 0
+    : Math.min(naturalStride, centerSpan / (count - 1));
   const start = -((count - 1) * stride) / 2;
   return {
     offsets: Array.from(
@@ -350,9 +390,9 @@ function arenaSeatFrame(
       faceAngle: 0,
       attackVector: [0, -1],
       centers: {
-        creatures: [0, 0.2],
-        support: [-2.4, LOCAL_BACK_ROW_Z],
-        lands: [2.4, LOCAL_BACK_ROW_Z],
+        creatures: [0, 1.02],
+        support: [2.4, LOCAL_BACK_ROW_Z],
+        lands: [-2.4, LOCAL_BACK_ROW_Z],
       },
       widths: DUEL_WIDTHS,
     };
@@ -379,9 +419,9 @@ function podSeatFrame(seat: ArenaSeat): ArenaSeatFrame {
       faceAngle: 0,
       attackVector: [0, -1],
       centers: {
-        creatures: [0, -0.3],
-        support: [-1.22, LOCAL_BACK_ROW_Z],
-        lands: [1.22, LOCAL_BACK_ROW_Z],
+        creatures: [0, 0.5],
+        support: [1.22, LOCAL_BACK_ROW_Z],
+        lands: [-1.22, LOCAL_BACK_ROW_Z],
       },
       widths: POD_LOCAL_WIDTHS,
     };

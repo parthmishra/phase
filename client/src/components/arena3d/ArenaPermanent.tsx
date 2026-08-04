@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -7,8 +7,18 @@ import {
   ARENA_CARD_WIDTH,
   type ArenaPlacement,
 } from "./arenaLayout.ts";
+import {
+  ARENA_BOTTOM_FRAME_DEPTH_RATIO,
+  ARENA_CARD_COLLAPSE_DURATION_SECONDS,
+  ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO,
+  arenaCardCollapseProgress,
+  arenaCardCollapseTransform,
+  arenaCardStatUv,
+  collapsedArenaCardV,
+} from "./arenaCardCollapse.ts";
+import { ARENA_CARD_STAT_RECT } from "./arenaCardCanvas.ts";
 import { ArenaCardGlow } from "./ArenaCardGlow.tsx";
-import { useArenaCardTexture } from "./useArenaCardTexture.ts";
+import { useArenaCardTextures } from "./useArenaCardTexture.ts";
 import { useArenaPermanentInteraction } from "./useArenaPermanentInteraction.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 
@@ -16,8 +26,13 @@ const CARD_WIDTH = ARENA_CARD_WIDTH;
 const CARD_HEIGHT = ARENA_CARD_DEPTH;
 const CARD_CORNER_RADIUS = 0.09;
 const CARD_THICKNESS = 0.026;
+const STAT_BADGE_TARGET_WIDTH_RATIO = 0.29;
+const STAT_BADGE_TARGET_DEPTH_RATIO = 0.105;
+const STAT_BADGE_RIGHT_MARGIN_RATIO = 0.018;
 const CARD_FACE_GEOMETRY = makeRoundedCardFaceGeometry();
 const CARD_BODY_GEOMETRY = makeRoundedCardBodyGeometry();
+const CARD_BOTTOM_FRAME_GEOMETRY = makeBottomFrameGeometry();
+const CARD_STAT_BADGE_GEOMETRY = makeStatBadgeGeometry();
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
@@ -32,16 +47,44 @@ export function ArenaPermanent({
   cardScale,
 }: ArenaPermanentProps) {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
-  const texture = useArenaCardTexture(objectId, pileCount);
+  // ArenaPermanent only renders engine-authored battlefield objects, so every
+  // mounted face uses the same compact battlefield treatment.
+  const collapseOnBattlefield = object != null;
+  const showStatBadge =
+    (
+      object?.power != null
+      && object.toughness != null
+    )
+    || object?.loyalty != null;
+  const textures = useArenaCardTextures(
+    objectId,
+    pileCount,
+    collapseOnBattlefield,
+  );
+  // Permanents retain the exact composed face used in hand for their entire
+  // battlefield lifetime. Arrival progress changes only geometry and UV crop;
+  // it must never swap the crown/name treatment for a compact replacement.
+  const faceTexture = collapseOnBattlefield
+    ? textures.fullCard
+    : textures.battlefield;
   const interaction = useArenaPermanentInteraction(objectId);
   const groupRef = useRef<THREE.Group>(null);
+  const surfaceRef = useRef<THREE.Group>(null);
+  const bottomFrameRef = useRef<THREE.Mesh>(null);
+  const statBadgeRef = useRef<THREE.Mesh>(null);
+  const faceMaterialRef = useRef<THREE.MeshLambertMaterial>(null);
   const arrivalAgeRef = useRef(0);
+  const previousPileCountRef = useRef(pileCount);
   const initialPlacementRef = useRef({
     attackVector,
     cardScale,
     faceAngle,
     position,
   });
+  const faceGeometry = useMemo(
+    () => CARD_FACE_GEOMETRY.clone(),
+    [],
+  );
   const { invalidate } = useThree();
 
   useLayoutEffect(() => {
@@ -50,13 +93,63 @@ export function ArenaPermanent({
     const initial = initialPlacementRef.current;
     group.position.set(
       initial.position[0] + initial.attackVector[0] * 0.14,
-      initial.position[1] + 0.42,
+      initial.position[1] + 0.34,
       initial.position[2] + initial.attackVector[1] * 0.14,
     );
     group.rotation.y = initial.faceAngle;
-    group.scale.setScalar(initial.cardScale * 0.86);
+    group.scale.setScalar(initial.cardScale * 0.94);
+    applyArenaCardCollapse(
+      surfaceRef.current,
+      bottomFrameRef.current,
+      statBadgeRef.current,
+      faceGeometry,
+      0,
+      collapseOnBattlefield,
+    );
     invalidate();
-  }, [invalidate]);
+  }, [collapseOnBattlefield, faceGeometry, invalidate]);
+
+  useEffect(
+    () => () => {
+      faceGeometry.dispose();
+    },
+    [faceGeometry],
+  );
+
+  useEffect(() => {
+    const previousPileCount = previousPileCountRef.current;
+    previousPileCountRef.current = pileCount;
+    if (!collapseOnBattlefield || pileCount <= previousPileCount) return;
+
+    const group = groupRef.current;
+    if (!group) return;
+    arrivalAgeRef.current = 0;
+    group.position.set(
+      position[0] + attackVector[0] * 0.14,
+      position[1] + 0.34,
+      position[2] + attackVector[1] * 0.14,
+    );
+    group.rotation.y = faceAngle;
+    group.scale.setScalar(cardScale * 0.94);
+    applyArenaCardCollapse(
+      surfaceRef.current,
+      bottomFrameRef.current,
+      statBadgeRef.current,
+      faceGeometry,
+      0,
+      true,
+    );
+    invalidate();
+  }, [
+    attackVector,
+    cardScale,
+    collapseOnBattlefield,
+    faceAngle,
+    faceGeometry,
+    invalidate,
+    pileCount,
+    position,
+  ]);
 
   useEffect(() => invalidate(), [
     faceAngle,
@@ -71,19 +164,46 @@ export function ArenaPermanent({
     invalidate,
     object?.tapped,
     position,
-    texture,
+    faceTexture,
   ]);
 
   useFrame((_, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
-    const arrivalDuration = 0.52;
-    arrivalAgeRef.current = Math.min(
-      arrivalDuration,
-      arrivalAgeRef.current + delta,
-    );
+    const arrivalDuration = ARENA_CARD_COLLAPSE_DURATION_SECONDS;
+    const arrivalReady =
+      !collapseOnBattlefield || textures.fullCard != null;
+    if (arrivalReady) {
+      arrivalAgeRef.current = Math.min(
+        arrivalDuration,
+        arrivalAgeRef.current + delta,
+      );
+    }
     const arrivalProgress = arrivalAgeRef.current / arrivalDuration;
+    const collapseProgress = arenaCardCollapseProgress(
+      arrivalAgeRef.current,
+    );
+    applyArenaCardCollapse(
+      surfaceRef.current,
+      bottomFrameRef.current,
+      statBadgeRef.current,
+      faceGeometry,
+      collapseProgress,
+      collapseOnBattlefield,
+    );
+
+    const faceMaterial = faceMaterialRef.current;
+    if (faceMaterial) {
+      const nextTexture = faceTexture;
+      if (faceMaterial.map !== nextTexture) {
+        faceMaterial.map = nextTexture;
+        faceMaterial.color.set(nextTexture ? "#ffffff" : "#171a20");
+        faceMaterial.emissive.set(nextTexture ? "#050505" : "#080b10");
+        faceMaterial.emissiveIntensity = nextTexture ? 0.02 : 0.18;
+        faceMaterial.needsUpdate = true;
+      }
+    }
 
     const response = 1 - Math.exp(-delta * 14);
     const targetX =
@@ -95,7 +215,7 @@ export function ArenaPermanent({
       + (interaction.isAttacking ? 0.07 : 0)
       + (interaction.isHovered ? 0.045 : 0);
     const targetRotation =
-      faceAngle + (object?.tapped ? Math.PI / 2 : 0);
+      faceAngle + (object?.tapped ? Math.PI / 4 : 0);
     const targetScale = cardScale;
 
     group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
@@ -115,12 +235,17 @@ export function ArenaPermanent({
       || Math.abs(group.position.z - targetZ) > 0.001
       || Math.abs(angleDelta(group.rotation.y, targetRotation)) > 0.001
       || Math.abs(group.scale.x - targetScale) > 0.001;
-    if (unsettled || arrivalProgress < 1) invalidate();
+    if (unsettled || (arrivalReady && arrivalProgress < 1)) invalidate();
   });
 
   if (!object) return null;
 
   const visualState = permanentVisualState(interaction);
+  const restingCardHeight = collapseOnBattlefield
+    ? CARD_HEIGHT * ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO
+    : CARD_HEIGHT;
+  const tappedHitFootprint =
+    (CARD_WIDTH + restingCardHeight) / Math.SQRT2;
 
   const handlePointerOver = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -152,8 +277,8 @@ export function ArenaPermanent({
       >
         <planeGeometry
           args={[
-            (object.tapped ? CARD_HEIGHT : CARD_WIDTH) * cardScale * 1.2,
-            (object.tapped ? CARD_WIDTH : CARD_HEIGHT) * cardScale * 1.2,
+            (object.tapped ? tappedHitFootprint : CARD_WIDTH) * cardScale * 1.2,
+            (object.tapped ? tappedHitFootprint : restingCardHeight) * cardScale * 1.2,
           ]}
         />
         <meshBasicMaterial
@@ -164,51 +289,114 @@ export function ArenaPermanent({
       </mesh>
 
       <group ref={groupRef}>
-        {visualState.underglow && (
-          <ArenaCardGlow
-            width={CARD_WIDTH}
-            height={CARD_HEIGHT}
-            padding={visualState.underglow.padding}
-            color={visualState.underglow.color}
-            opacity={visualState.underglow.opacity}
-            y={-0.004}
-          />
+        <group ref={surfaceRef}>
+          {visualState.underglow && (
+            <ArenaCardGlow
+              width={CARD_WIDTH}
+              height={CARD_HEIGHT}
+              padding={visualState.underglow.padding}
+              color={visualState.underglow.color}
+              opacity={visualState.underglow.opacity}
+              y={-0.004}
+            />
+          )}
+
+          {visualState.bracketColor && (
+            <ArenaTargetBrackets color={visualState.bracketColor} />
+          )}
+
+          <mesh
+            geometry={CARD_BODY_GEOMETRY}
+            rotation={[-Math.PI / 2, 0, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial
+              color="#151820"
+              roughness={0.98}
+              metalness={0}
+            />
+          </mesh>
+
+          <mesh
+            geometry={faceGeometry}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.003, 0]}
+            receiveShadow
+          >
+            <meshLambertMaterial
+              ref={faceMaterialRef}
+              key={faceTexture?.uuid ?? "arena-loading"}
+              map={faceTexture}
+              color={faceTexture ? "#ffffff" : "#171a20"}
+              transparent
+              alphaTest={0.06}
+              emissive={faceTexture ? "#050505" : "#080b10"}
+              emissiveIntensity={faceTexture ? 0.02 : 0.18}
+              shadowSide={THREE.DoubleSide}
+            />
+          </mesh>
+          {object.tapped && (
+            <mesh
+              geometry={faceGeometry}
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0.007, 0]}
+              renderOrder={3}
+            >
+              <meshBasicMaterial
+                color="#7f8585"
+                transparent
+                opacity={0.34}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          )}
+        </group>
+
+        {collapseOnBattlefield && (
+          <mesh
+            ref={bottomFrameRef}
+            geometry={CARD_BOTTOM_FRAME_GEOMETRY}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.004, 0]}
+            receiveShadow
+            renderOrder={1}
+          >
+            <meshLambertMaterial
+              key={faceTexture?.uuid ?? "arena-bottom-frame-loading"}
+              map={faceTexture}
+              color={faceTexture ? "#ffffff" : "#171a20"}
+              transparent
+              alphaTest={0.06}
+              emissive={faceTexture ? "#050505" : "#080b10"}
+              emissiveIntensity={faceTexture ? 0.02 : 0.18}
+              shadowSide={THREE.DoubleSide}
+            />
+          </mesh>
         )}
 
-        {visualState.bracketColor && (
-          <ArenaTargetBrackets color={visualState.bracketColor} />
+        {showStatBadge && (
+          <mesh
+            ref={statBadgeRef}
+            geometry={CARD_STAT_BADGE_GEOMETRY}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.005, 0]}
+            receiveShadow
+            renderOrder={2}
+          >
+            <meshLambertMaterial
+              key={faceTexture?.uuid ?? "arena-stat-loading"}
+              map={faceTexture}
+              color={faceTexture ? "#ffffff" : "#171a20"}
+              transparent
+              alphaTest={0.06}
+              emissive={faceTexture ? "#050505" : "#080b10"}
+              emissiveIntensity={faceTexture ? 0.02 : 0.18}
+              shadowSide={THREE.DoubleSide}
+            />
+          </mesh>
         )}
-
-        <mesh
-          geometry={CARD_BODY_GEOMETRY}
-          rotation={[-Math.PI / 2, 0, 0]}
-          castShadow
-          receiveShadow
-        >
-          <meshStandardMaterial
-            color="#151820"
-            roughness={0.98}
-            metalness={0}
-          />
-        </mesh>
-
-        <mesh
-          geometry={CARD_FACE_GEOMETRY}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.003, 0]}
-          receiveShadow
-        >
-          <meshLambertMaterial
-            key={texture?.uuid ?? "arena-loading"}
-            map={texture}
-            color={texture ? "#ffffff" : "#171a20"}
-            transparent
-            alphaTest={0.06}
-            emissive={texture ? "#050505" : "#080b10"}
-            emissiveIntensity={texture ? 0.02 : 0.18}
-            shadowSide={THREE.DoubleSide}
-          />
-        </mesh>
       </group>
     </group>
   );
@@ -364,6 +552,36 @@ function makeRoundedCardFaceGeometry(): THREE.ShapeGeometry {
   return geometry;
 }
 
+function makeBottomFrameGeometry(): THREE.PlaneGeometry {
+  const geometry = new THREE.PlaneGeometry(
+    CARD_WIDTH,
+    CARD_HEIGHT * ARENA_BOTTOM_FRAME_DEPTH_RATIO,
+  );
+  const uvs = geometry.getAttribute("uv");
+  for (let index = 0; index < uvs.count; index += 1) {
+    uvs.setY(index, uvs.getY(index) * ARENA_BOTTOM_FRAME_DEPTH_RATIO);
+  }
+  uvs.needsUpdate = true;
+  return geometry;
+}
+
+function makeStatBadgeGeometry(): THREE.PlaneGeometry {
+  const geometry = new THREE.PlaneGeometry(
+    CARD_WIDTH * STAT_BADGE_TARGET_WIDTH_RATIO,
+    CARD_HEIGHT * STAT_BADGE_TARGET_DEPTH_RATIO,
+  );
+  const uvs = geometry.getAttribute("uv");
+  for (let index = 0; index < uvs.count; index += 1) {
+    const mapped = arenaCardStatUv(
+      uvs.getX(index),
+      uvs.getY(index),
+    );
+    uvs.setXY(index, mapped.u, mapped.v);
+  }
+  uvs.needsUpdate = true;
+  return geometry;
+}
+
 function makeRoundedCardBodyGeometry(): THREE.ExtrudeGeometry {
   const geometry = new THREE.ExtrudeGeometry(makeRoundedCardShape(), {
     depth: CARD_THICKNESS,
@@ -373,6 +591,88 @@ function makeRoundedCardBodyGeometry(): THREE.ExtrudeGeometry {
   });
   geometry.translate(0, 0, -CARD_THICKNESS);
   return geometry;
+}
+
+function applyArenaCardCollapse(
+  surface: THREE.Group | null,
+  bottomFrame: THREE.Mesh | null,
+  statBadge: THREE.Mesh | null,
+  faceGeometry: THREE.ShapeGeometry,
+  progress: number,
+  enabled: boolean,
+): void {
+  if (!surface) return;
+  const transform = arenaCardCollapseTransform(
+    enabled ? progress : 0,
+    enabled ? ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO : 1,
+  );
+  surface.scale.set(1, 1, transform.depthScale);
+  surface.position.z =
+    transform.centerOffsetInCardDepths * CARD_HEIGHT;
+  const bottomEdge =
+    (transform.centerOffsetInCardDepths + transform.depthScale / 2)
+    * CARD_HEIGHT;
+
+  if (bottomFrame) {
+    bottomFrame.visible = enabled;
+    const frameHeight =
+      CARD_HEIGHT * ARENA_BOTTOM_FRAME_DEPTH_RATIO;
+    bottomFrame.position.z = bottomEdge - frameHeight / 2;
+  }
+
+  if (statBadge) {
+    const sourceScaleX =
+      ARENA_CARD_STAT_RECT.width / STAT_BADGE_TARGET_WIDTH_RATIO;
+    const sourceScaleZ =
+      ARENA_CARD_STAT_RECT.height / STAT_BADGE_TARGET_DEPTH_RATIO;
+    statBadge.scale.set(
+      THREE.MathUtils.lerp(sourceScaleX, 1, transform.easedProgress),
+      THREE.MathUtils.lerp(sourceScaleZ, 1, transform.easedProgress),
+      1,
+    );
+
+    const sourceCenterX =
+      (
+        ARENA_CARD_STAT_RECT.x
+        + ARENA_CARD_STAT_RECT.width / 2
+        - 0.5
+      )
+      * CARD_WIDTH;
+    const targetCenterX =
+      CARD_WIDTH / 2
+      - CARD_WIDTH * STAT_BADGE_RIGHT_MARGIN_RATIO
+      - CARD_WIDTH * STAT_BADGE_TARGET_WIDTH_RATIO / 2;
+    statBadge.position.x = THREE.MathUtils.lerp(
+      sourceCenterX,
+      targetCenterX,
+      transform.easedProgress,
+    );
+
+    const sourceCenterZ =
+      (
+        ARENA_CARD_STAT_RECT.y
+        + ARENA_CARD_STAT_RECT.height / 2
+        - 0.5
+      )
+      * CARD_HEIGHT;
+    const targetCenterZ =
+      bottomEdge - CARD_HEIGHT * STAT_BADGE_TARGET_DEPTH_RATIO / 2;
+    statBadge.position.z = THREE.MathUtils.lerp(
+      sourceCenterZ,
+      targetCenterZ,
+      transform.easedProgress,
+    );
+  }
+
+  const positions = faceGeometry.getAttribute("position");
+  const uvs = faceGeometry.getAttribute("uv");
+  const visibleTextureRatio = enabled ? transform.visibleTextureRatio : 1;
+  for (let index = 0; index < uvs.count; index += 1) {
+    const baseV =
+      (positions.getY(index) + CARD_HEIGHT / 2) / CARD_HEIGHT;
+    uvs.setY(index, collapsedArenaCardV(baseV, visibleTextureRatio));
+  }
+  uvs.needsUpdate = true;
 }
 
 function angleDelta(from: number, to: number): number {

@@ -100,8 +100,8 @@ export function GameMenu({
          container's left edge and is unaffected by the row's flow. */
       className="fixed z-40 flex items-center gap-2"
       style={{
-        left: "calc(env(safe-area-inset-left) + 0.5rem)",
-        top: "calc(env(safe-area-inset-top) + var(--game-top-overlay-offset, 0px) + 0.75rem)",
+        left: "calc(env(safe-area-inset-left) + 0.25rem)",
+        top: "calc(env(safe-area-inset-top) + var(--game-top-overlay-offset, 0px) + 0.25rem)",
       }}
     >
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-200/45 bg-slate-950/84 shadow-[0_8px_22px_rgba(0,0,0,0.32),0_0_14px_rgba(34,211,238,0.22)] backdrop-blur-md">

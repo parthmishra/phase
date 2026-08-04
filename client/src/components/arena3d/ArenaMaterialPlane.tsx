@@ -5,8 +5,10 @@ import * as THREE from "three";
 import {
   ARENA_MATERIAL_PLANE_DEPTH,
   ARENA_MATERIAL_PLANE_WIDTH,
-  ARENA_STONE_TEXTURE_URL,
   configureArenaStoneTexture,
+  createArenaStoneMaterial,
+  selectArenaStoneTextureFocusScale,
+  selectArenaStoneTextureUrls,
 } from "./arenaMaterialPlane.ts";
 
 /**
@@ -15,8 +17,17 @@ import {
  * slab edge, or furniture silhouette competes with the cards.
  */
 export function ArenaMaterialPlane() {
-  const { gl, invalidate } = useThree();
-  const colorMap = useLoader(THREE.TextureLoader, ARENA_STONE_TEXTURE_URL);
+  const { gl, invalidate, size } = useThree();
+  const textureUrls = selectArenaStoneTextureUrls(
+    size.width * gl.getPixelRatio(),
+  );
+  const textureFocusScale = selectArenaStoneTextureFocusScale(
+    size.width / Math.max(size.height, 1),
+  );
+  const [colorMap, normalMap, roughnessMap] = useLoader(
+    THREE.TextureLoader,
+    [textureUrls.color, textureUrls.normal, textureUrls.roughness],
+  );
   const geometry = useMemo(
     () =>
       new THREE.PlaneGeometry(
@@ -25,38 +36,57 @@ export function ArenaMaterialPlane() {
       ),
     [],
   );
-  const material = useMemo(
+  const surfaceMaterial = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
-        map: colorMap,
-        color: "#f1f3ef",
-        roughness: 0.94,
-        metalness: 0,
-        envMapIntensity: 0.28,
+      createArenaStoneMaterial({
+        color: colorMap,
+        normal: normalMap,
+        roughness: roughnessMap,
       }),
-    [colorMap],
+    [colorMap, normalMap, roughnessMap],
   );
 
   useEffect(() => {
     configureArenaStoneTexture(
       colorMap,
       gl.capabilities.getMaxAnisotropy(),
+      "color",
+      textureFocusScale,
+    );
+    configureArenaStoneTexture(
+      normalMap,
+      gl.capabilities.getMaxAnisotropy(),
+      "data",
+      textureFocusScale,
+    );
+    configureArenaStoneTexture(
+      roughnessMap,
+      gl.capabilities.getMaxAnisotropy(),
+      "data",
+      textureFocusScale,
     );
     invalidate();
-  }, [colorMap, gl, invalidate]);
+  }, [
+    colorMap,
+    gl,
+    invalidate,
+    normalMap,
+    roughnessMap,
+    textureFocusScale,
+  ]);
 
   useEffect(
     () => () => {
       geometry.dispose();
-      material.dispose();
+      surfaceMaterial.dispose();
     },
-    [geometry, material],
+    [geometry, surfaceMaterial],
   );
 
   return (
     <mesh
       geometry={geometry}
-      material={material}
+      material={surfaceMaterial}
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, 0, 0]}
       receiveShadow

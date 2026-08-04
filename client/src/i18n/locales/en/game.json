@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Rotate your device",
+    "description": "Battlefield play is available in landscape mode on phones and tablets.",
+    "exit": "Back to menu"
+  },
   "abilityBlock": {
     "badge": "Blocked",
     "cantBeActivated": "This ability can't be activated",

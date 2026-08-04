@@ -6,6 +6,7 @@ import { usePlayerDesignations } from "../../hooks/usePlayerDesignations.ts";
 import { useSeatColor } from "../../hooks/useSeatColor.ts";
 import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
 import { useIsMobile } from "../../hooks/useIsMobile.ts";
+import { useTurnStatus } from "../../hooks/useTurnStatus.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerDisplayName, useMultiplayerStore } from "../../stores/multiplayerStore.ts";
 import { ScoreBadge } from "../draft/ScoreBadge.tsx";
@@ -18,6 +19,7 @@ import { CityBlessingBadge, ConditionBadge, CounterBadge, DungeonBadge, familyOf
 import { EnchantmentsBadge } from "./EnchantmentsBadge.tsx";
 import { HudPlate } from "./HudPlate.tsx";
 import { NextUpBadge } from "./NextUpBadge.tsx";
+import { PriorityMarker } from "./TurnStatusLine.tsx";
 
 export function PlayerHud() {
   const { t } = useTranslation("game");
@@ -43,6 +45,7 @@ export function PlayerHud() {
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
   const compact = isMobile || isCompactHeight;
+  const { waitingSeatId, reason } = useTurnStatus();
 
   const isHumanTargetSelection =
     (waitingFor?.type === "TargetSelection" || waitingFor?.type === "TriggerTargetSelection")
@@ -78,6 +81,9 @@ export function PlayerHud() {
   const hudTone = isValidTarget ? "cyan" : isMyTurn ? "emerald" : "neutral";
   const seatColor = useSeatColor(playerId);
   const avatarUrl = useMultiplayerStore((s) => s.playerAvatars.get(playerId) ?? null);
+  const priorityTitle = waitingSeatId === playerId
+    ? t(reason?.key ?? "status.reason.thinking", reason?.params)
+    : undefined;
 
   return (
     <div
@@ -98,7 +104,17 @@ export function PlayerHud() {
         playerId={playerId}
         density={compact ? "compact" : "default"}
         onClick={isValidTarget ? handleTargetClick : undefined}
-        cornerBadge={<NextUpBadge playerId={playerId} compact={compact} />}
+        cornerBadge={
+          <div className="flex items-center gap-1">
+            <NextUpBadge playerId={playerId} compact={compact} />
+            <PriorityMarker
+              active={waitingSeatId === playerId}
+              reasonKey={reason?.key}
+              seatColor={seatColor}
+              title={priorityTitle}
+            />
+          </div>
+        }
         trailing={
           <>
             <EnchantmentsBadge playerId={playerId} />

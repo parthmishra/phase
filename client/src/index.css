@@ -100,8 +100,239 @@
   --surface-card: linear-gradient(180deg, rgba(13, 18, 29, 0.88), rgba(9, 13, 24, 0.92));
   --bg-app: radial-gradient(circle at top, rgba(251, 146, 60, 0.12), transparent 30%),
     linear-gradient(180deg, #040816 0%, #050b1d 36%, #02050f 100%);
+  --arena-ui-edge: rgba(194, 180, 143, 0.3);
+  --arena-ui-edge-bright: rgba(230, 216, 177, 0.16);
+  --arena-ui-inset: rgba(2, 5, 4, 0.46);
   --measure: 66ch;
   --measure-tight: 48ch;
+}
+
+/* Battlefield HUD material
+   -------------------------------------------------------------------------
+   The Arena surface is broad, painterly stone; the HUD should read as pieces
+   set into that surface rather than a second blue-glass web application. These
+   treatments deliberately use broad gradients, restrained aged-metal edges,
+   and compact architectural corners. State colors remain semantic accents. */
+.arena-hud-plate,
+.arena-opponent-tab,
+.arena-command-shelf,
+.arena-phase-plaque,
+.arena-control-chip,
+.arena-status-plaque,
+.arena-icon-control {
+  border-radius: 5px;
+  box-shadow:
+    inset 0 1px 0 var(--arena-ui-edge-bright),
+    inset 0 -1px 0 var(--arena-ui-inset),
+    0 10px 24px rgba(0, 0, 0, 0.28);
+}
+
+.arena-hud-plate,
+.arena-opponent-tab,
+.arena-phase-plaque,
+.arena-control-chip,
+.arena-status-plaque,
+.arena-icon-control {
+  background-color: rgba(16, 18, 15, 0.96);
+  background-image:
+    radial-gradient(circle at 18% 12%, rgba(221, 205, 164, 0.08), transparent 34%),
+    linear-gradient(105deg, rgba(255, 245, 214, 0.035), transparent 42%),
+    linear-gradient(180deg, rgba(34, 36, 30, 0.97), rgba(13, 15, 12, 0.98));
+}
+
+.arena-hud-plate {
+  border-radius: 9999px;
+}
+
+.arena-hud-plate::after,
+.arena-command-shelf::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  inset: 3px;
+  border: 1px solid rgba(224, 208, 168, 0.06);
+}
+
+.arena-hud-plate::after {
+  border-radius: 9999px;
+}
+
+.arena-command-shelf::after {
+  border-radius: 2px;
+}
+
+.arena-command-shelf {
+  border-color: var(--arena-ui-edge);
+  background:
+    linear-gradient(115deg, rgba(202, 186, 145, 0.055), transparent 34%),
+    linear-gradient(180deg, rgba(25, 28, 23, 0.96), rgba(10, 12, 10, 0.97));
+  box-shadow:
+    inset 0 1px 0 rgba(239, 225, 184, 0.15),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.5),
+    0 18px 42px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px);
+}
+
+.arena-command-shelf > * {
+  position: relative;
+  z-index: 1;
+}
+
+.arena-control-chip,
+.arena-status-plaque,
+.arena-icon-control,
+.arena-phase-plaque {
+  border-color: rgba(177, 166, 137, 0.22);
+}
+
+[data-action-button-panel] > button {
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 210, 0.1),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.32),
+    0 5px 12px rgba(0, 0, 0, 0.22);
+  letter-spacing: 0.055em;
+}
+
+[data-action-button-panel] > button:only-child {
+  grid-column: 1 / -1;
+}
+
+@media (width >= 64rem) {
+  .arena-command-shelf [data-action-button-panel] {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(11rem, 1.35fr) minmax(7rem, 1fr);
+  }
+
+  .arena-command-shelf [data-action-button-panel] > button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+[data-opponent-hud-rail] {
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.24));
+}
+
+[data-opponent-hud-seats] {
+  /* Keep the multi-seat treatment compact on phones and short landscape
+     viewports; full-height desktop canvases receive an Arena-scale curve
+     below instead of sharing this mobile-first ceiling. */
+  --arena-opponent-avatar-size:
+    clamp(2.5rem, calc(1.5rem + 1vw), 4rem);
+  --arena-opponent-marker-width:
+    calc(var(--arena-opponent-avatar-size) + 1rem);
+  --arena-opponent-life-size:
+    clamp(1rem, calc(0.75rem + 0.2vw), 1.25rem);
+  --arena-opponent-name-size:
+    clamp(0.5rem, calc(0.375rem + 0.12vw), 0.6875rem);
+  --arena-opponent-follow-size:
+    clamp(1.75rem, calc(1.25rem + 0.4vw), 2.5rem);
+}
+
+@media (min-width: 64rem) and (min-height: 42rem) {
+  [data-opponent-hud-seats] {
+    /* MTG Arena's opponent portrait occupies roughly 110–125px in a
+       1920×1080 gameplay frame. This curve lands near 107px at 1080p,
+       160px at 4K, and remains bounded at 176px on 5K displays. */
+    --arena-opponent-avatar-size:
+      clamp(5.25rem, calc(3.375rem + 2.75vw), 11rem);
+    --arena-opponent-marker-width:
+      calc(var(--arena-opponent-avatar-size) + 1.5rem);
+    --arena-opponent-life-size:
+      clamp(1.25rem, calc(0.9rem + 0.45vw), 2rem);
+    --arena-opponent-name-size:
+      clamp(0.625rem, calc(0.45rem + 0.2vw), 0.9rem);
+    --arena-opponent-follow-size:
+      clamp(2.25rem, calc(1.5rem + 0.75vw), 3.5rem);
+  }
+}
+
+.arena-opponent-seat-marker {
+  width: var(--arena-opponent-marker-width);
+}
+
+.arena-opponent-seat-avatar {
+  width: var(--arena-opponent-avatar-size);
+  height: var(--arena-opponent-avatar-size);
+  min-width: var(--arena-opponent-avatar-size);
+  min-height: var(--arena-opponent-avatar-size);
+  max-width: var(--arena-opponent-avatar-size);
+  max-height: var(--arena-opponent-avatar-size);
+  flex-basis: var(--arena-opponent-avatar-size);
+  aspect-ratio: 1;
+  contain: layout paint size;
+}
+
+.arena-opponent-seat-avatar > img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Mobile browsers do not all expose the same CSS viewport while zoomed,
+   installed, or using a high-DPR landscape screen. Coarse-pointer phones can
+   therefore satisfy a nominal desktop width even though their usable height is
+   phone-sized. Cap the seat marker with both axes so the portrait stays a HUD
+   token instead of becoming a battlefield-sized image. */
+@media (pointer: coarse) and (max-width: 80rem),
+  (pointer: coarse) and (max-height: 50rem) {
+  [data-opponent-hud-seats] {
+    --arena-opponent-avatar-size:
+      clamp(3.25rem, min(7vw, 13dvh), 4.5rem);
+    --arena-opponent-marker-width:
+      calc(var(--arena-opponent-avatar-size) + 0.875rem);
+    --arena-opponent-life-size:
+      clamp(0.875rem, min(2.4vw, 3.8dvh), 1.125rem);
+    --arena-opponent-name-size:
+      clamp(0.5rem, min(1.4vw, 2.2dvh), 0.625rem);
+    --arena-opponent-follow-size:
+      clamp(2.75rem, min(5.5vw, 11dvh), 3.25rem);
+  }
+}
+
+.arena-opponent-seat-life {
+  font-size: var(--arena-opponent-life-size);
+}
+
+.arena-opponent-seat-name {
+  font-size: var(--arena-opponent-name-size);
+}
+
+.arena-opponent-seat-statuses {
+  max-width: var(--arena-opponent-marker-width);
+}
+
+.arena-opponent-tab {
+  overflow: visible;
+}
+
+.arena-opponent-tab:focus-visible,
+.arena-icon-control:focus-visible,
+.arena-control-chip:focus-visible,
+.arena-hud-plate:focus-visible {
+  outline: 2px solid rgba(164, 220, 218, 0.75);
+  outline-offset: 2px;
+}
+
+.arena-icon-control[data-arena-follow-control="true"] {
+  width: var(--arena-opponent-follow-size);
+  height: var(--arena-opponent-follow-size);
+  border-radius: 9999px;
+}
+
+/* iPad and other coarse-pointer layouts can share the denser desktop
+   composition, but their interactive targets must remain finger-sized. */
+@media (pointer: coarse) {
+  .arena-phase-plaque button,
+  .arena-icon-control,
+  .arena-control-chip,
+  [data-action-button-panel] > button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }
 
 /* Raised top-lit glass card surface (the gradient companion to bg-surface-*). */
@@ -518,12 +749,15 @@ select.select-dark option {
   }
 }
 
-/* Landscape phones: very short viewport needs aggressive card shrink
-   and repositioned fixed UI elements */
+/* Landscape phones keep card faces large enough for their title, cost, and
+   upper rules text to survive high-DPR rasterization. The wide fan already
+   overlaps cards to fit the viewport, so shrinking every card to 75% only
+   destroys legibility without buying useful battlefield space. */
 @media (max-height: 500px) {
   :root {
-    --card-viewport-scale: 0.75;
-    --art-crop-viewport-scale: 0.7;
+    --card-viewport-scale: 0.95;
+    --art-crop-viewport-scale: 0.9;
+    --hand-card-scale: 1.45;
     --action-btn-bottom: 0.25rem;
     --action-btn-right: 3rem;
     --game-edge-right: 0.375rem;
@@ -553,10 +787,10 @@ select.select-dark option {
    Tailwind v4's `max-lg:` boundary exactly (strict <, rem-based). */
 @media (width < 64rem) and (orientation: portrait) {
   :root {
-    --game-mobile-hand-lift: 1rem;
-    --game-mobile-pile-lift: 16rem;
+    --game-mobile-hand-lift: 9rem;
+    --game-mobile-pile-lift: 17rem;
     --game-mobile-command-lift: 0.5rem;
-    --game-mobile-player-hud-lift: 0.5rem;
+    --game-mobile-player-hud-lift: 12.75rem;
     --game-mobile-player-hud-shift-x: 1.125rem;
   }
 
@@ -619,29 +853,77 @@ select.select-dark option {
     transform-origin: bottom center !important;
   }
 
-  [data-mobile-action-left],
+  [data-mobile-action-left] {
+    width: 42%;
+  }
+
   [data-mobile-action-right] {
-    width: min(calc((100vw - 3rem) / 2), 9.5rem);
+    width: 56%;
+  }
+
+  [data-arena-screen-space-ui="player-hud"] {
+    bottom: calc(env(safe-area-inset-bottom) + clamp(13rem, 26dvh, 17rem)) !important;
+  }
+
+  [data-opponent-hud-rail] {
+    gap: 0.25rem;
+    padding-inline: max(0.25rem, env(safe-area-inset-left));
+  }
+
+  [data-opponent-tab] {
+    min-width: 0;
+  }
+
+  [data-action-button-panel] > button {
+    min-height: 2.75rem;
+    padding-inline: 0.45rem;
+    line-height: 1.15;
   }
 }
 
-/* iOS reserves the landscape bottom edge for the Home/App Switcher gesture.
-   A website or installed PWA cannot suppress that system gesture, so keep the
-   fanned hand's touch surface above its safe-area inset. The 1.25rem floor also
-   protects browser-mode layouts where WebKit reports a transient zero inset. */
+/* The fan's own resting curve intentionally leaves its lower frame below the
+   viewport, matching the desktop/Arena silhouette. Cancel the grid's safe-area
+   padding for this visual row; the exposed upper card remains the touch target
+   and the system gesture region stays free of essential controls. */
 @media (width < 64rem) and (orientation: landscape) {
   [data-flex-zone="playerHandRow"] {
-    transform: translateY(calc(-1 * max(env(safe-area-inset-bottom), 1.25rem)));
+    transform: translateY(max(env(safe-area-inset-bottom), 0.5rem));
+  }
+
+  /* Keep the local identity attached to the near edge but above the resting
+     fan silhouette. PlayerHand updates this stage-scoped value from the
+     rendered center card, including during the mobile tap-lift animation. */
+  [data-arena-screen-space-ui="player-hud"] {
+    bottom: var(
+      --arena-player-hud-bottom,
+      calc(env(safe-area-inset-bottom) + 0.75rem)
+    ) !important;
+    z-index: 40;
   }
 }
 
 @media (width < 64rem) and (max-aspect-ratio: 10/11) {
   :root {
-    --game-mobile-hand-lift: 3.25rem;
-    --game-mobile-pile-lift: 18.5rem;
+    --game-mobile-hand-lift: 9.5rem;
+    --game-mobile-pile-lift: 18rem;
     --game-mobile-command-lift: 0.75rem;
-    --game-mobile-player-hud-lift: 1.25rem;
+    --game-mobile-player-hud-lift: 13rem;
     --game-mobile-player-hud-shift-x: 1.5rem;
+  }
+}
+
+@media (width < 30rem) and (orientation: portrait) {
+  [data-opponent-hud-seats] {
+    --arena-opponent-row-top: calc(env(safe-area-inset-top) + 0.5rem);
+    --arena-opponent-follow-top: calc(env(safe-area-inset-top) + 0.7rem);
+  }
+
+  [data-opponent-tab] .arena-opponent-avatar {
+    display: none;
+  }
+
+  [data-mobile-phase-label] {
+    display: none;
   }
 }
 

@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Obróć urządzenie",
+    "description": "Pole bitwy jest dostępne w orientacji poziomej na telefonach i tabletach.",
+    "exit": "Wróć do menu"
+  },
   "abilityBlock": {
     "badge": "Zablokowana",
     "cantBeActivated": "Tej zdolności nie można aktywować",

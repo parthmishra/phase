@@ -4,7 +4,13 @@ import * as THREE from "three";
 import type { ArenaCardPresentation } from "./arenaCardPresentation.ts";
 import { arenaCardRevision, buildArenaCardPresentation } from "./arenaCardPresentation.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
+import {
+  ARENA_CARD_HEIGHT as FULL_CARD_TEXTURE_HEIGHT,
+  ARENA_CARD_WIDTH as FULL_CARD_TEXTURE_WIDTH,
+  renderArenaCardCanvas,
+} from "./arenaCardCanvas.ts";
 import { useCardImage } from "../../hooks/useCardImage.ts";
+import { useEngineCardData } from "../../hooks/useEngineCardData.ts";
 import { cardImageLookup, tokenFiltersForObject } from "../../services/cardImageLookup.ts";
 import { CARD_BACK_URL } from "../../services/scryfall.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
@@ -22,12 +28,21 @@ interface TextureCacheEntry {
 
 const textureCache = new Map<string, TextureCacheEntry>();
 
-export function useArenaCardTexture(
+export interface ArenaCardTextures {
+  battlefield: THREE.CanvasTexture | null;
+  fullCard: THREE.CanvasTexture | null;
+}
+
+type ArenaCardTextureVariant = "battlefield" | "full-card";
+
+export function useArenaCardTextures(
   objectId: number,
   pileCount: number,
-): THREE.CanvasTexture | null {
+  includeFullCard = false,
+): ArenaCardTextures {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
   const attribution = useGameStore((state) => state.gameState?.attribution?.[String(objectId)]);
+  const faceData = useEngineCardData(object?.face_down ? null : object?.name ?? null);
   const lookup = object ? cardImageLookup(object) : null;
   const tokenFilters = useMemo(
     () => (object ? tokenFiltersForObject(object) : undefined),
@@ -45,18 +60,52 @@ export function useArenaCardTexture(
   const presentation = useMemo(
     () =>
       object
-        ? buildArenaCardPresentation(object, object.mana_cost, attribution)
+        ? buildArenaCardPresentation(
+            object,
+            object.mana_cost,
+            attribution,
+            faceData?.oracle_text ?? null,
+          )
         : null,
-    [attribution, object],
+    [attribution, faceData?.oracle_text, object],
   );
   const rawArtSource = presentation?.faceDown ? CARD_BACK_URL : src;
   const artSource = rawArtSource
     ? arenaComposableArtSource(rawArtSource)
     : null;
-  const key =
+  const revision =
     presentation && artSource
-      ? `${arenaCardRevision(presentation)}|${artSource}|pile:${pileCount}`
+      ? `${arenaCardRevision(presentation)}|${artSource}`
       : null;
+  const battlefield = useCachedArenaCardTexture(
+    revision && !includeFullCard
+      ? `${revision}|battlefield|pile:${pileCount}`
+      : null,
+    presentation,
+    artSource,
+    pileCount,
+    "battlefield",
+  );
+  const fullCard = useCachedArenaCardTexture(
+    revision && includeFullCard
+      ? `${revision}|full-card|pile:${pileCount}`
+      : null,
+    presentation,
+    artSource,
+    pileCount,
+    "full-card",
+  );
+
+  return { battlefield, fullCard };
+}
+
+function useCachedArenaCardTexture(
+  key: string | null,
+  presentation: ArenaCardPresentation | null,
+  artSource: string | null,
+  pileCount: number,
+  variant: ArenaCardTextureVariant,
+): THREE.CanvasTexture | null {
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
 
   useEffect(() => {
@@ -66,7 +115,13 @@ export function useArenaCardTexture(
     }
 
     let cancelled = false;
-    const entry = acquireTexture(key, presentation, artSource, pileCount);
+    const entry = acquireTexture(
+      key,
+      presentation,
+      artSource,
+      pileCount,
+      variant,
+    );
     entry.promise.then((nextTexture) => {
       if (!cancelled) setTexture(nextTexture);
     }).catch(() => {
@@ -77,7 +132,7 @@ export function useArenaCardTexture(
       cancelled = true;
       releaseTexture(key);
     };
-  }, [artSource, key, pileCount, presentation]);
+  }, [artSource, key, pileCount, presentation, variant]);
 
   return texture;
 }
@@ -87,6 +142,7 @@ function acquireTexture(
   presentation: ArenaCardPresentation,
   artSource: string,
   pileCount: number,
+  variant: ArenaCardTextureVariant,
 ): TextureCacheEntry {
   const cached = textureCache.get(key);
   if (cached) {
@@ -104,7 +160,12 @@ function acquireTexture(
     texture: null,
     disposeTimer: null,
   };
-  entry.promise = createArenaCardTexture(presentation, artSource, pileCount).then(
+  entry.promise = createArenaCardTexture(
+    presentation,
+    artSource,
+    pileCount,
+    variant,
+  ).then(
     (texture) => {
       entry.texture = texture;
       return texture;
@@ -135,7 +196,70 @@ async function createArenaCardTexture(
   presentation: ArenaCardPresentation,
   artSource: string,
   pileCount: number,
+  variant: ArenaCardTextureVariant,
 ): Promise<THREE.CanvasTexture> {
+  const canvas = variant === "full-card"
+    ? await renderArenaFullCardCanvas(presentation, artSource, pileCount)
+    : await renderArenaBattlefieldCardCanvas(presentation, artSource, pileCount);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+async function renderArenaFullCardCanvas(
+  presentation: ArenaCardPresentation,
+  artSource: string,
+  pileCount: number,
+): Promise<HTMLCanvasElement> {
+  // This is the same canvas pipeline ArenaCardFace uses in hand. Keep its
+  // crown, title treatment, and art placement intact; battlefield compaction
+  // is performed later by geometry and UV cropping in ArenaPermanent.
+  const canvas = await renderArenaCardCanvas(presentation, artSource);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("2D canvas unavailable");
+
+  const badgeY = FULL_CARD_TEXTURE_HEIGHT * 0.16;
+  const badgeScale = 1.8;
+  if (presentation.counters.length > 0) {
+    const count = presentation.counters.reduce(
+      (sum, counter) => sum + counter.count,
+      0,
+    );
+    drawRoundBadge(
+      context,
+      String(count),
+      FULL_CARD_TEXTURE_WIDTH * 0.12,
+      badgeY,
+      "#15251c",
+      "#9cf7bd",
+      badgeScale,
+    );
+  }
+  if (pileCount > 1) {
+    drawRoundBadge(
+      context,
+      `×${pileCount}`,
+      FULL_CARD_TEXTURE_WIDTH * 0.88,
+      badgeY,
+      "#16191d",
+      "#ffffff",
+      badgeScale,
+    );
+  }
+
+  return canvas;
+}
+
+async function renderArenaBattlefieldCardCanvas(
+  presentation: ArenaCardPresentation,
+  artSource: string,
+  pileCount: number,
+): Promise<HTMLCanvasElement> {
   const art = await loadImage(artSource);
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
@@ -221,15 +345,7 @@ async function createArenaCardTexture(
   }
 
   context.restore();
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = 4;
-  texture.needsUpdate = true;
-  return texture;
+  return canvas;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -333,20 +449,21 @@ function drawRoundBadge(
   centerY: number,
   fill: string,
   stroke: string,
+  scale = 1,
 ): void {
-  const radius = 23;
+  const radius = 23 * scale;
   context.beginPath();
   context.arc(centerX, centerY, radius, 0, Math.PI * 2);
   context.fillStyle = fill;
   context.fill();
   context.strokeStyle = stroke;
-  context.lineWidth = 2;
+  context.lineWidth = 2 * scale;
   context.stroke();
   context.fillStyle = "#ffffff";
-  context.font = '800 18px "JetBrains Mono", monospace';
+  context.font = `800 ${18 * scale}px "JetBrains Mono", monospace`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(text, centerX, centerY + 1);
+  context.fillText(text, centerX, centerY + scale);
   context.textAlign = "left";
 }
 

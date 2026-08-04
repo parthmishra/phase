@@ -42,24 +42,24 @@ export function MobileHeldHandCard({ gesture, object }: MobileHeldHandCardProps)
   const rotateTarget = useTransform(
     dragVelocityX,
     [-900, 0, 900],
-    [-5.5, 0, 5.5],
+    [-9, 0, 9],
     { clamp: true },
   );
   const rotateXTarget = useTransform(
     dragVelocityY,
     [-900, 0, 900],
-    [3.5, 0, -3.5],
+    [5.5, 0, -5.5],
     { clamp: true },
   );
   const rotate = useSpring(rotateTarget, {
-    damping: 18,
-    mass: 0.45,
-    stiffness: 260,
+    damping: 16,
+    mass: 0.7,
+    stiffness: 170,
   });
   const rotateX = useSpring(rotateXTarget, {
-    damping: 20,
-    mass: 0.45,
-    stiffness: 280,
+    damping: 17,
+    mass: 0.7,
+    stiffness: 180,
   });
   const dynamicMotionEnabled =
     animationSpeedMultiplier > 0 && !shouldReduceMotion;
@@ -106,11 +106,11 @@ export function MobileHeldHandCard({ gesture, object }: MobileHeldHandCardProps)
         animationSpeedMultiplier > 0
           ? {
               opacity: 0,
-              scale: 1,
+              scale: 1.04,
             }
           : false
       }
-      animate={{ opacity: 1, scale: 1 }}
+      animate={{ opacity: 1, scale: 1.13 }}
       transition={{
         duration: (shouldReduceMotion ? 0.06 : 0.12) * animationSpeedMultiplier,
         ease: [0.22, 1, 0.36, 1],

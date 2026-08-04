@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Gire o dispositivo",
+    "description": "O campo de batalha está disponível no modo paisagem em celulares e tablets.",
+    "exit": "Voltar ao menu"
+  },
   "abilityBlock": {
     "badge": "Bloqueada",
     "cantBeActivated": "Esta habilidade não pode ser ativada",

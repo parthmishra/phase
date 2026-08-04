@@ -1,161 +1,115 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
-import { useCardImage } from "../../hooks/useCardImage";
+import type {
+  CardMotionTarget,
+  ReleasedCardMotion,
+} from "../../stores/animationStore.ts";
+import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import { cardFlightControl } from "./cardMotion.ts";
 
 interface CastArcAnimationProps {
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  cardName: string;
-  mode: "cast" | "resolve-permanent" | "resolve-spell";
+  objectId: number;
+  from: CardMotionTarget;
+  to: CardMotionTarget;
+  release?: ReleasedCardMotion;
+  mode:
+    | "cast"
+    | "play-permanent"
+    | "resolve-permanent"
+    | "resolve-spell";
+  duration: number;
   onComplete: () => void;
 }
 
-const CARD_WIDTH = 80;
-const CARD_HEIGHT = 112;
-const ARC_HEIGHT = 100;
-
+/**
+ * Carries the live, composed card face between zones. It intentionally does
+ * not substitute a printing image: crown, title, counters, and frame treatment
+ * remain the same visual game piece the player picked up in hand.
+ */
 export function CastArcAnimation({
+  objectId,
   from,
   to,
-  cardName,
+  release,
   mode,
+  duration,
   onComplete,
 }: CastArcAnimationProps) {
-  // `normal`, not `small`: this renders a bare image element with no ladder at
-  // CARD_WIDTH 80 (160 device px at DPR 2), so the real 146px asset would
-  // upscale. Requesting `normal` keeps this overlay byte-identical to before
-  // `small` became a distinct asset.
-  const { src } = useCardImage(cardName, { size: "normal" });
-
-  if (mode === "resolve-spell") {
-    // Instant/sorcery: fade out with scale reduction at current position
-    return (
-      <motion.div
-        initial={{ opacity: 1, scale: 1 }}
-        animate={{ opacity: 0, scale: 0.3 }}
-        transition={{ duration: 0.3, ease: "easeIn" }}
-        onAnimationComplete={onComplete}
-        style={{
-          position: "fixed",
-          left: from.x - CARD_WIDTH / 2,
-          top: from.y - CARD_HEIGHT / 2,
-          width: CARD_WIDTH,
-          height: CARD_HEIGHT,
-          pointerEvents: "none",
-          zIndex: 45,
-          borderRadius: 6,
-          overflow: "hidden",
-          boxShadow: "0 0 12px rgba(59, 130, 246, 0.5)",
-        }}
-      >
-        {src && (
-          <img
-            src={src}
-            alt={cardName}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
-        )}
-        {!src && (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              backgroundColor: "rgba(0,0,0,0.7)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "white",
-              fontSize: "0.6rem",
-              textAlign: "center",
-              padding: 4,
-            }}
-          >
-            {cardName}
-          </div>
-        )}
-      </motion.div>
-    );
-  }
-
-  // Cast (hand->stack) or resolve-permanent (stack->battlefield): parabolic arc
-  const midX = (from.x + to.x) / 2;
-  const midY = Math.min(from.y, to.y) - ARC_HEIGHT;
-  const duration = mode === "cast" ? 0.4 : 0.3;
+  const shouldReduceMotion = useReducedMotion();
+  const velocity = release?.velocity ?? { x: 0, y: 0 };
+  const control = cardFlightControl(from, to, velocity);
+  const transitDuration = shouldReduceMotion
+    ? Math.min(duration, 0.12)
+    : duration;
+  const midWidth = (from.rect.width + to.rect.width) / 2 * 1.04;
+  const midHeight = (from.rect.height + to.rect.height) / 2 * 1.04;
 
   return (
     <motion.div
       initial={{
-        x: from.x - CARD_WIDTH / 2,
-        y: from.y - CARD_HEIGHT / 2,
+        x: from.rect.x,
+        y: from.rect.y,
+        width: from.rect.width,
+        height: from.rect.height,
+        rotate: from.rotation,
         scale: 1,
         opacity: 1,
       }}
       animate={{
-        x: [from.x - CARD_WIDTH / 2, midX - CARD_WIDTH / 2, to.x - CARD_WIDTH / 2],
-        y: [from.y - CARD_HEIGHT / 2, midY - CARD_HEIGHT / 2, to.y - CARD_HEIGHT / 2],
-        scale: [1, 1.1, 1],
+        x: shouldReduceMotion
+          ? to.rect.x
+          : [from.rect.x, control.x, to.rect.x],
+        y: shouldReduceMotion
+          ? to.rect.y
+          : [from.rect.y, control.y, to.rect.y],
+        width: shouldReduceMotion
+          ? to.rect.width
+          : [from.rect.width, midWidth, to.rect.width],
+        height: shouldReduceMotion
+          ? to.rect.height
+          : [from.rect.height, midHeight, to.rect.height],
+        rotate: shouldReduceMotion
+          ? to.rotation
+          : [from.rotation, control.rotation, to.rotation],
+        scale: shouldReduceMotion ? 1 : [1, 1.035, 1],
         opacity: 1,
       }}
       transition={{
-        duration,
-        ease: "easeInOut",
-        times: [0, 0.5, 1],
+        duration: transitDuration,
+        ease: [0.2, 0.72, 0.18, 1],
+        times: shouldReduceMotion ? undefined : [0, 0.48, 1],
       }}
       onAnimationComplete={onComplete}
       style={{
         position: "fixed",
         left: 0,
         top: 0,
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
         pointerEvents: "none",
         zIndex: 45,
-        borderRadius: 6,
-        overflow: "hidden",
-      }}
+        transformOrigin: "50% 50%",
+        transformPerspective: 900,
+        "--hand-card-w": "100%",
+        "--hand-card-h": "100%",
+      } as React.CSSProperties}
+      data-card-in-flight={objectId}
+      data-card-flight-mode={mode}
     >
-      {src && (
-        <img
-          src={src}
-          alt={cardName}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      )}
-      {!src && (
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            backgroundColor: "rgba(0,0,0,0.7)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "white",
-            fontSize: "0.6rem",
-            textAlign: "center",
-            padding: 4,
-          }}
-        >
-          {cardName}
-        </div>
-      )}
-      {/* Glow intensifies at destination */}
+      <ArenaCardFace
+        objectId={objectId}
+        className="h-full w-full drop-shadow-[0_18px_22px_rgba(0,0,0,0.52)]"
+      />
       <motion.div
-        initial={{ boxShadow: "0 0 4px rgba(59, 130, 246, 0.2)" }}
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-[4.4%/3.15%]"
+        initial={{ boxShadow: "0 0 5px rgba(119,190,198,0.18)" }}
         animate={{
           boxShadow: [
-            "0 0 4px rgba(59, 130, 246, 0.2)",
-            "0 0 16px rgba(59, 130, 246, 0.6)",
-            "0 0 24px rgba(59, 130, 246, 0.8)",
+            "0 0 5px rgba(119,190,198,0.18)",
+            "0 0 22px rgba(119,190,198,0.46)",
+            "0 0 8px rgba(216,207,178,0.24)",
           ],
         }}
-        transition={{ duration, times: [0, 0.5, 1] }}
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: 6,
-          pointerEvents: "none",
-        }}
+        transition={{ duration: transitDuration, times: [0, 0.52, 1] }}
       />
     </motion.div>
   );

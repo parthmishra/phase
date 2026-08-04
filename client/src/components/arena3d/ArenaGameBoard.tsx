@@ -11,19 +11,23 @@ import {
   getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaHeldHand } from "./ArenaHeldHand.tsx";
+import { ArenaFlightDestinations } from "./ArenaFlightDestinations.tsx";
 import { ArenaMaterialPlane } from "./ArenaMaterialPlane.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import {
   assignArenaOpponentSeats,
   layoutArenaSeat,
+  type ArenaSeatAssignment,
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
 
 const ARENA_CAMERA_FOV = 32;
 
 interface ArenaGameBoardProps {
-  oppHud?: React.ReactNode;
+  renderOpponentHud?: (
+    seats: readonly ArenaSeatAssignment[],
+  ) => React.ReactNode;
   playerHud?: React.ReactNode;
   showOpponentCards?: boolean;
   onKickPlayer?: (playerId: PlayerId) => void;
@@ -98,14 +102,10 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
       data-arena-stage-layout={tableLayout}
     >
       <div
-        className="pointer-events-none absolute inset-x-0 z-30 flex justify-center"
-        style={{
-          top:
-            "calc(env(safe-area-inset-top) + clamp(6.2rem, 12dvh, 8rem))",
-        }}
+        className="pointer-events-none absolute inset-0 z-30"
         data-arena-screen-space-ui="opponent-hud"
       >
-        <div className="contents pointer-events-auto">{props.oppHud}</div>
+        {props.renderOpponentHud?.(opponentSeats)}
       </div>
       <div
         className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
@@ -122,7 +122,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
         <Canvas
           shadows
           frameloop="demand"
-          dpr={[1, 1.5]}
+          dpr={[1, 2]}
           camera={{ fov: ARENA_CAMERA_FOV, near: 0.1, far: 90 }}
           gl={{
             antialias: true,
@@ -132,6 +132,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
           style={{ position: "absolute", inset: 0 }}
         >
           <ArenaCameraRig tableLayout={tableLayout} />
+          <ArenaFlightDestinations />
           <ArenaRendererSettings />
           <color attach="background" args={["#111a1c"]} />
           <fog attach="fog" args={["#111a1c", 34, 62]} />

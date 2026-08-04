@@ -1,4 +1,9 @@
 {
+  "landscapeGate": {
+    "title": "Ruota il dispositivo",
+    "description": "Il campo di battaglia è disponibile in modalità orizzontale su telefoni e tablet.",
+    "exit": "Torna al menu"
+  },
   "abilityBlock": {
     "badge": "Bloccata",
     "cantBeActivated": "Questa abilità non può essere attivata",
