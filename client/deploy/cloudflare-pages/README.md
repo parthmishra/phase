@@ -29,7 +29,9 @@ repository and point the script at it:
 export CLOUDFLARE_ENV_FILE=/absolute/path/to/cloudflare.env
 ```
 
-R2 mode additionally needs Workers R2 Storage Edit permission.
+R2 mode additionally needs Workers R2 Storage Edit permission. If you override
+`R2_BUCKET`, update the matching binding in
+`client/deploy/cloudflare-pages/wrangler.r2.jsonc`.
 
 ## Runtime storage modes
 
@@ -37,13 +39,23 @@ R2 mode additionally needs Workers R2 Storage Edit permission.
 
 - `auto` (default): use R2 when the account supports it; otherwise fall back
   to Pages.
-- `r2`: require an R2 bucket and public development URL.
+- `r2`: require an R2 bucket and bind it privately to the Pages Functions.
 - `pages`: use the known-working no-R2 path for this fork.
 
-The current account does not have R2 enabled, so the checkpoint deployment is:
+R2 mode Brotli-compresses and uploads the branch-matched card database and
+engine WASM. The Pages Functions read those objects through the
+`RUNTIME_BUCKET` binding in the R2 Wrangler template and restore the response
+encoding headers. The deployment script stages this template in a temporary
+Pages root because Pages requires the configuration filename
+`wrangler.jsonc`; it does not affect other repository deployments. Ancillary
+shared JSON continues to use
+`SHARED_DATA_BASE_URL`, so deployment does not depend on locally generating a
+complete mirror of the shared data service.
+
+The checkpoint account has R2 enabled, so its deployment is:
 
 ```bash
-CF_RUNTIME_STORAGE=pages \
+CF_RUNTIME_STORAGE=r2 \
   ./scripts/deploy-cf.sh phase-arena-3d
 ```
 

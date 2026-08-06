@@ -1,0 +1,11 @@
+{
+  "name": "phase-arena-3d",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-08-06",
+  "r2_buckets": [
+    {
+      "binding": "RUNTIME_BUCKET",
+      "bucket_name": "phase-arena-3d-data"
+    }
+  ]
+}

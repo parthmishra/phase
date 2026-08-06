@@ -5,7 +5,6 @@ cd "$(dirname "$0")/.."
 
 PROJECT_NAME="${1:-${CF_PAGES_PROJECT:-phase-arena-3d}}"
 R2_BUCKET="${R2_BUCKET:-phase-arena-3d-data}"
-R2_PUBLIC_URL="${R2_PUBLIC_URL:-}"
 CF_RUNTIME_STORAGE="${CF_RUNTIME_STORAGE:-auto}"
 CF_PAGES_BRANCH="${CF_PAGES_BRANCH:-codex/arena-3d-experiment}"
 PAGES_PUBLIC_URL="${PAGES_PUBLIC_URL:-https://$PROJECT_NAME.pages.dev}"
@@ -82,32 +81,6 @@ prepare_r2() {
     fi
   fi
 
-  if [ -z "$R2_PUBLIC_URL" ]; then
-    local dev_url_output
-    dev_url_output=$(wrangler r2 bucket dev-url get "$R2_BUCKET" 2>&1 || true)
-    R2_PUBLIC_URL=$(printf '%s\n' "$dev_url_output" \
-      | grep -Eo 'https://[^[:space:]]+\.r2\.dev' \
-      | head -1 || true)
-    if [ -z "$R2_PUBLIC_URL" ]; then
-      echo "Enabling the R2 development URL for live testing..."
-      if ! wrangler r2 bucket dev-url enable "$R2_BUCKET" --force; then
-        return 1
-      fi
-      dev_url_output=$(wrangler r2 bucket dev-url get "$R2_BUCKET")
-      R2_PUBLIC_URL=$(printf '%s\n' "$dev_url_output" \
-        | grep -Eo 'https://[^[:space:]]+\.r2\.dev' \
-        | head -1 || true)
-    fi
-  fi
-  R2_PUBLIC_URL="${R2_PUBLIC_URL%/}"
-  if [ -z "$R2_PUBLIC_URL" ]; then
-    echo "ERROR: could not determine the public R2 URL." >&2
-    return 1
-  fi
-
-  echo "Configuring read-only browser access for $R2_BUCKET..."
-  wrangler r2 bucket cors set "$R2_BUCKET" \
-    --file deploy/cloudflare-pages/r2-cors.json --force
 }
 
 RUNTIME_STORAGE="$CF_RUNTIME_STORAGE"
@@ -151,62 +124,36 @@ ENGINE_WASM_OBJECT="wasm/engine_wasm_bg-$ENGINE_WASM_HASH.wasm"
 DEPLOY_TMP=$(mktemp -d)
 trap 'rm -rf "$DEPLOY_TMP"' EXIT
 
-upload_json() {
-  local source="$1" object="$2" cache_control="$3"
+upload_brotli() {
+  local source="$1" object="$2" content_type="$3"
   local compressed="$DEPLOY_TMP/${object//\//_}.br"
   echo "  ^ $object"
   brotli -q 7 -c "$source" > "$compressed"
   wrangler r2 object put "$R2_BUCKET/$object" \
     --file "$compressed" \
-    --content-type application/json \
+    --content-type "$content_type" \
     --content-encoding br \
-    --cache-control "$cache_control" \
-    --remote
-}
-
-verify_public_object() {
-  local object="$1" headers attempt
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    headers=$(curl -fsSI -H "Origin: https://$PROJECT_NAME.pages.dev" \
-      "$R2_PUBLIC_URL/$object" 2>/dev/null || true)
-    if grep -qi '^access-control-allow-origin:' <<< "$headers"; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "ERROR: public R2 object or its CORS headers are unavailable: $object" >&2
-  return 1
-}
-
-if [ "$RUNTIME_STORAGE" = "r2" ]; then
-  echo "Uploading branch-matched runtime artifacts to $R2_PUBLIC_URL..."
-  upload_json "$CARD_DATA_SOURCE" "$CARD_DATA_OBJECT" \
-    "public, max-age=31536000, immutable"
-  wrangler r2 object put "$R2_BUCKET/$ENGINE_WASM_OBJECT" \
-    --file "../$ENGINE_WASM_SOURCE" \
-    --content-type application/wasm \
     --cache-control "public, max-age=31536000, immutable" \
     --remote
+}
 
-  while IFS= read -r filename; do
-    source="client/public/$filename"
-    if [ ! -s "$source" ]; then
-      echo "ERROR: data-files.json entry is missing: $source" >&2
-      exit 1
-    fi
-    upload_json "$source" "$filename" "public, max-age=60, must-revalidate"
-  done < <(jq -r '.[]' data-files.json)
+SHARED_DATA_BASE_URL="${SHARED_DATA_BASE_URL%/}"
+PAGES_PUBLIC_URL="${PAGES_PUBLIC_URL%/}"
 
-  echo "Verifying public R2 access and CORS..."
-  verify_public_object "$CARD_DATA_OBJECT"
-  verify_public_object "$ENGINE_WASM_OBJECT"
+if [ "$RUNTIME_STORAGE" = "r2" ]; then
+  if [ ! -r client/deploy/cloudflare-pages/wrangler.r2.jsonc ]; then
+    echo "ERROR: R2 Pages binding config is not readable: client/deploy/cloudflare-pages/wrangler.r2.jsonc" >&2
+    exit 1
+  fi
 
-  export DATA_BASE_URL="$R2_PUBLIC_URL"
-  export CARD_DATA_URL="$R2_PUBLIC_URL/$CARD_DATA_OBJECT"
-  export ENGINE_WASM_URL="$R2_PUBLIC_URL/$ENGINE_WASM_OBJECT"
+  echo "Uploading branch-matched runtime artifacts to R2 bucket $R2_BUCKET..."
+  upload_brotli "$CARD_DATA_SOURCE" "$CARD_DATA_OBJECT" application/json
+  upload_brotli "$ENGINE_WASM_SOURCE" "$ENGINE_WASM_OBJECT" application/wasm
+
+  export DATA_BASE_URL="$SHARED_DATA_BASE_URL"
+  export CARD_DATA_URL="$PAGES_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH"
+  export ENGINE_WASM_URL="$PAGES_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH"
 else
-  PAGES_PUBLIC_URL="${PAGES_PUBLIC_URL%/}"
-  SHARED_DATA_BASE_URL="${SHARED_DATA_BASE_URL%/}"
   export DATA_BASE_URL="$SHARED_DATA_BASE_URL"
   export CARD_DATA_URL="$PAGES_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH"
   export ENGINE_WASM_URL="$PAGES_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH"
@@ -259,11 +206,29 @@ if ! jq -e --arg name "$PROJECT_NAME" \
 fi
 
 echo "Deploying $PROJECT_NAME to Cloudflare Pages..."
-wrangler pages deploy dist \
-  --project-name "$PROJECT_NAME" \
-  --branch "$CF_PAGES_BRANCH" \
-  --commit-hash "$(RTK_DISABLED=1 git rev-parse HEAD)" \
-  --commit-dirty=true
+if [ "$RUNTIME_STORAGE" = "r2" ]; then
+  # Pages only accepts a Wrangler configuration at the deployment root. Stage
+  # an isolated copy so the fork-specific R2 binding cannot affect other Pages
+  # projects or the repository's release workflow.
+  R2_DEPLOY_ROOT="$DEPLOY_TMP/pages-r2"
+  mkdir -p "$R2_DEPLOY_ROOT/deploy"
+  cp -R client/dist "$R2_DEPLOY_ROOT/dist"
+  cp -R client/functions "$R2_DEPLOY_ROOT/functions"
+  cp -R client/deploy/cloudflare-pages "$R2_DEPLOY_ROOT/deploy/cloudflare-pages"
+  cp client/deploy/cloudflare-pages/wrangler.r2.jsonc \
+    "$R2_DEPLOY_ROOT/wrangler.jsonc"
+  wrangler --cwd "$R2_DEPLOY_ROOT" pages deploy dist \
+    --project-name "$PROJECT_NAME" \
+    --branch "$CF_PAGES_BRANCH" \
+    --commit-hash "$(RTK_DISABLED=1 git rev-parse HEAD)" \
+    --commit-dirty=true
+else
+  wrangler pages deploy dist \
+    --project-name "$PROJECT_NAME" \
+    --branch "$CF_PAGES_BRANCH" \
+    --commit-hash "$(RTK_DISABLED=1 git rev-parse HEAD)" \
+    --commit-dirty=true
+fi
 
 verify_pages_runtime() {
   local live_engine="$DEPLOY_TMP/live-engine.wasm"
@@ -282,10 +247,8 @@ verify_pages_runtime() {
   return 1
 }
 
-if [ "$RUNTIME_STORAGE" = "pages" ]; then
-  echo "Verifying deployed Pages runtime hashes..."
-  verify_pages_runtime
-fi
+echo "Verifying deployed runtime hashes..."
+verify_pages_runtime
 
 echo "Deployment complete: $PAGES_PUBLIC_URL"
 echo "Runtime storage: $RUNTIME_STORAGE"
