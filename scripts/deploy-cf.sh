@@ -212,6 +212,10 @@ if ! jq -e --arg name "$PROJECT_NAME" \
 fi
 
 echo "Deploying $PROJECT_NAME to Cloudflare Pages..."
+COMMIT_DIRTY=false
+if [ -n "$(RTK_DISABLED=1 git status --porcelain --untracked-files=normal)" ]; then
+  COMMIT_DIRTY=true
+fi
 if [ "$RUNTIME_STORAGE" = "r2" ]; then
   # Pages only accepts a Wrangler configuration at the deployment root. Stage
   # an isolated copy so the fork-specific R2 binding cannot affect other Pages
@@ -227,13 +231,13 @@ if [ "$RUNTIME_STORAGE" = "r2" ]; then
     --project-name "$PROJECT_NAME" \
     --branch "$CF_PAGES_BRANCH" \
     --commit-hash "$(RTK_DISABLED=1 git rev-parse HEAD)" \
-    --commit-dirty=true
+    --commit-dirty="$COMMIT_DIRTY"
 else
   wrangler pages deploy dist \
     --project-name "$PROJECT_NAME" \
     --branch "$CF_PAGES_BRANCH" \
     --commit-hash "$(RTK_DISABLED=1 git rev-parse HEAD)" \
-    --commit-dirty=true
+    --commit-dirty="$COMMIT_DIRTY"
 fi
 
 verify_pages_runtime() {
