@@ -77,16 +77,76 @@ def js_downcase:
   | implode;
 '
 
-# scryfall_fetch_bulk TYPE FILE — resolve a bulk-data download_uri by type
-# (e.g. oracle_cards, default_cards) and download it to FILE.
-scryfall_fetch_bulk() {
-  local type="$1" file="$2" uri
-  uri=$("${SCRYFALL_CURL[@]}" "https://api.scryfall.com/bulk-data" \
-    | jq -r --arg t "$type" '.data[] | select(.type == $t) | .download_uri') \
-    || return 1
-  if [ -z "$uri" ] || [ "$uri" = "null" ]; then
-    echo "scryfall: no download_uri for bulk-data type '$type'" >&2
+# scryfall_download_jsonl_gzip URL FILE — download Scryfall's current
+# newline-delimited, gzip-compressed bulk format and convert it to the JSON
+# array expected by the existing generators. Stream the conversion so even the
+# default-cards dataset does not need to fit in memory twice.
+scryfall_download_jsonl_gzip() {
+  local url="$1" file="$2" compressed tmp
+  compressed=$(mktemp "${file}.jsonl.gz.XXXXXX")
+  tmp=$(mktemp "${file}.XXXXXX")
+
+  if ! "${SCRYFALL_CURL[@]}" -o "$compressed" "$url"; then
+    rm -f "$compressed" "$tmp"
     return 1
   fi
-  scryfall_download "$uri" "$file"
+
+  if ! gzip -t "$compressed"; then
+    echo "scryfall: download of $url is not valid gzip data" >&2
+    rm -f "$compressed" "$tmp"
+    return 1
+  fi
+
+  if ! gzip -dc "$compressed" | awk '
+    BEGIN { print "[" }
+    NR > 1 { print "," }
+    { printf "%s", $0 }
+    END { print "\n]" }
+  ' > "$tmp"; then
+    rm -f "$compressed" "$tmp"
+    return 1
+  fi
+  rm -f "$compressed"
+
+  if ! scryfall_validate_json "$tmp"; then
+    echo "scryfall: converted bulk data from $url is not valid JSON" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$file"
+}
+
+# scryfall_fetch_bulk TYPE FILE — resolve the available bulk-data URI by type
+# (e.g. oracle_cards, default_cards). Scryfall historically exposed JSON via
+# download_uri and now exposes compressed JSONL via jsonl_download_uri; support
+# both so setup remains compatible across the API transition.
+scryfall_fetch_bulk() {
+  local type="$1" file="$2" selection uri format
+  selection=$("${SCRYFALL_CURL[@]}" "https://api.scryfall.com/bulk-data" \
+    | jq -r --arg t "$type" '
+        .data[]
+        | select(.type == $t)
+        | if .download_uri then
+            [.download_uri, "json"]
+          elif .jsonl_download_uri then
+            [.jsonl_download_uri, "jsonl-gzip"]
+          else
+            empty
+          end
+        | @tsv
+      ') \
+    || return 1
+  if [ -z "$selection" ]; then
+    echo "scryfall: no supported bulk-data URI for type '$type'" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r uri format <<< "$selection"
+  case "$format" in
+    json) scryfall_download "$uri" "$file" ;;
+    jsonl-gzip) scryfall_download_jsonl_gzip "$uri" "$file" ;;
+    *)
+      echo "scryfall: unsupported bulk-data format '$format' for '$type'" >&2
+      return 1
+      ;;
+  esac
 }

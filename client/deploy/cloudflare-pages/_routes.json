@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "include": [
+    "/arena-card-art/*",
+    "/arena-card-back/*",
+    "/runtime/card-data.json",
+    "/runtime/engine_wasm_bg.wasm"
+  ],
+  "exclude": []
+}

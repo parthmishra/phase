@@ -79,7 +79,7 @@ echo ""
 # gen-scryfall-*.sh — preflight here so missing-curl fails with a tidy
 # message instead of a deep stack trace from inside a child script.
 missing=()
-for tool in cargo pnpm jq curl; do
+for tool in cargo pnpm jq curl gzip; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if [ "${#missing[@]}" -ne 0 ]; then
@@ -88,6 +88,7 @@ if [ "${#missing[@]}" -ne 0 ]; then
   echo "  pnpm:  https://pnpm.io/installation" >&2
   echo "  jq:    https://stedolan.github.io/jq/" >&2
   echo "  curl:  preinstalled on macOS/Linux; Windows: winget install cURL.cURL" >&2
+  echo "  gzip:  preinstalled on macOS/Linux; Windows: install via WSL or Git Bash" >&2
   exit 1
 fi
 

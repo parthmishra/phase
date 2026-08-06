@@ -623,15 +623,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
-          path: dist
+          path: client/dist
 
-      - name: Inject Cloudflare Pages _headers
-        run: cp client/deploy/cloudflare-pages/_headers dist/_headers
+      - name: Inject Cloudflare Pages configuration
+        run: |
+          cp client/deploy/cloudflare-pages/_headers client/dist/_headers
+          cp client/deploy/cloudflare-pages/_routes.json client/dist/_routes.json
 
       - name: Guard Cloudflare Pages asset size limit
         shell: bash
         run: |
-          oversized=$(find dist -type f -size +25M -print -quit)
+          oversized=$(find client/dist -type f -size +25M -print -quit)
           if [ -n "$oversized" ]; then
             size=$(du -h "$oversized" | awk '{print $1}')
             echo "::error::Cloudflare Pages 25 MiB file limit exceeded: $oversized ($size)"
@@ -643,6 +645,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: client
           command: pages deploy dist --project-name=phase-rs --branch=main --commit-dirty=true
 
   deploy-lobby-worker:

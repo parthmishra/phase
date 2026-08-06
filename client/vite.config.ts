@@ -5,7 +5,6 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import wasm from "vite-plugin-wasm";
-import topLevelAwait from "vite-plugin-top-level-await";
 import { VitePWA } from "vite-plugin-pwa";
 import { compression } from "vite-plugin-compression2";
 import type { Plugin } from "vite";
@@ -99,6 +98,29 @@ function workspaceVersion(): string {
   } catch {
     return "0.0.0";
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function engineWasmCachePattern(): RegExp {
+  const externalUrl = process.env.ENGINE_WASM_URL;
+  return externalUrl
+    ? new RegExp(`^(?:${escapeRegExp(externalUrl)})$`)
+    : /engine_wasm_bg-.*\.wasm$/;
+}
+
+function externalDataCompressionExcludes(): RegExp | undefined {
+  if (!process.env.DATA_BASE_URL) return undefined;
+
+  const manifest = JSON.parse(
+    readFileSync(path.resolve(__dirname, "../data-files.json"), "utf-8"),
+  ) as string[];
+  const filenames = manifest.map(escapeRegExp).join("|");
+  return new RegExp(
+    `(?:^|/)(?:${filenames}|card-data(?:-[0-9a-f]{16})?\\.json)$`,
+  );
 }
 
 // Single source of truth: ../data-files.json lists every shared JSON the
@@ -207,7 +229,6 @@ export default defineConfig(({ mode }) => ({
     react(),
     tailwindcss(),
     wasm(),
-    topLevelAwait(),
     VitePWA({
       // The app still applies updates automatically in `onNeedRefresh`, but
       // prompt mode prevents vite-plugin-pwa from independently activating
@@ -264,12 +285,10 @@ export default defineConfig(({ mode }) => ({
             },
           },
           {
-            // Workbox accepts cross-origin RegExpRoute matches only when they
-            // begin at index 0. The anchored R2 branch covers production and
-            // staging uploads; the existing unanchored branch preserves
-            // same-origin bundled-WASM behavior.
-            urlPattern:
-              /(?:^https:\/\/data\.phase-rs\.dev\/(?:staging\/)?wasm\/engine_wasm_bg-.*\.wasm$|engine_wasm_bg-.*\.wasm$)/,
+            // A self-hosted Pages deployment can use any R2 public hostname.
+            // Pin the runtime route to the exact external build URL; local
+            // builds keep matching Vite's content-hashed same-origin asset.
+            urlPattern: engineWasmCachePattern(),
             handler: "CacheFirst",
             options: {
               cacheName: "engine-wasm",
@@ -379,7 +398,13 @@ export default defineConfig(({ mode }) => ({
         ],
       },
     }),
-    compression({ algorithms: ["brotliCompress"] }),
+    compression({
+      algorithms: ["brotliCompress"],
+      // Pages deployments point these files at R2 and strip the public/ copies
+      // after Vite finishes. Avoid spending several minutes compressing large
+      // files that cannot be uploaded to Pages and will never be served there.
+      exclude: externalDataCompressionExcludes(),
+    }),
   ],
   define: dataFileDefines(mode),
   worker: {
