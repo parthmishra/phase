@@ -9,6 +9,12 @@
 export function apply_seat_mutation(state_json: string, mutation_json: string): any;
 
 /**
+ * Build the bounded card corpus for parallel AI scoring workers. The live
+ * main engine remains the only authority that owns the full card database.
+ */
+export function build_ai_card_subset(): string;
+
+/**
  * Classify a deck's archetype (Aggro / Midrange / Control / Combo / Ramp) using
  * `phase_ai::DeckProfile::analyze`. The engine is the single authority for archetype
  * classification — the frontend must not compute this from card lists itself.
@@ -95,17 +101,32 @@ export function export_replay_log(): string;
  */
 export function getFormatRegistry(): any;
 
-/** Return an opaque action proposal bound to the live engine decision domain. */
+/**
+ * Mint an opaque, authority-bound proposal for the AI's next action.
+ *
+ * Callers must submit it through [`submit_ai_action_proposal`]. The registry
+ * is local to this live WASM instance and is cleared
+ * on every successful state mutation, restore, resume, reset, and new game.
+ */
 export function get_ai_action_proposal(difficulty: string, player_id: number): any;
-/** Filter score-only worker output through the live contract and mint a proposal. */
-export function get_ai_action_proposal_from_scores(scores_json: string, difficulty: string, player_id: number, rng_seed: bigint): any;
-/** Score candidates in an isolated worker. The result is not dispatchable. */
-export function get_ai_scored_candidates(difficulty: string, player_id: number, rng_seed: bigint): any;
-/** Build the game-scoped card database used by parallel AI workers. */
-export function build_ai_card_subset(): string;
 
-/** Apply an opaque AI proposal, yielding an applied/stale/rejected tagged result. */
-export function submit_ai_action_proposal(token: string, actor: number, action: any): any;
+/**
+ * Convert score-only worker output into an authority-bound proposal.
+ *
+ * The worker state may be old, from another game, or maliciously altered.
+ * Consequently this endpoint always derives a new decision contract from the
+ * main WASM state, discards every score whose action is not an exact member,
+ * and only then mints an opaque proposal. There is intentionally no public
+ * score-to-`GameAction` endpoint.
+ */
+export function get_ai_action_proposal_from_scores(scores_json: string, difficulty: string, player_id: number, rng_seed: bigint): any;
+
+/**
+ * Score candidates inside an isolated AI worker. These are plain,
+ * serializable hints rather than capabilities: they cannot cross the action
+ * boundary until the live main engine reissues an exact proposal.
+ */
+export function get_ai_scored_candidates(difficulty: string, player_id: number, rng_seed: bigint): any;
 
 /**
  * Look up a card face by name from the loaded card database.
@@ -423,6 +444,15 @@ export function signatureSpellSelectionPolicy(request: any): any;
 export function submit_action(actor: number, action: any): any;
 
 /**
+ * Submit an action selected from an engine-issued AI proposal.
+ *
+ * A stale or foreign proposal is a normal race outcome and is returned as a
+ * tagged value. Rejected actions leave the proposal live for diagnostics or a
+ * retry; only a successful apply invalidates the authority generation.
+ */
+export function submit_ai_action_proposal(token: string, actor: number, action: any): any;
+
+/**
  * Submit one opaque, engine-authored interaction response. The browser never
  * materializes a `GameAction`; only a successful engine reducer result exposes
  * the exact action to the replay recorder.
@@ -442,69 +472,67 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly apply_seat_mutation: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly classify_deck_js: (a: any) => [number, number, number];
+    readonly apply_seat_mutation: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly build_ai_card_subset: (a: number) => void;
+    readonly classify_deck_js: (a: number, b: number) => void;
     readonly clear_game_state: () => void;
-    readonly commanderPartnerCandidates: (a: number, b: number, c: any) => [number, number, number];
-    readonly companionCandidates: (a: any) => [number, number, number];
-    readonly deckCopyLimit: (a: number, b: number) => any;
-    readonly estimate_bracket_for_deck: (a: any) => [number, number, number];
-    readonly evaluate_deck_compatibility_js: (a: any) => [number, number, number];
-    readonly export_game_state_json: () => [number, number, number, number];
-    readonly export_replay_log: () => [number, number, number, number];
-    readonly getFormatRegistry: () => any;
-    readonly get_ai_action_proposal: (a: number, b: number, c: number) => [number, number, number];
-    readonly get_ai_action_proposal_from_scores: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number];
-    readonly get_ai_scored_candidates: (a: number, b: number, c: bigint) => [number, number, number];
-    readonly build_ai_card_subset: () => [number, number, number];
-    readonly get_card_face_data: (a: number, b: number) => any;
-    readonly get_card_parse_details: (a: number, b: number) => any;
-    readonly get_card_rulings: (a: number, b: number) => any;
-    readonly get_filtered_game_state: (a: number) => any;
-    readonly get_legal_actions_for_viewer_js: (a: number) => any;
-    readonly get_viewer_snapshot_js: (a: number) => any;
+    readonly clear_replay_playback: () => void;
+    readonly commanderPartnerCandidates: (a: number, b: number, c: number, d: number) => void;
+    readonly companionCandidates: (a: number, b: number) => void;
+    readonly create_initial_state: () => number;
+    readonly deckCopyLimit: (a: number, b: number) => number;
+    readonly estimate_bracket_for_deck: (a: number, b: number) => void;
+    readonly evaluate_deck_compatibility_js: (a: number, b: number) => void;
+    readonly export_game_state_json: (a: number) => void;
+    readonly export_replay_log: (a: number) => void;
+    readonly getFormatRegistry: () => number;
+    readonly get_ai_action_proposal: (a: number, b: number, c: number, d: number) => void;
+    readonly get_ai_action_proposal_from_scores: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => void;
+    readonly get_ai_scored_candidates: (a: number, b: number, c: number, d: number, e: bigint) => void;
+    readonly get_card_face_data: (a: number, b: number) => number;
+    readonly get_card_parse_details: (a: number, b: number) => number;
+    readonly get_card_rulings: (a: number, b: number) => number;
+    readonly get_filtered_game_state: (a: number) => number;
+    readonly get_game_state: () => number;
+    readonly get_legal_actions_for_viewer_js: (a: number) => number;
+    readonly get_legal_actions_js: () => number;
+    readonly get_stack_pressure: () => number;
+    readonly get_viewer_snapshot_js: (a: number) => number;
     readonly has_replay_recording: () => number;
-    readonly initialize_game: (a: any, b: number, c: number, d: any, e: any, f: number, g: number) => any;
-    readonly isCardCommanderEligibleForFormat: (a: number, b: number, c: any) => number;
+    readonly init_panic_hook: () => void;
+    readonly initialize_game: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly isCardCommanderEligibleForFormat: (a: number, b: number, c: number) => number;
     readonly is_card_commander_eligible: (a: number, b: number) => number;
     readonly is_multiplayer_mode: () => number;
-    readonly legal_targets_for_castable_js: (a: number) => any;
-    readonly legal_targets_for_castables_js: (a: any) => any;
-    readonly load_card_database: (a: number, b: number) => [number, number, number];
-    readonly load_replay_for_playback: (a: number, b: number) => [number, number, number];
-    readonly maxDeckCopies: (a: number, b: number, c: any) => any;
-    readonly ping: () => [number, number];
-    readonly preview_action_js: (a: number, b: any) => any;
-    readonly preview_mana_payment_js: (a: number, b: any) => any;
-    readonly project_seat_view: (a: number, b: number) => [number, number, number];
-    readonly replay_seek_js: (a: number) => [number, number, number];
-    readonly resolve_all: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly restore_game_state: (a: number, b: number) => [number, number];
-    readonly resume_multiplayer_host_state: (a: number, b: number) => [number, number];
-    readonly search_cards_js: (a: any) => [number, number, number];
-    readonly set_multiplayer_mode: (a: number) => void;
-    readonly sideboardPolicyForFormat: (a: any) => [number, number, number];
-    readonly signatureSpellSelectionPolicy: (a: any) => [number, number, number];
-    readonly submit_action: (a: number, b: any) => any;
-    readonly submit_ai_action_proposal: (a: number, b: number, c: any) => any;
-    readonly submit_interaction_js: (a: number, b: any) => any;
-    readonly take_last_panic_message: () => [number, number];
-    readonly get_game_state: () => any;
-    readonly get_legal_actions_js: () => any;
-    readonly get_stack_pressure: () => any;
-    readonly init_panic_hook: () => void;
-    readonly replay_header_js: () => any;
-    readonly list_token_presets_js: () => any;
-    readonly create_initial_state: () => any;
-    readonly clear_replay_playback: () => void;
+    readonly legal_targets_for_castable_js: (a: number) => number;
+    readonly legal_targets_for_castables_js: (a: number) => number;
+    readonly list_token_presets_js: () => number;
+    readonly load_card_database: (a: number, b: number, c: number) => void;
+    readonly load_replay_for_playback: (a: number, b: number, c: number) => void;
+    readonly maxDeckCopies: (a: number, b: number, c: number) => number;
+    readonly ping: (a: number) => void;
+    readonly preview_action_js: (a: number, b: number) => number;
+    readonly preview_mana_payment_js: (a: number, b: number) => number;
+    readonly project_seat_view: (a: number, b: number, c: number) => void;
+    readonly replay_header_js: () => number;
     readonly replay_length_js: () => number;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_exn_store: (a: number) => void;
-    readonly __externref_table_alloc: () => number;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __externref_table_dealloc: (a: number) => void;
+    readonly replay_seek_js: (a: number, b: number) => void;
+    readonly resolve_all: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly restore_game_state: (a: number, b: number, c: number) => void;
+    readonly resume_multiplayer_host_state: (a: number, b: number, c: number) => void;
+    readonly search_cards_js: (a: number, b: number) => void;
+    readonly set_multiplayer_mode: (a: number) => void;
+    readonly sideboardPolicyForFormat: (a: number, b: number) => void;
+    readonly signatureSpellSelectionPolicy: (a: number, b: number) => void;
+    readonly submit_action: (a: number, b: number) => number;
+    readonly submit_ai_action_proposal: (a: number, b: number, c: number, d: number) => number;
+    readonly submit_interaction_js: (a: number, b: number) => number;
+    readonly take_last_panic_message: (a: number) => void;
+    readonly __wbindgen_export: (a: number, b: number) => number;
+    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export3: (a: number) => void;
+    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_start: () => void;
 }
 
