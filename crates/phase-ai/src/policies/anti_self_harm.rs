@@ -1,9 +1,15 @@
+#[cfg(test)]
+use engine::ai_support::is_pact_payment_ability;
+use engine::ai_support::{certify_pact_plan, is_pact_payment_cast};
 use engine::game::combat;
 use engine::game::keywords;
+use engine::game::life_safety::{preview_candidate_life_safety, CandidateLifeSafety};
 use engine::game::mana_abilities;
 use engine::game::quantity::resolve_quantity;
 use engine::game::targeting::find_legal_targets;
 use engine::game::turn_control;
+#[cfg(test)]
+use engine::types::ability::AbilityCondition;
 use engine::types::ability::{
     AbilityCost, AbilityDefinition, AbilityKind, DelayedTriggerCondition, Effect, EffectScope,
     QuantityExpr, ReplacementMode, TapStateChange, TargetFilter, TargetRef,
@@ -35,6 +41,7 @@ use super::effect_classify::{
     aggregate_player_impact, aura_polarity, effect_polarity, effect_targets_object,
     extract_target_filter, is_spell_beneficial, lethal_to_creature, targeted_object_impact,
     targeted_player_impact, targets_creatures, targets_creatures_only, EffectPolarity,
+    PLAYER_IMPACT_PREFERENCE_BAND,
 };
 use super::registry::{
     DecisionKind, PolicyId, PolicyReason, PolicyVerdict, TacticalPolicy, CRITICAL_MAX,
@@ -82,6 +89,7 @@ impl TacticalPolicy for AntiSelfHarmPolicy {
         &[
             DecisionKind::CastSpell,
             DecisionKind::ActivateAbility,
+            DecisionKind::ManaPayment,
             DecisionKind::SelectTarget,
         ]
     }
@@ -96,6 +104,19 @@ impl TacticalPolicy for AntiSelfHarmPolicy {
     }
 
     fn verdict(&self, ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        if let CandidateLifeSafety::Unsafe {
+            before,
+            after,
+            committed,
+        } = preview_candidate_life_safety(ctx.state, ctx.candidate)
+        {
+            return PolicyVerdict::reject(
+                PolicyReason::new("anti_self_harm_lethal_life_commitment")
+                    .with_fact("before", i64::from(before))
+                    .with_fact("after", i64::from(after))
+                    .with_fact("committed", i64::from(committed)),
+            );
+        }
         if let Some(reason) = reject_reason(ctx) {
             return PolicyVerdict::reject(reason);
         }
@@ -112,6 +133,12 @@ impl TacticalPolicy for AntiSelfHarmPolicy {
 
 fn reject_reason(ctx: &PolicyContext<'_>) -> Option<PolicyReason> {
     match &ctx.candidate.action {
+        GameAction::CastSpell { .. }
+            if is_pact_payment_cast(ctx.state, &ctx.candidate.action)
+                && certify_pact_plan(ctx.state, ctx.candidate).is_none() =>
+        {
+            Some(PolicyReason::new("anti_self_harm_next_upkeep_mana_loss"))
+        }
         GameAction::CastSpell { .. } if cast_has_unpayable_self_etb_may_cost(ctx) => {
             Some(PolicyReason::new("anti_self_harm_unpayable_etb_may_cost"))
         }
@@ -585,9 +612,9 @@ fn target_reject_reason(ctx: &PolicyContext<'_>, target: &TargetRef) -> Option<P
 
             let player_impact = targeted_player_impact(ctx, *player_id)
                 .unwrap_or_else(|| aggregate_player_impact(ctx));
-            let prefers_self = if player_impact > 0.25 {
+            let prefers_self = if player_impact > PLAYER_IMPACT_PREFERENCE_BAND {
                 true
-            } else if player_impact < -0.25 {
+            } else if player_impact < -PLAYER_IMPACT_PREFERENCE_BAND {
                 false
             } else {
                 beneficial
@@ -647,8 +674,8 @@ fn score_target_ref(ctx: &PolicyContext<'_>, target: &TargetRef) -> f64 {
             4.0 + threat_level(ctx.state, ctx.ai_player, *player_id) * 8.0
         }
         TargetRef::Object(object_id) => {
-            let object_beneficial =
-                targeted_object_impact(ctx, *object_id).map_or(beneficial, |impact| impact > 0.25);
+            let object_beneficial = targeted_object_impact(ctx, *object_id)
+                .map_or(beneficial, |impact| impact > PLAYER_IMPACT_PREFERENCE_BAND);
             score_target_object(ctx, *object_id, object_beneficial)
         }
     }
@@ -954,6 +981,10 @@ fn pump_taps_blocker_penalty(ctx: &PolicyContext<'_>) -> f64 {
     // Non-land, non-creature tier-1 sources (mana rocks) that auto_tap would use
     // before creatures. Exclude sacrifice-for-mana sources (Treasures) — those are
     // tier 4 in auto_tap and would NOT be tapped before creature dorks.
+    // CR 701.21: the exclusion is `mana_abilities::is_renewable_mana_ability`, the
+    // single engine authority. The local copy this replaced matched only a
+    // `Composite` cost, so a Gold token (bare `Sacrifice`) defeated the stated
+    // intent and was counted as a renewable tier-1 rock.
     let non_creature_tier1_count = ctx
         .state
         .battlefield
@@ -964,9 +995,10 @@ fn pump_taps_blocker_penalty(ctx: &PolicyContext<'_>) -> f64 {
                     && !obj.tapped
                     && !obj.card_types.core_types.contains(&CoreType::Land)
                     && !obj.card_types.core_types.contains(&CoreType::Creature)
-                    && obj.abilities.iter().any(|a| {
-                        mana_abilities::is_mana_ability(a) && !ability_cost_requires_sacrifice(a)
-                    })
+                    && obj
+                        .abilities
+                        .iter()
+                        .any(mana_abilities::is_renewable_mana_ability)
             })
         })
         .count();
@@ -979,21 +1011,6 @@ fn pump_taps_blocker_penalty(ctx: &PolicyContext<'_>) -> f64 {
 
     // Each creature tapped loses its blocking value during this combat.
     -(5.0 * creatures_tapped as f64)
-}
-
-/// Check if an ability's cost includes self-sacrifice (Treasure-style `{T}, Sacrifice`).
-/// Mirrors `mana_sources::cost_requires_sacrifice` which is private to the engine module.
-fn ability_cost_requires_sacrifice(ability: &engine::types::ability::AbilityDefinition) -> bool {
-    match &ability.cost {
-        Some(AbilityCost::Composite { costs }) => costs.iter().any(|c| {
-            matches!(
-                c,
-                AbilityCost::Sacrifice(cost)
-                    if matches!(cost.target, TargetFilter::SelfRef)
-            )
-        }),
-        _ => false,
-    }
 }
 
 /// Extract the fixed damage amount from the pending spell's DealDamage effect.
@@ -1048,29 +1065,315 @@ mod tests {
     use super::*;
     use crate::config::AiConfig;
     use engine::ai_support::{ActionMetadata, AiDecisionContext, CandidateAction, TacticalClass};
+    use engine::game::combat::AttackTarget;
     use engine::game::zones::create_object;
+    use engine::parser::oracle::parse_oracle_text;
     use engine::types::ability::{
-        AbilityCost, AbilityDefinition, AbilityKind, BounceSelection, CardSelectionMode,
-        ContinuousModification, ControllerRef, DiscardSelfScope, EffectKind, FilterProp, PtValue,
-        QuantityRef, ReplacementDefinition, ResolvedAbility, SacrificeCost, StaticDefinition,
-        TargetFilter, TriggerDefinition, TypeFilter, TypedFilter,
+        AbilityCost, AbilityDefinition, AbilityKind, AdditionalCost, AdditionalCostRepeatability,
+        BounceSelection, CardSelectionMode, ContinuousModification, ControllerRef,
+        DiscardSelfScope, EffectKind, FilterProp, PtValue, QuantityModification, QuantityRef,
+        ReplacementDefinition, ResolvedAbility, SacrificeCost, StaticCondition, StaticDefinition,
+        TargetFilter, TriggerDefinition, TypeFilter, TypedFilter, UnlessPayScaling,
     };
     use engine::types::game_state::{
         CastingVariant, GameState, PendingCast, TargetEffectDetail, TargetSelectionSlot, WaitingFor,
     };
     use engine::types::identifiers::{CardId, ObjectId};
     use engine::types::keywords::Keyword;
-    use engine::types::mana::ManaCost;
+    use engine::types::mana::{ManaColor, ManaCost, ManaCostShard};
     use engine::types::player::PlayerId;
     use engine::types::replacements::ReplacementEvent;
     use engine::types::statics::StaticMode;
-    use engine::types::triggers::TriggerMode;
+    use engine::types::triggers::{AttackTargetFilter, TriggerMode};
     use engine::types::zones::Zone;
 
     fn make_state() -> GameState {
         let mut state = GameState::new_two_player(42);
         state.turn_number = 2;
         state
+    }
+
+    fn live_additional_cost_candidate(
+        additional_cost: AdditionalCost,
+        pay: bool,
+    ) -> (GameState, CandidateAction) {
+        let mut state = make_state();
+        state.phase = Phase::PreCombatMain;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.waiting_for = WaitingFor::Priority {
+            player: PlayerId(0),
+        };
+        state.players[0].life = 2;
+
+        let spell_id = create_object(
+            &mut state,
+            CardId(90_001),
+            PlayerId(0),
+            "Optional life-cost specimen".to_string(),
+            Zone::Hand,
+        );
+        let spell = state.objects.get_mut(&spell_id).unwrap();
+        spell.card_types.core_types.push(CoreType::Creature);
+        spell.mana_cost = ManaCost::zero();
+        spell.additional_cost = Some(additional_cost);
+
+        engine::game::apply_as_current(
+            &mut state,
+            GameAction::CastSpell {
+                object_id: spell_id,
+                card_id: CardId(90_001),
+                targets: Vec::new(),
+                payment_mode: CastPaymentMode::Auto,
+            },
+        )
+        .expect("the real cast must enter OptionalCostChoice");
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::OptionalCostChoice { .. }
+        ));
+
+        let candidate = engine::ai_support::candidate_actions(&state)
+            .into_iter()
+            .find(|candidate| {
+                matches!(candidate.action, GameAction::DecideOptionalCost { pay: selected } if selected == pay)
+            })
+            .expect("the generated candidate set must contain the selected optional-cost action");
+        (state, candidate)
+    }
+
+    fn optional_life_cost() -> AdditionalCost {
+        AdditionalCost::Optional {
+            cost: AbilityCost::PayLife {
+                amount: QuantityExpr::Fixed { value: 2 },
+            },
+            repeatability: AdditionalCostRepeatability::Once,
+        }
+    }
+
+    fn live_defiler_candidate(life: i32, pay: bool) -> (GameState, CandidateAction) {
+        live_defiler_candidate_with_mana_cost(life, pay, ManaCost::zero())
+    }
+
+    fn live_defiler_candidate_with_mana_cost(
+        life: i32,
+        pay: bool,
+        mana_cost: ManaCost,
+    ) -> (GameState, CandidateAction) {
+        let payment_mode = if mana_cost.mana_value() > 0 {
+            CastPaymentMode::Manual
+        } else {
+            CastPaymentMode::Auto
+        };
+        let mut state = make_state();
+        state.phase = Phase::PreCombatMain;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.waiting_for = WaitingFor::Priority {
+            player: PlayerId(0),
+        };
+        state.players[0].life = life;
+
+        let spell_id = create_object(
+            &mut state,
+            CardId(90_002),
+            PlayerId(0),
+            "Defiler-proof green permanent".to_string(),
+            Zone::Hand,
+        );
+        let spell = state.objects.get_mut(&spell_id).unwrap();
+        spell.card_types.core_types.push(CoreType::Creature);
+        spell.color = vec![ManaColor::Green];
+        spell.mana_cost = mana_cost;
+
+        let defiler_id = create_object(
+            &mut state,
+            CardId(90_003),
+            PlayerId(0),
+            "Defiler of Vigor".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&defiler_id)
+            .unwrap()
+            .static_definitions
+            .push(StaticDefinition::new(StaticMode::DefilerCostReduction {
+                color: ManaColor::Green,
+                life_cost: 2,
+                mana_reduction: ManaCost::Cost {
+                    shards: vec![ManaCostShard::Green],
+                    generic: 0,
+                },
+            }));
+
+        engine::game::apply_as_current(
+            &mut state,
+            GameAction::CastSpell {
+                object_id: spell_id,
+                card_id: CardId(90_002),
+                targets: Vec::new(),
+                payment_mode,
+            },
+        )
+        .expect("the real green permanent cast must enter DefilerPayment");
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::DefilerPayment { .. }
+        ));
+
+        let candidate = engine::ai_support::candidate_actions(&state)
+            .into_iter()
+            .find(|candidate| {
+                matches!(candidate.action, GameAction::DecideOptionalCost { pay: selected } if selected == pay)
+            })
+            .expect("the generated candidate set must contain the selected Defiler decision");
+        (state, candidate)
+    }
+
+    /// Builds a real keyword-generated repeatable queue, then substitutes the
+    /// test-only life branch while preserving the queue origin and ordinal. No
+    /// printed repeatable keyword presently has a direct `PayLife` cost; Squad
+    /// is the production queue carrier this regression protects.
+    fn live_queued_repeatable_life_candidate() -> (GameState, CandidateAction) {
+        let mut state = make_state();
+        state.phase = Phase::PreCombatMain;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.waiting_for = WaitingFor::Priority {
+            player: PlayerId(0),
+        };
+        state.players[0].life = 2;
+
+        let spell_id = create_object(
+            &mut state,
+            CardId(90_004),
+            PlayerId(0),
+            "Queued repeatable-cost specimen".to_string(),
+            Zone::Hand,
+        );
+        let spell = state.objects.get_mut(&spell_id).unwrap();
+        spell.card_types.core_types.push(CoreType::Creature);
+        spell.mana_cost = ManaCost::zero();
+        spell.keywords.push(Keyword::Squad(ManaCost::zero()));
+
+        engine::game::apply_as_current(
+            &mut state,
+            GameAction::CastSpell {
+                object_id: spell_id,
+                card_id: CardId(90_004),
+                targets: Vec::new(),
+                payment_mode: CastPaymentMode::Auto,
+            },
+        )
+        .expect("the real Squad cast must enter its queued optional-cost prompt");
+
+        let life_cost = optional_life_cost();
+        let WaitingFor::OptionalCostChoice {
+            cost, pending_cast, ..
+        } = &mut state.waiting_for
+        else {
+            panic!("expected the keyword-generated queued OptionalCostChoice");
+        };
+        assert!(matches!(
+            pending_cast.additional_cost_queue.first(),
+            Some(instance)
+                if instance.origin == engine::types::ability::AdditionalCostOrigin::Squad
+                    && matches!(
+                        instance.cost,
+                        AdditionalCost::Optional {
+                            repeatability: AdditionalCostRepeatability::Repeatable,
+                            ..
+                        }
+                    )
+        ));
+        *cost = life_cost.clone();
+        pending_cast.additional_cost_queue[0].cost = life_cost;
+
+        let candidate = engine::ai_support::candidate_actions(&state)
+            .into_iter()
+            .find(|candidate| {
+                matches!(
+                    candidate.action,
+                    GameAction::DecideOptionalCost { pay: true }
+                )
+            })
+            .expect("the queued prompt must generate its accept candidate");
+        (state, candidate)
+    }
+
+    fn install_norns_annex_style_tax(state: &mut GameState) {
+        let tax_id = create_object(
+            state,
+            CardId(90_005),
+            PlayerId(1),
+            "Norn's Annex proof".to_string(),
+            Zone::Battlefield,
+        );
+        let tax = state.objects.get_mut(&tax_id).unwrap();
+        tax.card_types.core_types.push(CoreType::Artifact);
+        let mut definition = StaticDefinition::new(StaticMode::CantAttack)
+            .affected(TargetFilter::Typed(TypedFilter {
+                type_filters: vec![TypeFilter::Creature],
+                controller: Some(ControllerRef::Opponent),
+                properties: Vec::new(),
+            }))
+            .description("Norn's Annex proof".to_string());
+        definition.condition = Some(StaticCondition::UnlessPay {
+            cost: ManaCost::Cost {
+                shards: vec![ManaCostShard::PhyrexianWhite],
+                generic: 0,
+            },
+            scaling: UnlessPayScaling::PerAffectedCreature,
+            defended: Some(AttackTargetFilter::Player),
+        });
+        tax.static_definitions.push(definition);
+    }
+
+    fn install_life_loss_replacements(
+        state: &mut GameState,
+        replacements: Vec<ReplacementDefinition>,
+    ) {
+        let source = create_object(
+            state,
+            CardId(90_006),
+            PlayerId(0),
+            "Life-loss replacement proof".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .replacement_definitions = replacements.into();
+    }
+
+    fn post_mutation_life_loss_modifier() -> ReplacementDefinition {
+        ReplacementDefinition::new(ReplacementEvent::LoseLife)
+            .quantity_modification(QuantityModification::Plus { value: 0 })
+    }
+
+    fn shared_registry_verdicts_for(
+        state: &GameState,
+        candidate: &CandidateAction,
+    ) -> Vec<(PolicyId, PolicyVerdict)> {
+        let config = AiConfig::default();
+        let decision = AiDecisionContext {
+            waiting_for: state.waiting_for.clone(),
+            candidates: engine::ai_support::candidate_actions(state),
+        };
+        let context = crate::context::AiContext::empty(&config.weights);
+        let ctx = PolicyContext {
+            state,
+            decision: &decision,
+            candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &context,
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        crate::policies::registry::PolicyRegistry::shared().verdicts(&ctx)
     }
 
     fn add_creature(
@@ -1816,6 +2119,100 @@ mod tests {
             self_score > opp_score,
             "Net card-positive discard/draw should prefer self: self={self_score}, opp={opp_score}"
         );
+    }
+
+    #[test]
+    fn draw_then_parent_target_discard_prefers_opponent() {
+        let state = make_state();
+        let config = AiConfig::default();
+        let discard = ResolvedAbility::new(
+            Effect::Discard {
+                count: QuantityExpr::Fixed { value: 3 },
+                target: TargetFilter::ParentTarget,
+                selection: CardSelectionMode::Chosen,
+                unless_filter: None,
+                filter: None,
+            },
+            Vec::new(),
+            ObjectId(100),
+            PlayerId(0),
+        );
+        let ability = ResolvedAbility::new(
+            Effect::Draw {
+                count: QuantityExpr::Fixed { value: 3 },
+                target: TargetFilter::Player,
+            },
+            Vec::new(),
+            ObjectId(100),
+            PlayerId(0),
+        )
+        .sub_ability(discard);
+        let decision = AiDecisionContext {
+            waiting_for: WaitingFor::TargetSelection {
+                player: PlayerId(0),
+                pending_cast: Box::new(PendingCast::new(
+                    ObjectId(100),
+                    CardId(100),
+                    ability,
+                    ManaCost::zero(),
+                )),
+                target_slots: vec![TargetSelectionSlot {
+                    legal_targets: vec![
+                        TargetRef::Player(PlayerId(0)),
+                        TargetRef::Player(PlayerId(1)),
+                    ],
+                    optional: false,
+                    chooser: None,
+                    effect_kind: EffectKind::NoOp,
+                    effect_detail: TargetEffectDetail::None,
+                }],
+                mode_labels: Vec::new(),
+                selection: Default::default(),
+            },
+            candidates: Vec::new(),
+        };
+        let self_candidate = CandidateAction {
+            action: GameAction::ChooseTarget {
+                target: Some(TargetRef::Player(PlayerId(0))),
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Target),
+        };
+        let self_ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &self_candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        let opponent_candidate = CandidateAction {
+            action: GameAction::ChooseTarget {
+                target: Some(TargetRef::Player(PlayerId(1))),
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Target),
+        };
+        let opponent_ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &opponent_candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+
+        assert!(matches!(
+            AntiSelfHarmPolicy.verdict(&self_ctx),
+            PolicyVerdict::Reject { ref reason }
+                if reason.kind == "anti_self_harm_wrong_player_target"
+        ));
+        assert!(matches!(
+            AntiSelfHarmPolicy.verdict(&opponent_ctx),
+            PolicyVerdict::Score { .. }
+        ));
     }
 
     #[test]
@@ -3111,6 +3508,158 @@ mod tests {
         );
     }
 
+    /// Row 15 — the F-1 migration, driven through the production policy seam.
+    ///
+    /// CR 701.21: a **Gold** token's mana ability sacrifices its own source, so it
+    /// is NOT a renewable tier-1 rock and cannot spare a creature dork from being
+    /// tapped. The local `ability_cost_requires_sacrifice` this replaced matched
+    /// only a `Composite` cost, while Gold's cost is a **bare** `Sacrifice` — so
+    /// Gold fell to the `_ => false` arm and was counted as tier-1, defeating the
+    /// filter's own stated intent.
+    ///
+    /// Discrimination: with one dork, no lands, and a 1-mana pump, `shortfall`
+    /// is `1`. Counting Gold gives `creatures_at_risk = 1 - 1 = 0` and the
+    /// penalty never fires; excluding it gives `1 - 0 = 1` and the penalty does
+    /// fire. The `score < -4.0` assertion therefore flips exactly on this
+    /// migration.
+    ///
+    /// The paired positive (a Signet-shaped rock, bare `{T}`) proves the
+    /// discriminator is the self-sacrifice clause and not merely the presence of
+    /// a nonland artifact.
+    #[test]
+    fn gold_token_is_not_a_tier1_rock_but_a_signet_is() {
+        use engine::game::effects::token::predefined_token_abilities;
+        use engine::types::ability::{AbilityCost, AbilityKind, ManaContribution, ManaProduction};
+        use engine::types::mana::ManaColor;
+
+        /// Builds the shared fixture: opponent's combat, one non-sick creature
+        /// mana dork, no lands, a `{G}` pump in hand, plus `extra_abilities` on a
+        /// single untapped nonland artifact.
+        fn score_with_artifact(
+            extra_abilities: Vec<engine::types::ability::AbilityDefinition>,
+        ) -> f64 {
+            let mut state = make_state();
+            state.active_player = PlayerId(1);
+            state.phase = Phase::DeclareAttackers;
+
+            let dork_id = add_creature(&mut state, PlayerId(0), "Llanowar Elves", 1, 1);
+            let dork_obj = state.objects.get_mut(&dork_id).unwrap();
+            dork_obj.entered_battlefield_turn = Some(0);
+            let mut mana_ability = engine::types::ability::AbilityDefinition::new(
+                AbilityKind::Activated,
+                Effect::Mana {
+                    produced: ManaProduction::Fixed {
+                        colors: vec![ManaColor::Green],
+                        contribution: ManaContribution::Base,
+                    },
+                    restrictions: vec![],
+                    grants: vec![],
+                    expiry: None,
+                    target: None,
+                },
+            );
+            mana_ability.cost = Some(AbilityCost::Tap);
+            Arc::make_mut(&mut dork_obj.abilities).push(mana_ability);
+
+            let artifact_id = create_object(
+                &mut state,
+                CardId(600),
+                PlayerId(0),
+                "Artifact".to_string(),
+                Zone::Battlefield,
+            );
+            let artifact = state.objects.get_mut(&artifact_id).unwrap();
+            artifact.card_types.core_types.push(CoreType::Artifact);
+            Arc::make_mut(&mut artifact.abilities).extend(extra_abilities);
+
+            add_creature(&mut state, PlayerId(1), "Goblin", 2, 2);
+
+            let spell_id = create_object(
+                &mut state,
+                CardId(500),
+                PlayerId(0),
+                "Giant Growth".to_string(),
+                Zone::Hand,
+            );
+            let spell_obj = state.objects.get_mut(&spell_id).unwrap();
+            spell_obj.card_types.core_types.push(CoreType::Instant);
+            spell_obj.mana_cost = ManaCost::Cost {
+                shards: vec![engine::types::mana::ManaCostShard::Green],
+                generic: 0,
+            };
+            spell_obj.abilities = Arc::new(vec![engine::types::ability::AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::Pump {
+                    power: PtValue::Fixed(3),
+                    toughness: PtValue::Fixed(3),
+                    target: TargetFilter::Typed(TypedFilter::new(TypeFilter::Creature)),
+                },
+            )]);
+
+            let config = AiConfig::default();
+            let decision = AiDecisionContext {
+                waiting_for: WaitingFor::Priority {
+                    player: PlayerId(0),
+                },
+                candidates: Vec::new(),
+            };
+            let candidate = CandidateAction {
+                action: GameAction::CastSpell {
+                    object_id: spell_id,
+                    card_id: CardId(500),
+                    targets: Vec::new(),
+                    payment_mode: CastPaymentMode::Auto,
+                },
+                metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Spell),
+            };
+            let ctx = PolicyContext {
+                state: &state,
+                decision: &decision,
+                candidate: &candidate,
+                ai_player: PlayerId(0),
+                config: &config,
+                context: &crate::context::AiContext::empty(&config.weights),
+                cast_facts: None,
+                search_depth: crate::policies::context::SearchDepth::Root,
+            };
+            AntiSelfHarmPolicy.score(&ctx)
+        }
+
+        // Verbatim production Gold ability — a BARE `Sacrifice(SelfRef)`.
+        let gold = predefined_token_abilities("Gold");
+        assert_eq!(gold.len(), 1);
+        assert!(
+            matches!(gold[0].cost, Some(AbilityCost::Sacrifice(_))),
+            "reach-guard: Gold's cost must be a BARE Sacrifice, not a Composite — \
+             if this ever changes, this row stops discriminating"
+        );
+
+        // A Signet-shaped renewable rock: bare `{T}`, no sacrifice.
+        let mut signet = engine::types::ability::AbilityDefinition::new(
+            AbilityKind::Activated,
+            Effect::Mana {
+                produced: ManaProduction::Fixed {
+                    colors: vec![ManaColor::Green],
+                    contribution: ManaContribution::Base,
+                },
+                restrictions: vec![],
+                grants: vec![],
+                expiry: None,
+                target: None,
+            },
+        );
+        signet.cost = Some(AbilityCost::Tap);
+
+        assert!(
+            score_with_artifact(gold) < -4.0,
+            "Gold self-sacrifices, so it cannot spare the dork — the penalty must fire"
+        );
+        assert!(
+            score_with_artifact(vec![signet]) > -4.0,
+            "a renewable Signet-shaped rock IS tier-1 and does spare the dork"
+        );
+    }
+
     /// Fix 1 counterpart: if there are enough lands to pay, no penalty should apply.
     #[test]
     fn pre_cast_no_penalty_when_lands_cover_pump_cost() {
@@ -3329,6 +3878,7 @@ mod tests {
             may_trigger_origin: None,
             subject_match_count: None,
             die_result: None,
+            provenance: None,
         }));
 
         let config = AiConfig::default();
@@ -3442,6 +3992,7 @@ mod tests {
             may_trigger_origin: None,
             subject_match_count: None,
             die_result: None,
+            provenance: None,
         }));
 
         let config = AiConfig::default();
@@ -4029,6 +4580,53 @@ mod tests {
         id
     }
 
+    /// Mirrors the parser's Pact-cycle lowering: a separate spell ability
+    /// creates a controller-scoped next-upkeep delayed trigger whose mandatory
+    /// payment is followed by the failed-payment loss branch.
+    fn next_upkeep_payment_or_loss_spell(
+        state: &mut GameState,
+        payment: AbilityCost,
+        loss_condition: AbilityCondition,
+    ) -> ObjectId {
+        let id = create_object(
+            state,
+            CardId(state.next_object_id),
+            PlayerId(0),
+            "Deferred payment specimen".to_string(),
+            Zone::Hand,
+        );
+        let failure = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::LoseTheGame {
+                target: Some(TargetFilter::Controller),
+            },
+        )
+        .condition(loss_condition);
+        let payment = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::PayCost {
+                cost: payment,
+                scale: None,
+                payer: TargetFilter::Controller,
+            },
+        )
+        .sub_ability(failure);
+        let delayed = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::CreateDelayedTrigger {
+                condition: DelayedTriggerCondition::AtNextPhaseForPlayer {
+                    phase: Phase::Upkeep,
+                    player: PlayerId(0),
+                    gate: engine::types::ability::TurnGate::None,
+                },
+                effect: Box::new(payment),
+                uses_tracked_set: false,
+            },
+        );
+        state.objects.get_mut(&id).unwrap().abilities = Arc::new(vec![delayed]);
+        id
+    }
+
     fn mox_diamond_like_spell(state: &mut GameState) -> ObjectId {
         let id = create_object(
             state,
@@ -4158,6 +4756,101 @@ mod tests {
         assert!(matches!(
             pre_cast_verdict_for_spell(&state, spell_id),
             PolicyVerdict::Score { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_cast_creating_next_upkeep_mana_payment_or_loss_obligation() {
+        let mut state = make_state();
+        let spell_id = next_upkeep_payment_or_loss_spell(
+            &mut state,
+            AbilityCost::Mana {
+                cost: ManaCost::generic(4),
+            },
+            AbilityCondition::Not {
+                condition: Box::new(AbilityCondition::effect_performed()),
+            },
+        );
+
+        assert!(matches!(
+            pre_cast_verdict_for_spell(&state, spell_id),
+            PolicyVerdict::Reject { reason }
+                if reason.kind == "anti_self_harm_next_upkeep_mana_loss"
+        ));
+    }
+
+    #[test]
+    fn current_summoners_pact_parse_matches_the_structural_obligation() {
+        let parsed = parse_oracle_text(
+            "Search your library for a green creature card, reveal it, put it into your hand, then shuffle.\nAt the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.",
+            "Summoner's Pact",
+            &[],
+            &["Instant".to_string()],
+            &[],
+        );
+
+        assert!(
+            parsed.abilities.iter().any(is_pact_payment_ability),
+            "the current Pact Oracle parse must retain its deferred payment-or-loss structure"
+        );
+    }
+
+    #[test]
+    fn ignores_pact_shape_in_an_unchosen_modal_branch() {
+        let mut state = make_state();
+        let spell_id = next_upkeep_payment_or_loss_spell(
+            &mut state,
+            AbilityCost::Mana {
+                cost: ManaCost::generic(4),
+            },
+            AbilityCondition::Not {
+                condition: Box::new(AbilityCondition::effect_performed()),
+            },
+        );
+        let pact_branch = state.objects[&spell_id].abilities[0].clone();
+        let mut unchosen_modal = AbilityDefinition::new(AbilityKind::Spell, Effect::NoOp);
+        unchosen_modal.mode_abilities.push(pact_branch);
+        state.objects.get_mut(&spell_id).unwrap().abilities = Arc::new(vec![unchosen_modal]);
+
+        assert!(matches!(
+            pre_cast_verdict_for_spell(&state, spell_id),
+            PolicyVerdict::Score { delta, .. } if delta == 0.0
+        ));
+    }
+
+    #[test]
+    fn leaves_non_mana_deferred_payment_obligation_neutral() {
+        let mut state = make_state();
+        let spell_id = next_upkeep_payment_or_loss_spell(
+            &mut state,
+            AbilityCost::PayLife {
+                amount: QuantityExpr::Fixed { value: 4 },
+            },
+            AbilityCondition::Not {
+                condition: Box::new(AbilityCondition::effect_performed()),
+            },
+        );
+
+        assert!(matches!(
+            pre_cast_verdict_for_spell(&state, spell_id),
+            PolicyVerdict::Score { delta, .. } if delta == 0.0
+        ));
+    }
+
+    #[test]
+    fn leaves_ambiguous_next_upkeep_mana_loss_neutral() {
+        let mut state = make_state();
+        let spell_id = next_upkeep_payment_or_loss_spell(
+            &mut state,
+            AbilityCost::Mana {
+                cost: ManaCost::generic(4),
+            },
+            AbilityCondition::effect_performed(),
+        );
+
+        assert!(matches!(
+            pre_cast_verdict_for_spell(&state, spell_id),
+            PolicyVerdict::Score { delta, .. } if delta == 0.0
         ));
     }
 
@@ -4316,6 +5009,312 @@ mod tests {
             search_depth: crate::policies::context::SearchDepth::Root,
         };
         AntiSelfHarmPolicy.verdict(&ctx)
+    }
+
+    #[test]
+    fn registry_rejects_the_generated_accepted_optional_life_cost_and_reducer_pays_it() {
+        let (mut state, candidate) = live_additional_cost_candidate(optional_life_cost(), true);
+        let verdicts = shared_registry_verdicts_for(&state, &candidate);
+        assert!(verdicts.into_iter().any(|(id, verdict)| {
+            id == PolicyId::AntiSelfHarm
+                && matches!(
+                    verdict,
+                    PolicyVerdict::Reject { reason }
+                        if reason.kind == "anti_self_harm_lethal_life_commitment"
+                            && reason.facts == [("before", 2), ("after", 0), ("committed", 2)]
+                )
+        }));
+
+        engine::game::apply_as_current(&mut state, candidate.action)
+            .expect("the exact generated accept action must remain reducer-legal");
+        assert_eq!(state.players[0].life, 0);
+    }
+
+    #[test]
+    fn registry_rejects_the_generated_queued_repeatable_optional_life_cost() {
+        let (mut state, candidate) = live_queued_repeatable_life_candidate();
+        assert!(shared_registry_verdicts_for(&state, &candidate)
+            .into_iter()
+            .any(|(id, verdict)| {
+                id == PolicyId::AntiSelfHarm
+                    && matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                                && reason.facts
+                                    == [("before", 2), ("after", 0), ("committed", 2)]
+                    )
+            }));
+
+        engine::game::apply_as_current(&mut state, candidate.action)
+            .expect("the exact queued repeatable accept action must remain reducer-legal");
+        assert_eq!(state.players[0].life, 0);
+    }
+
+    #[test]
+    fn registry_binds_generated_defiler_candidates_to_the_live_offer_and_receipt() {
+        let (mut lethal_state, lethal_accept) = live_defiler_candidate(2, true);
+        assert!(shared_registry_verdicts_for(&lethal_state, &lethal_accept)
+            .into_iter()
+            .any(|(id, verdict)| {
+                id == PolicyId::AntiSelfHarm
+                    && matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                                && reason.facts
+                                    == [("before", 2), ("after", 0), ("committed", 2)]
+                    )
+            }));
+        engine::game::apply_as_current(&mut lethal_state, lethal_accept.action)
+            .expect("the exact generated Defiler accept action must remain reducer-legal");
+        assert_eq!(lethal_state.players[0].life, 0);
+
+        let (decline_state, decline) = live_defiler_candidate(2, false);
+        assert!(shared_registry_verdicts_for(&decline_state, &decline)
+            .into_iter()
+            .all(|(id, verdict)| {
+                id != PolicyId::AntiSelfHarm
+                    || !matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                    )
+            }));
+
+        let (nonlethal_state, nonlethal_accept) = live_defiler_candidate(3, true);
+        assert!(
+            shared_registry_verdicts_for(&nonlethal_state, &nonlethal_accept)
+                .into_iter()
+                .all(|(id, verdict)| {
+                    id != PolicyId::AntiSelfHarm
+                        || !matches!(
+                            verdict,
+                            PolicyVerdict::Reject { reason }
+                                if reason.kind == "anti_self_harm_lethal_life_commitment"
+                        )
+                })
+        );
+
+        let (stale_state, mut stale_accept) = live_defiler_candidate(2, true);
+        stale_accept.metadata.tactical_class = TacticalClass::Utility;
+        assert_eq!(
+            preview_candidate_life_safety(&stale_state, &stale_accept),
+            CandidateLifeSafety::NotUnsafe,
+            "a candidate whose full generated provenance no longer matches is neutral"
+        );
+    }
+
+    #[test]
+    fn registry_uses_the_replacement_adjusted_defiler_receipt() {
+        let (mut state, candidate) = live_defiler_candidate(3, true);
+        install_life_loss_replacements(
+            &mut state,
+            vec![ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                .quantity_modification(QuantityModification::DOUBLE)],
+        );
+
+        assert!(shared_registry_verdicts_for(&state, &candidate)
+            .into_iter()
+            .any(|(id, verdict)| {
+                id == PolicyId::AntiSelfHarm
+                    && matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                                && reason.facts
+                                    == [("before", 3), ("after", -1), ("committed", 4)]
+                    )
+            }));
+
+        engine::game::apply_as_current(&mut state, candidate.action)
+            .expect("the replacement-adjusted generated Defiler action must remain reducer-legal");
+        assert_eq!(state.players[0].life, -1);
+    }
+
+    #[test]
+    fn preview_handles_real_replacement_carriers_without_fabricated_probe_state() {
+        let (mut deferred_state, deferred_candidate) = live_defiler_candidate(3, true);
+        install_life_loss_replacements(
+            &mut deferred_state,
+            vec![
+                ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                    .quantity_modification(QuantityModification::DOUBLE),
+                ReplacementDefinition::new(ReplacementEvent::LoseLife)
+                    .quantity_modification(QuantityModification::Plus { value: 1 }),
+            ],
+        );
+        assert_eq!(
+            preview_candidate_life_safety(&deferred_state, &deferred_candidate),
+            CandidateLifeSafety::NotUnsafe,
+            "a real replacement-ordering continuation with no life edit is neutral"
+        );
+        engine::game::apply_as_current(&mut deferred_state, deferred_candidate.action)
+            .expect("the generated Defiler decision must reach its real replacement continuation");
+        assert_eq!(deferred_state.players[0].life, 3);
+        assert!(matches!(
+            deferred_state.waiting_for,
+            WaitingFor::ReplacementChoice { .. }
+        ));
+
+        let (mut receipt_state, receipt_candidate) = live_defiler_candidate_with_mana_cost(
+            2,
+            true,
+            ManaCost::Cost {
+                shards: vec![ManaCostShard::Green, ManaCostShard::Green],
+                generic: 0,
+            },
+        );
+        install_life_loss_replacements(
+            &mut receipt_state,
+            vec![post_mutation_life_loss_modifier()],
+        );
+        assert_eq!(
+            preview_candidate_life_safety(&receipt_state, &receipt_candidate),
+            CandidateLifeSafety::Unsafe {
+                before: 2,
+                after: 0,
+                committed: 2,
+            },
+            "a real post-edit mana-payment continuation retains its bound receipt"
+        );
+        engine::game::apply_as_current(&mut receipt_state, receipt_candidate.action)
+            .expect("the generated Defiler decision must remain reducer-legal at lethal life");
+        assert_eq!(receipt_state.players[0].life, 0);
+        assert!(
+            matches!(
+                receipt_state.waiting_for,
+                WaitingFor::GameOver {
+                    winner: Some(PlayerId(1))
+                }
+            ),
+            "public action reconciliation must end the game after a lethal Defiler payment, got {:?}",
+            receipt_state.waiting_for
+        );
+    }
+
+    #[test]
+    fn registry_keeps_optional_life_cost_decline_neutral() {
+        let (mut state, candidate) = live_additional_cost_candidate(optional_life_cost(), false);
+        let verdicts = shared_registry_verdicts_for(&state, &candidate);
+        assert!(verdicts.into_iter().all(|(id, verdict)| {
+            id != PolicyId::AntiSelfHarm
+                || !matches!(
+                    verdict,
+                    PolicyVerdict::Reject { reason }
+                        if reason.kind == "anti_self_harm_lethal_life_commitment"
+                )
+        }));
+
+        engine::game::apply_as_current(&mut state, candidate.action)
+            .expect("the exact generated decline action must remain reducer-legal");
+        assert_eq!(state.players[0].life, 2);
+    }
+
+    #[test]
+    fn registry_binds_choice_cost_to_the_selected_direct_life_branch() {
+        let life = AbilityCost::PayLife {
+            amount: QuantityExpr::Fixed { value: 2 },
+        };
+        let mana = AbilityCost::Mana {
+            cost: ManaCost::zero(),
+        };
+        let (mut accepted_state, accepted) =
+            live_additional_cost_candidate(AdditionalCost::Choice(life, mana), true);
+        assert!(shared_registry_verdicts_for(&accepted_state, &accepted)
+            .into_iter()
+            .any(|(id, verdict)| {
+                id == PolicyId::AntiSelfHarm
+                    && matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                    )
+            }));
+        engine::game::apply_as_current(&mut accepted_state, accepted.action)
+            .expect("the generated preferred-choice action must remain reducer-legal");
+        assert_eq!(accepted_state.players[0].life, 0);
+
+        let (mut fallback_state, fallback) = live_additional_cost_candidate(
+            AdditionalCost::Choice(
+                AbilityCost::PayLife {
+                    amount: QuantityExpr::Fixed { value: 2 },
+                },
+                AbilityCost::Mana {
+                    cost: ManaCost::zero(),
+                },
+            ),
+            false,
+        );
+        assert!(shared_registry_verdicts_for(&fallback_state, &fallback)
+            .into_iter()
+            .all(|(id, verdict)| {
+                id != PolicyId::AntiSelfHarm
+                    || !matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                    )
+            }));
+        engine::game::apply_as_current(&mut fallback_state, fallback.action)
+            .expect("the generated fallback-choice action must remain reducer-legal");
+        assert_eq!(fallback_state.players[0].life, 2);
+    }
+
+    #[test]
+    fn real_combat_tax_phyrexian_life_continuation_never_routes_through_cast_cost_veto() {
+        let mut state = make_state();
+        state.phase = Phase::DeclareAttackers;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.players[0].life = 2;
+        let attacker = add_creature(&mut state, PlayerId(0), "Taxed attacker", 2, 2);
+        install_norns_annex_style_tax(&mut state);
+        state.waiting_for = WaitingFor::DeclareAttackers {
+            player: PlayerId(0),
+            valid_attacker_ids: vec![attacker],
+            valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+            valid_attack_targets_by_attacker: None,
+            attacker_constraints: Default::default(),
+        };
+
+        engine::game::apply_as_current(
+            &mut state,
+            GameAction::DeclareAttackers {
+                attacks: vec![(attacker, AttackTarget::Player(PlayerId(1)))],
+                bands: Vec::new(),
+            },
+        )
+        .expect("the real taxed attack must enter CombatTaxPayment");
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::CombatTaxPayment { .. }
+        ));
+
+        let candidate = engine::ai_support::candidate_actions(&state)
+            .into_iter()
+            .find(|candidate| matches!(candidate.action, GameAction::PayCombatTax { accept: true }))
+            .expect("combat tax accept must be generated from its real waiting state");
+        assert_eq!(
+            preview_candidate_life_safety(&state, &candidate),
+            CandidateLifeSafety::NotUnsafe
+        );
+        assert!(shared_registry_verdicts_for(&state, &candidate)
+            .into_iter()
+            .all(|(id, verdict)| {
+                id != PolicyId::AntiSelfHarm
+                    || !matches!(
+                        verdict,
+                        PolicyVerdict::Reject { reason }
+                            if reason.kind == "anti_self_harm_lethal_life_commitment"
+                    )
+            }));
+        engine::game::apply_as_current(&mut state, candidate.action)
+            .expect("the generated combat-tax acceptance must reach its real payment continuation");
+        assert_eq!(
+            state.players[0].life, 0,
+            "the Norn's-Annex-style tax reaches its Phyrexian life-payment continuation"
+        );
     }
 
     /// `OptionalEffectChoice` routes through `DecisionKind::ActivateAbility`, so

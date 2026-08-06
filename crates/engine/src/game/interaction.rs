@@ -1,8 +1,7 @@
 //! Hidden engine-authority interaction projection and submission boundary.
 //!
-//! No production transport calls this module yet. The existing human action UI
-//! remains the only exposed authority until the separately reviewed adapter
-//! cutover. Engine tests may use these entry points to prove the contract.
+//! Production adapters consume this projection while the existing action UI
+//! remains the exposed authority until its separately reviewed cutover.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -38,7 +37,8 @@ use crate::types::identifiers::ObjectId;
 use crate::types::interaction::{
     ActiveInteractionSlot, AggregateComparator, AmountAssignment, ConfirmSemantics,
     InteractionActionCode, InteractionActionId, InteractionAggregateFunction,
-    InteractionAvailability, InteractionChoice, InteractionChoiceId, InteractionChoiceStatus,
+    InteractionAttachmentFan, InteractionAttachmentFanChild, InteractionAvailability,
+    InteractionChoice, InteractionChoiceId, InteractionChoiceStatus,
     InteractionDamageAssignmentMode, InteractionGroupConstraint, InteractionId,
     InteractionIntentCode, InteractionManaAbilityActivationScope, InteractionManaColor,
     InteractionManaComparator, InteractionManaRestriction, InteractionManaSpecialAction,
@@ -55,8 +55,8 @@ use crate::types::interaction::{
     ViewerInteraction, MAX_INTERACTION_LIST_LEN,
 };
 use crate::types::mana::{
-    AbilityActivationScope, ManaColor, ManaCost, ManaRestriction, ManaType, SpecialAction,
-    SpellCostCriterion, ZoneSpendPolarity,
+    AbilityActivationScope, ManaColor, ManaCost, ManaRestriction, ManaSourceSelection, ManaType,
+    SpecialAction, SpellCostCriterion, ZoneSpendPolarity,
 };
 use crate::types::match_config::DeckCardCount;
 use crate::types::player::PlayerId;
@@ -67,7 +67,7 @@ use super::dungeon::DungeonId;
 use super::engine::{
     apply_interaction, apply_interaction_for_simulation, EngineError, MAX_SHORTCUT_CYCLES,
 };
-use super::game_object::RoomDoor;
+use super::game_object::{AttachTarget, RoomDoor};
 use super::merge::MergeSide;
 use super::{mana_sources, turn_control, visibility};
 
@@ -248,7 +248,9 @@ fn human_response_model(waiting_for: &WaitingFor, semantic_owner: PlayerId) -> H
         | WaitingFor::CommanderZoneChoice { .. }
         | WaitingFor::UntapChoice { .. } => HumanResponseModel::DirectChoices,
         WaitingFor::BetweenGamesSideboard { .. } => HumanResponseModel::SideboardPartition,
-        WaitingFor::ManaPayment { .. } => HumanResponseModel::DirectChoices,
+        WaitingFor::ManaPayment { .. } | WaitingFor::ManaSourceSelection { .. } => {
+            HumanResponseModel::DirectChoices
+        }
         WaitingFor::LoopShortcut { .. } => HumanResponseModel::LoopShortcut,
         WaitingFor::Priority { .. }
         | WaitingFor::MeldPairChoice { .. }
@@ -334,6 +336,7 @@ fn classify_waiting_for(waiting_for: &WaitingFor) -> WaitingClassification {
             Some(InteractionSlotKind::OpeningBottom),
         ),
         WaitingFor::ManaPayment { .. }
+        | WaitingFor::ManaSourceSelection { .. }
         | WaitingFor::AssistPayment { .. }
         | WaitingFor::DefilerPayment { .. }
         | WaitingFor::UnlessPayment { .. }
@@ -2008,6 +2011,20 @@ fn direct_choice_projection(
             }
             mana_payment_direct_actions(state, *player, *convoke_mode)?
         }
+        WaitingFor::ManaSourceSelection {
+            player, options, ..
+        } => {
+            if *player != semantic_owner {
+                return Err(InteractionReasonCode::InvalidAuthorityState);
+            }
+            let mut actions = options
+                .iter()
+                .cloned()
+                .map(|selection| GameAction::ActivateManaSource { selection })
+                .collect::<Vec<_>>();
+            actions.push(GameAction::BackToManaPayment);
+            actions
+        }
         WaitingFor::PrecastCopyShortcutOffer {
             epoch, route_count, ..
         } => {
@@ -2428,10 +2445,47 @@ fn loop_shortcut_projection(
     }
     let count = match schema.iteration_count {
         crate::analysis::decision_template::IterationCount::Fixed(suggested) => {
+            // CR 732.2a (MagicCompRules.txt:6372): the picker's ceiling is the offer's own
+            // CR 704 bound, never the raw global safety limit — a count above it would
+            // specify a sequence containing an elimination, which is a conditional action.
+            // The engine owns this number; the frontend renders it. An unnarrowed offer
+            // states `MAX_SHORTCUT_CYCLES`; a bounded offer states less. Either way this is
+            // the offer's own bound, clamped at the same authority.
+            //
+            // CR 704.5a (MagicCompRules.txt:5492): `elimination_bounds` returns `0` to
+            // mean "no legal repetition exists and the caller must not offer". A
+            // published offer carrying
+            // `0` is an authority violation, not a number to repair — clamping it to `1`
+            // renders a one-iteration offer whose single iteration eliminates a player
+            // mid-proposal. Reject it in EVERY build: a `debug_assert!` disappears from
+            // release, which is precisely where the clamp is what the player sees.
+            //
+            // THIS GUARD IS ALSO LOAD-BEARING AGAINST A PANIC, not merely against a bad
+            // offer. With the lower clamp replaced by `.min(MAX_SHORTCUT_CYCLES)` below,
+            // a `0` authority yields `max == 0`, and `suggested.clamp(1, max)` is then
+            // `Ord::clamp(1, 0)`, whose `assert!(min <= max)` is a PLAIN assert that
+            // survives release (measured: an `-O` build of `5u32.clamp(1, 0)` panics with
+            // `min > max. min = 1, max = 0`). Removing this guard turns a malformed
+            // restored dump into an engine panic.
+            //
+            // LATENT, NOT LIVE (measured at this head): no in-tree producer can reach this
+            // arm with `0`. `build_shortcut_schema` (`game/engine.rs`) has exactly two call
+            // sites and both pass `MAX_SHORTCUT_CYCLES`; the per-viewer projection in
+            // `game/visibility.rs` only re-projects an existing schema's value; and
+            // `ShortcutDecisionSchema::default().max_iterations == default_max_iterations()
+            // == MAX_SHORTCUT_CYCLES` (`analysis/decision_template.rs`), which is also the
+            // `#[serde(default)]` for a pre-bound save. The only way `0`
+            // arrives is a LOADED/PERSISTED authority that explicitly serializes it. This
+            // guard is therefore the fail-closed twin of item E: a latent hole shut before
+            // it opens.
+            if schema.max_iterations == 0 {
+                return Err(InteractionReasonCode::InvalidAuthorityState);
+            }
+            let max = schema.max_iterations.min(MAX_SHORTCUT_CYCLES);
             InteractionShortcutCountSpec::Fixed {
                 min: 1,
-                max: MAX_SHORTCUT_CYCLES,
-                suggested: suggested.clamp(1, MAX_SHORTCUT_CYCLES),
+                max,
+                suggested: suggested.clamp(1, max),
             }
         }
         crate::analysis::decision_template::IterationCount::UntilLethal => {
@@ -3351,6 +3405,7 @@ fn selection_projection(
         | WaitingFor::MeldPairChoice { .. }
         | WaitingFor::MeldAttackTargetChoice { .. }
         | WaitingFor::ManaPayment { .. }
+        | WaitingFor::ManaSourceSelection { .. }
         | WaitingFor::AssistChoosePlayer { .. }
         | WaitingFor::AssistPayment { .. }
         | WaitingFor::ChooseXValue { .. }
@@ -3873,6 +3928,7 @@ fn object_property_code(property: ObjectProperty) -> InteractionObjectProperty {
 fn cast_payment_mode_code(mode: CastPaymentMode) -> &'static str {
     match mode {
         CastPaymentMode::Auto => "auto",
+        CastPaymentMode::AutoExceptSacrificialMana => "autoExceptSacrificialMana",
         CastPaymentMode::Manual => "manual",
     }
 }
@@ -4135,6 +4191,49 @@ fn push_object_list(
     }
 }
 
+/// Label one mana action with the mana its own reducer would actually produce.
+/// `resolve` is the caller-supplied authority — the exact function the reducer
+/// for that action variant uses to revalidate the frozen selection — so a label
+/// can never be derived through a sibling surface's selection form. A stale or
+/// no-longer-legal selection resolves to no produced-mana surface, matching the
+/// reducer's own refusal to activate it.
+fn push_produced_mana_surfaces(
+    surfaces: &mut Vec<InteractionPresentationSurface>,
+    state: &GameState,
+    selection: &ManaSourceSelection,
+    resolve: fn(
+        &GameState,
+        PlayerId,
+        &ManaSourceSelection,
+    ) -> Result<mana_sources::ManaSourceOption, EngineError>,
+) {
+    let Some(player) = state
+        .objects
+        .get(&selection.source.object_id)
+        .map(|object| object.controller)
+    else {
+        return;
+    };
+    let Ok(option) = resolve(state, player, selection) else {
+        return;
+    };
+    for (index, unit) in mana_sources::live_mana_output_for_option(state, player, &option)
+        .into_iter()
+        .enumerate()
+    {
+        surfaces.push(InteractionPresentationSurface::Mana {
+            role: InteractionRoleCode::ProducedMana,
+            index: Some(index as u32),
+            symbols: vec![mana_type_code(unit.mana_type).to_string()],
+            restrictions: unit
+                .restrictions
+                .iter()
+                .map(interaction_mana_restriction)
+                .collect(),
+        });
+    }
+}
+
 /// Exhaustive, viewer-filtered projection of the fields that distinguish one
 /// exact action candidate from its siblings. This is intentionally action
 /// aware: adding a `GameAction` variant is a compile-time obligation here.
@@ -4146,6 +4245,7 @@ fn project_action_payload(
     match action {
         GameAction::PassPriority
         | GameAction::CancelCast
+        | GameAction::BackToManaPayment
         | GameAction::KeepAllCopyTargets
         | GameAction::RollPlanarDie
         | GameAction::CompanionToHand
@@ -4157,35 +4257,37 @@ fn project_action_payload(
         GameAction::ChooseEntryAttackTarget { target } => {
             push_attack_target_surface(surfaces, state, target, InteractionRoleCode::AttackTarget)
         }
-        GameAction::TapLandForMana { selection } => {
-            let Some(player) = state
-                .objects
-                .get(&selection.source.object_id)
-                .map(|object| object.controller)
-            else {
-                return;
-            };
-            let Ok(option) =
-                mana_sources::live_land_mana_option_for_selection(state, player, selection)
-            else {
-                return;
-            };
-            for (index, unit) in mana_sources::live_mana_output_for_option(state, player, &option)
-                .into_iter()
-                .enumerate()
-            {
-                surfaces.push(InteractionPresentationSurface::Mana {
-                    role: InteractionRoleCode::ProducedMana,
-                    index: Some(index as u32),
-                    symbols: vec![mana_type_code(unit.mana_type).to_string()],
-                    restrictions: unit
-                        .restrictions
-                        .iter()
-                        .map(interaction_mana_restriction)
-                        .collect(),
-                });
-            }
-        }
+        // The two public mana-action surfaces carry deliberately different
+        // selection forms, so each must be labelled through the same authority
+        // that will execute it.
+        //
+        // `TapLandForMana` is minted by `activatable_mana_actions_for_player`
+        // from `ManaSourceOption::semantic_selection` — one *concrete* row per
+        // producible color — and is executed by `handle_tap_land_for_mana` via
+        // `live_land_mana_option_for_selection`.
+        //
+        // `ActivateManaSource` is minted from
+        // `activatable_mana_source_selections`, whose `manual_selection_for_option`
+        // intentionally collapses a flexible source to `Colorless` +
+        // `DeferredColorChoice` so the ordinary mana-choice resolver asks for the
+        // color, and is executed by `activate_mana_source_selection` via
+        // `live_mana_source_option_for_selection`.
+        //
+        // Resolving one through the other's authority can never match a flexible
+        // source, which silently produced an unlabelled action (issue #6944:
+        // City of Brass). Keep each arm paired with its own reducer's resolver.
+        GameAction::TapLandForMana { selection } => push_produced_mana_surfaces(
+            surfaces,
+            state,
+            selection,
+            mana_sources::live_land_mana_option_for_selection,
+        ),
+        GameAction::ActivateManaSource { selection } => push_produced_mana_surfaces(
+            surfaces,
+            state,
+            selection,
+            mana_sources::live_mana_source_option_for_selection,
+        ),
         GameAction::PlayLand { .. }
         | GameAction::Foretell { .. }
         | GameAction::UntapLandForMana { .. }
@@ -4969,6 +5071,8 @@ fn action_code(action: &GameAction) -> InteractionActionCode {
         GameAction::MulliganDecision { .. } => InteractionActionCode::MulliganDecision,
         GameAction::ReorderHand { .. } => InteractionActionCode::ReorderHand,
         GameAction::TapLandForMana { .. } => InteractionActionCode::TapLandForMana,
+        GameAction::ActivateManaSource { .. } => InteractionActionCode::ActivateManaSource,
+        GameAction::BackToManaPayment => InteractionActionCode::BackToManaPayment,
         GameAction::UntapLandForMana { .. } => InteractionActionCode::UntapLandForMana,
         GameAction::SpendPoolMana { .. } => InteractionActionCode::SpendPoolMana,
         GameAction::UnspendPoolMana { .. } => InteractionActionCode::UnspendPoolMana,
@@ -5137,7 +5241,7 @@ fn actor_candidates(
         .filter_map(|candidate| {
             let mut manual = candidate.clone();
             let payment_mode = manual.action.payment_mode_mut()?;
-            if *payment_mode != CastPaymentMode::Auto {
+            if *payment_mode == CastPaymentMode::Manual {
                 return None;
             }
             *payment_mode = CastPaymentMode::Manual;
@@ -7182,6 +7286,7 @@ pub fn derive_viewer_interaction(
             can_submit: false,
             auto_pass_recommended: false,
             opportunities: Vec::new(),
+            attachment_fans: BTreeMap::new(),
             availability: InteractionAvailability::Terminal {
                 outcome: InteractionOutcomeCode::Terminal,
             },
@@ -7197,6 +7302,7 @@ pub fn derive_viewer_interaction(
             can_submit: false,
             auto_pass_recommended: false,
             opportunities: Vec::new(),
+            attachment_fans: BTreeMap::new(),
             availability: InteractionAvailability::Waiting,
         };
     }
@@ -7214,6 +7320,7 @@ pub fn derive_viewer_interaction(
             can_submit: true,
             auto_pass_recommended: false,
             opportunities: Vec::new(),
+            attachment_fans: BTreeMap::new(),
             availability: InteractionAvailability::Unsupported {
                 reason: InteractionReasonCode::AuthorityUnbound,
             },
@@ -7229,6 +7336,7 @@ pub fn derive_viewer_interaction(
             can_submit: true,
             auto_pass_recommended: false,
             opportunities: Vec::new(),
+            attachment_fans: BTreeMap::new(),
             availability: InteractionAvailability::Unsupported {
                 reason: InteractionReasonCode::InvalidAuthorityState,
             },
@@ -7255,12 +7363,14 @@ pub fn derive_viewer_interaction(
             can_submit: true,
             auto_pass_recommended: false,
             opportunities: Vec::new(),
+            attachment_fans: BTreeMap::new(),
             availability: InteractionAvailability::Unsupported {
                 reason: InteractionReasonCode::PayloadTooLarge,
             },
         };
     }
     let mut opportunities = Vec::with_capacity(slots.len());
+    let mut attachment_fans = BTreeMap::new();
     let mut first_progress = None;
     let mut first_fallback = None;
     let default_availability = InteractionAvailability::Stuck {
@@ -7269,8 +7379,21 @@ pub fn derive_viewer_interaction(
     for slot in slots {
         let (mut opportunity, mut slot_availability) =
             opportunity_for_slot(authoritative_state, filtered_state, viewer, slot);
-        if bound_outbound_opportunity(&opportunity).is_err() {
+        let opportunity_is_bounded = bound_outbound_opportunity(&opportunity).is_ok();
+        if !opportunity_is_bounded {
             (opportunity, slot_availability) = payload_too_large_opportunity(&slot.interaction_id);
+        }
+        if opportunity_is_bounded
+            && !matches!(
+                slot_availability,
+                InteractionAvailability::Unsupported { .. }
+            )
+        {
+            attachment_fans.extend(attachment_fans_for_slot(
+                authoritative_state,
+                filtered_state,
+                slot,
+            ));
         }
         if matches!(
             slot_availability,
@@ -7299,10 +7422,12 @@ pub fn derive_viewer_interaction(
             WaitingFor::Priority { .. }
         ) && authoritative_state.auto_pass.contains_key(&viewer),
         opportunities,
+        attachment_fans,
         availability,
     };
     if bound_outbound_view(&view).is_err() {
         view.opportunities.clear();
+        view.attachment_fans.clear();
         view.availability = InteractionAvailability::Unsupported {
             reason: InteractionReasonCode::PayloadTooLarge,
         };
@@ -7310,9 +7435,191 @@ pub fn derive_viewer_interaction(
     view
 }
 
+/// Build attachment affordances from typed decision provenance. The host
+/// back-link and child forward-link must agree; this avoids surfacing stale
+/// relationship data or indirect descendants.
+fn attachment_fans_for_slot(
+    authoritative_state: &GameState,
+    filtered_state: &GameState,
+    slot: &ActiveInteractionSlot,
+) -> BTreeMap<u64, InteractionAttachmentFan> {
+    let semantic_owner = PlayerId(slot.semantic_owner);
+    let model = human_response_model(&filtered_state.waiting_for, semantic_owner);
+    let object_choices = match model {
+        HumanResponseModel::TargetSequence => {
+            target_sequence_projection(&filtered_state.waiting_for)
+                .ok()
+                .flatten()
+                .into_iter()
+                .flat_map(|projection| {
+                    projection
+                        .candidates
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, target)| match target {
+                            TargetRef::Object(object_id) => Some((
+                                object_id,
+                                interaction_choice_id(&slot.interaction_id, 't', index),
+                            )),
+                            TargetRef::Player(_) => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        }
+        HumanResponseModel::Select => {
+            selection_projection(&filtered_state.waiting_for, filtered_state, semantic_owner)
+                .ok()
+                .flatten()
+                .into_iter()
+                .flat_map(|projection| {
+                    projection
+                        .object_ids
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, object_id)| {
+                            (
+                                object_id,
+                                interaction_choice_id(&slot.interaction_id, 's', index),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        }
+        HumanResponseModel::ExactCandidates(AuditedExactCandidates) => {
+            actor_candidates(authoritative_state, semantic_owner)
+                .unwrap_or_default()
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    candidate.action.source_object().map(|object_id| {
+                        (
+                            object_id,
+                            interaction_choice_id(&slot.interaction_id, 'c', index),
+                        )
+                    })
+                })
+                .collect()
+        }
+        HumanResponseModel::Terminal
+        | HumanResponseModel::AssignAmounts
+        | HumanResponseModel::AmountAssignments
+        | HumanResponseModel::DamageAssignments
+        | HumanResponseModel::TriggerOrder
+        | HumanResponseModel::CoinFlipSequence
+        | HumanResponseModel::CategorySelection
+        | HumanResponseModel::CombatRelations(_)
+        | HumanResponseModel::ManaGroups(_)
+        | HumanResponseModel::ModeSequence
+        | HumanResponseModel::OutsideSelection
+        | HumanResponseModel::TextChoice
+        | HumanResponseModel::ShortcutReply
+        | HumanResponseModel::DirectChoices
+        | HumanResponseModel::SideboardPartition
+        | HumanResponseModel::NumberRange(_)
+        | HumanResponseModel::LoopShortcut => Vec::new(),
+    };
+    attachment_fans_for_object_choices(filtered_state, &slot.interaction_id, model, object_choices)
+}
+
+fn attachment_fans_for_object_choices(
+    filtered_state: &GameState,
+    interaction_id: &InteractionId,
+    model: HumanResponseModel,
+    object_choices: impl IntoIterator<Item = (ObjectId, InteractionChoiceId)>,
+) -> BTreeMap<u64, InteractionAttachmentFan> {
+    let mut fans: BTreeMap<
+        (InteractionId, ObjectId),
+        BTreeMap<ObjectId, Vec<InteractionChoiceId>>,
+    > = BTreeMap::new();
+
+    for (child_id, choice_id) in object_choices {
+        let Some(child) = filtered_state.objects.get(&child_id) else {
+            continue;
+        };
+        let Some(AttachTarget::Object(host_id)) = child.attached_to else {
+            continue;
+        };
+        let Some(host) = filtered_state.objects.get(&host_id) else {
+            continue;
+        };
+        if !host.attachments.contains(&child_id) {
+            continue;
+        }
+        let choice_ids = fans
+            .entry((interaction_id.clone(), host_id))
+            .or_default()
+            .entry(child_id)
+            .or_default();
+        if !choice_ids.contains(&choice_id) {
+            choice_ids.push(choice_id);
+        }
+    }
+
+    fans.into_iter()
+        .filter_map(|((interaction_id, host_id), children)| {
+            let children = children
+                .into_iter()
+                .filter_map(|(object_id, choice_ids)| {
+                    let [choice_id] = choice_ids.as_slice() else {
+                        return None;
+                    };
+                    attachment_fan_submission(&interaction_id, model, choice_id.clone()).map(
+                        |submission| InteractionAttachmentFanChild {
+                            object_id: object_id.0,
+                            submission,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            (!children.is_empty()).then_some((
+                host_id.0,
+                InteractionAttachmentFan {
+                    host_id: host_id.0,
+                    children,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Only publish one-step attachment picks. Multi-choice objects and response
+/// families that require the UI to synthesize a payload stay in the normal
+/// interaction surface until the engine exposes a dedicated picker model.
+fn attachment_fan_submission(
+    interaction_id: &InteractionId,
+    model: HumanResponseModel,
+    choice_id: InteractionChoiceId,
+) -> Option<InteractionSubmission> {
+    let response = match model {
+        HumanResponseModel::ExactCandidates(_) => InteractionResponse::Choose { choice_id },
+        HumanResponseModel::Select => InteractionResponse::Select {
+            choice_ids: vec![choice_id],
+        },
+        HumanResponseModel::TargetSequence => InteractionResponse::Sequence {
+            choice_ids: vec![choice_id],
+        },
+        _ => return None,
+    };
+    Some(InteractionSubmission {
+        interaction_id: interaction_id.clone(),
+        response,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InteractionSubmitError {
     pub code: InteractionReasonCode,
+}
+
+/// Successful interaction submission. The action is the exact opaque response
+/// materialized by the engine and is available to trusted adapters solely for
+/// post-success replay recording.
+#[derive(Debug, Clone)]
+pub struct AppliedInteraction {
+    pub action: GameAction,
+    pub result: ActionResult,
 }
 
 impl From<InteractionReasonCode> for InteractionSubmitError {
@@ -7596,6 +7903,14 @@ fn bound_outbound_view(view: &ViewerInteraction) -> Result<(), InteractionReason
     for opportunity in &view.opportunities {
         bound_outbound_opportunity_with_budget(opportunity, &mut budget)?;
     }
+    budget.list(view.attachment_fans.len())?;
+    for fan in view.attachment_fans.values() {
+        budget.list(fan.children.len())?;
+        for child in &fan.children {
+            budget.string(child.submission.interaction_id.as_str())?;
+            bound_outbound_response(&child.submission.response, &mut budget)?;
+        }
+    }
     if let InteractionAvailability::ProgressAvailable { witness } = &view.availability {
         budget.string(witness.interaction_id.as_str())?;
         bound_outbound_response(&witness.response, &mut budget)?;
@@ -7654,6 +7969,21 @@ fn validate_response_bounds(response: &InteractionResponse) -> Result<(), Intera
         }
         InteractionResponse::Number { .. } | InteractionResponse::ShortcutReply { .. } => Ok(()),
     }
+}
+
+/// Wire-boundary bounds for one inbound submission, evaluated without touching
+/// game state.
+///
+/// Transports call this at the wire so a rejection is answered before the
+/// dispatcher does identity work; [`submit_interaction`] re-runs it via
+/// [`resolve_interaction_response`], so no caller can skip it and no transport
+/// can drift from these bounds by restating them.
+pub fn bound_interaction_submission(
+    submission: &InteractionSubmission,
+) -> Result<(), InteractionSubmitError> {
+    bound_string(submission.interaction_id.as_str())?;
+    validate_response_bounds(&submission.response)?;
+    Ok(())
 }
 
 fn slot_for_submission<'a>(
@@ -8568,6 +8898,18 @@ fn materialize_loop_shortcut_response(
             .iter()
             .map(|point| point.slot.clone())
             .collect::<Vec<_>>();
+        // TRAP REMOVAL, NOT A BUG FIX — recorded so the next reader does not "correct" this
+        // literal into `shortcut_validated_range(..)` and then wonder what changed. This
+        // decoder emits only `Player` and `ByIdentity` pins, both of which resolve
+        // INDEPENDENTLY of `iteration`, so validating at index 0 alone is correct by
+        // construction here: a wider range would re-resolve the same pin to the same value.
+        // It is also strictly weaker than the declare-path firewall rather than a second
+        // hole — `1` is a prefix of any range that path validates. It cannot mint a
+        // `Fixed(0)` either: the count-spec projection's `Fixed` arm hard-codes `min: 1`
+        // beside its `debug_assert!(schema.max_iterations >= 1, ..)` and its clamp.
+        // ⚠ Navigation trap: `shortcut_drive_period`'s doc enumerates its own consumers, and
+        // this site consumes `validate_pins` WITHOUT consuming that helper, so it is
+        // invisible from there.
         if predictability_gate(template, &required).is_err()
             || validate_pins(authoritative_schema, template, 1, authoritative_state).is_err()
         {
@@ -9053,8 +9395,7 @@ pub fn resolve_interaction_response(
     actor: PlayerId,
     submission: &InteractionSubmission,
 ) -> Result<GameAction, InteractionSubmitError> {
-    bound_string(submission.interaction_id.as_str())?;
-    validate_response_bounds(&submission.response)?;
+    bound_interaction_submission(submission)?;
     slot_for_submission(state, actor, &submission.interaction_id)?;
     let filtered = visibility::filter_state_for_viewer(state, actor);
     let (action, _) = materialize_response(
@@ -9074,7 +9415,7 @@ pub fn submit_interaction(
     state: &mut GameState,
     actor: PlayerId,
     submission: InteractionSubmission,
-) -> Result<ActionResult, InteractionSubmitError> {
+) -> Result<AppliedInteraction, InteractionSubmitError> {
     let action = resolve_interaction_response(state, actor, &submission)?;
     // Re-read the slot rather than threading it out of `resolve_*`: keeping that
     // function's return to the action alone is what makes it usable as a public
@@ -9082,9 +9423,10 @@ pub fn submit_interaction(
     // slot per pending decision, and it has already succeeded once here.
     let semantic_owner =
         PlayerId(slot_for_submission(state, actor, &submission.interaction_id)?.semantic_owner);
-    apply_interaction(state, actor, semantic_owner, action).map_err(|_error: EngineError| {
-        InteractionSubmitError {
+    let result = apply_interaction(state, actor, semantic_owner, action.clone()).map_err(
+        |_error: EngineError| InteractionSubmitError {
             code: InteractionReasonCode::ReducerRejected,
-        }
-    })
+        },
+    )?;
+    Ok(AppliedInteraction { action, result })
 }

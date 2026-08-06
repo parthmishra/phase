@@ -1,5 +1,9 @@
 import type { BracketDeckRequest, BracketEstimate } from "../types/bracketEstimate";
-import type { InteractionActionId, ViewerInteraction } from "./generated/interaction";
+import type {
+  InteractionActionId,
+  InteractionSubmission,
+  ViewerInteraction,
+} from "./generated/interaction";
 
 // ── Identifiers ──────────────────────────────────────────────────────────
 
@@ -664,7 +668,10 @@ export interface CastingVariantChoiceOption {
   mana_cost: ManaCost;
 }
 
-export type CastPaymentMode = { type: "Auto" } | { type: "Manual" };
+export type CastPaymentMode =
+  | { type: "Auto" }
+  | { type: "AutoExceptSacrificialMana" }
+  | { type: "Manual" };
 
 export type UnlessCost =
   | { type: "Fixed"; cost: ManaCost }
@@ -1154,6 +1161,10 @@ export type ManaSourcePenalty =
   | { PaysLifeOnActivation: { fixed_amount: number | null } }
   | "Sacrifices";
 
+export type ManaSourceOutput =
+  | { type: "Concrete"; data: ManaType }
+  | { type: "DeferredColorChoice" };
+
 export type ProductionOverride =
   | { type: "SingleColor"; data: ManaType }
   | { type: "Combination"; data: ManaType[] };
@@ -1168,6 +1179,7 @@ export interface ManaSourceSelection {
   source: ObjectIncarnationRef;
   ability_index: number | null;
   mana_type: ManaType;
+  output: ManaSourceOutput;
   atomic_combination: ManaType[] | null;
   restrictions: ManaRestriction[];
   penalty: ManaSourcePenalty;
@@ -1405,8 +1417,12 @@ export type KeywordAction =
 export type StackEntryKind =
   | { type: "Spell"; data: { card_id: CardId; ability?: ResolvedAbility; actual_mana_spent?: number } }
   | { type: "ActivatedAbility"; data: { source_id: ObjectId; ability: ResolvedAbility } }
-  | { type: "TriggeredAbility"; data: { source_id: ObjectId; ability: ResolvedAbility; description?: string; source_name?: string } }
+  | { type: "TriggeredAbility"; data: { source_id: ObjectId; ability: ResolvedAbility; description?: string; source_name?: string; provenance?: SyntheticTriggerProvenance } }
   | { type: "KeywordAction"; data: { action: KeywordAction } };
+
+/** Engine-authored identity for a synthesized triggered ability. */
+export type SyntheticTriggerProvenance =
+  | { type: "Storm"; data: { copy_count: number } };
 
 export interface StackEntry {
   id: ObjectId;
@@ -1458,6 +1474,7 @@ export interface StackEntryDisplay {
   targets?: StackTargetDisplay[];
   paid?: StackPaidFactView[];
   trigger_context?: TriggerContextDisplay[];
+  provenance?: SyntheticTriggerProvenance;
 }
 
 // ── Pending Cast (for target selection) ──────────────────────────────────
@@ -1655,6 +1672,7 @@ export type WaitingFor =
       };
     }
   | { type: "ManaPayment"; data: { player: PlayerId; convoke_mode?: ConvokeMode } }
+  | { type: "ManaSourceSelection"; data: { player: PlayerId; options: ManaSourceSelection[]; convoke_mode?: ConvokeMode } }
   | {
       type: "ChooseXValue";
       data: {
@@ -2096,6 +2114,7 @@ export type DebugAction =
         zone: Zone;
         attach_to?: AttachTarget;
         run_etb: boolean;
+        nonlegendary: boolean;
       };
     }
   | { type: "RemoveObject"; data: { object_id: ObjectId } }
@@ -2130,7 +2149,10 @@ export type DebugAction =
         run_etb: boolean;
       };
     }
-  | { type: "CreateTokenCopy"; data: { source_id: ObjectId; owner: PlayerId } };
+  | {
+      type: "CreateTokenCopy";
+      data: { source_id: ObjectId; owner: PlayerId; nonlegendary: boolean };
+    };
 
 // CR 117.3d: priority-yield preference types, mirroring the engine's
 // `YieldScope` / `YieldTarget` / `PriorityYieldOp` / `PriorityYield`. The
@@ -2182,6 +2204,8 @@ export type GameAction =
   | { type: "MulliganDecision"; data: { choice: MulliganChoice } }
   | { type: "ReorderHand"; data: { order: ObjectId[] } }
   | { type: "TapLandForMana"; data: { selection: ManaSourceSelection } }
+  | { type: "ActivateManaSource"; data: { selection: ManaSourceSelection } }
+  | { type: "BackToManaPayment" }
   | { type: "UntapLandForMana"; data: { object_id: ObjectId } }
   // CR 118.3a: pin / unpin a specific pool unit during manual mana payment.
   | { type: "SpendPoolMana"; data: { pip_id: number } }
@@ -2350,7 +2374,11 @@ export type LoopCollapseAxis = "Tokens" | "Counters" | "Life" | "Mixed";
 
 export type PayableResource =
   | { type: "Energy" }
-  | { type: "ManaGeneric"; data: { per_x: number } }
+  // CR 107.3f + CR 118.1 + CR 118.12: `base_cost` is the UNCONCRETIZED mana
+  // cost (still carrying the X shard alongside any colored/generic pips,
+  // e.g. `{X}{W}{U}{B}`) — the engine concretizes X into it and pays the
+  // full result, so colored requirements are never dropped (#6410).
+  | { type: "ManaGeneric"; data: { base_cost: ManaCost } }
   | { type: "Counters" }
   | { type: "Speed" }
   // CR 732.2a: not a resource payment — the finite count an accepted
@@ -2780,6 +2808,11 @@ export interface DerivedViews {
    */
   stack_entry_details?: Record<string, StackEntryDisplay>;
   /**
+   * CR 702.40a: prospective Storm copy counts for the viewing player's own
+   * hand, keyed by hand object id. The engine owns qualification and counting.
+   */
+  prospective_storm_counts?: Record<string, number>;
+  /**
    * Engine-authored "Auras attached to player X" projection. Players have no
    * `attachments` back-link on the GameObject side because they aren't
    * GameObjects — this map is the FE's only legitimate channel for "which
@@ -2827,6 +2860,12 @@ export interface DerivedViews {
    * of every unbounded-resource loop. Empty/omitted when no loop is active. The
    * FE maps each axis to a display family and never re-derives attribution.
    * Mirrors `engine::game::derived_views::DerivedViews::unbounded_resources`.
+   *
+   * This channel and its two siblings below stay POPULATED after all players accept a
+   * shortcut, until the engine applies the growth at the next CR 500.5 boundary. Deferring
+   * the application across that window is an engine deviation, pre-existing and deliberate.
+   * What matters to the FE is only that the mark and its enablers are still live there, so
+   * `∞` is current engine state, not a stale mark. Render it.
    */
   unbounded_resources?: UnboundedResourceView[];
   /**
@@ -2919,6 +2958,7 @@ export interface GameState {
   combat: CombatState | null;
   waiting_for: WaitingFor;
   has_pending_cast: boolean;
+  allows_cancel_cast?: boolean;
   /**
    * CR 601.2f: The locked-in pending cast (cost, ability, object) while the
    * caster is mid-cast. Present during ManaPayment / cost-choice WaitingFor
@@ -3233,6 +3273,7 @@ export const AdapterErrorCode = {
    * original dispatch.
    */
   ENGINE_UNRESPONSIVE: "ENGINE_UNRESPONSIVE",
+  UNSUPPORTED: "UNSUPPORTED",
   WASM_ERROR: "WASM_ERROR",
   INVALID_ACTION: "INVALID_ACTION",
   DECK_REJECTED: "DECK_REJECTED",
@@ -3491,15 +3532,24 @@ export const EMPTY_LEGAL_ACTIONS: LegalActionsResult = {
   manaPaymentShortcutActions: [],
 };
 
-/**
- * Engine-built game-scoped AI card-DB subset descriptor (the `build_ai_card_subset`
- * WASM export, serialized as a tagged union). `full` means the game's card
- * universe is not statically bounded (today: Momir) and AI workers must load the
- * full database; `subset` carries the minimal card-data JSON for this game.
- */
+/** An exact action from the engine-owned finite domain for one AI decision. */
+export interface AiActionProposal {
+  token: string;
+  semanticOwner: PlayerId;
+  actor: PlayerId;
+  action: GameAction;
+}
+
+/** Result of the engine-owned game-scoped AI worker card-data build. */
 export type AiCardSubsetResult =
   | { kind: "full" }
   | { kind: "subset"; json: string; count: number };
+
+/** Result of submitting an opaque AI proposal to its issuing authority. */
+export type AiProposalSubmission =
+  | { status: "applied"; result: SubmitResult }
+  | { status: "stale"; reason: string }
+  | { status: "rejected"; reason: string };
 
 export interface EngineAdapter {
   initialize(): Promise<void>;
@@ -3518,6 +3568,8 @@ export interface EngineAdapter {
    * action payload or the UI state.
    */
   submitAction(action: GameAction, actor: PlayerId): Promise<SubmitResult>;
+  /** Submit an opaque response from the engine's current interaction projection. */
+  submitInteraction?(submission: InteractionSubmission, actor: PlayerId): Promise<SubmitResult>;
   /**
    * Read-only preview of the exact automatic `CastSpell` action currently
    * offered by the engine. Unsupported transports omit this capability.
@@ -3534,7 +3586,10 @@ export interface EngineAdapter {
    * genuinely need one half in isolation.
    */
   getSnapshot(): Promise<EngineSnapshot>;
-  getAiAction(difficulty: string, playerId: number, waitingForType?: WaitingFor["type"]): Promise<GameAction | null> | GameAction | null;
+  /** Returns an opaque, exact member of the current engine-issued decision domain. */
+  getAiActionProposal?(difficulty: string, playerId: number): Promise<AiActionProposal | null> | AiActionProposal | null;
+  /** Applies a proposal only if its authority token and exact action remain current. */
+  submitAiActionProposal?(proposal: AiActionProposal): Promise<AiProposalSubmission> | AiProposalSubmission;
   resolveAll?(
     requester: number,
     aiSeats: { playerId: number; difficulty: string }[],
@@ -3554,4 +3609,64 @@ export interface EngineAdapter {
    * Pure — no game state, no side effects. Safe to call on every deck edit.
    */
   estimateBracket(deck: BracketDeckRequest): Promise<BracketEstimate | null>;
+}
+
+/**
+ * Optional transport capability for a whole-match concession. This is a
+ * capability rather than a route-mode policy: the UI may offer it only when
+ * the installed adapter explicitly vouches that it can bind the request to an
+ * authenticated match session. P2P installs it only for a pod-issued draft
+ * match binding; ordinary P2P rooms intentionally do not expose it.
+ */
+export interface MatchConcedeCapability {
+  readonly supportsMatchConcede: true;
+  sendMatchConcede(): void;
+}
+
+export function supportsMatchConcede(
+  adapter: EngineAdapter | null,
+): adapter is EngineAdapter & MatchConcedeCapability {
+  return adapter !== null
+    && (adapter as Partial<MatchConcedeCapability>).supportsMatchConcede === true
+    && typeof (adapter as Partial<MatchConcedeCapability>).sendMatchConcede === "function";
+}
+
+/**
+ * One turn boundary the server offers as a rollback target. Snake_case because
+ * this is the wire shape verbatim (`server-core`'s `RewindOption`); the client
+ * renders it and never derives it.
+ */
+export interface RewindOption {
+  readonly turn_number: number;
+  readonly active_player: PlayerId;
+}
+
+/**
+ * How far back a rollback request reaches. Mirrors `server-core`'s
+ * `RewindTarget` — an internally tagged union, not a boolean pair, because the
+ * two granularities carry different payloads.
+ */
+export type RewindTarget =
+  | { readonly kind: "last_action" }
+  | { readonly kind: "turn_start"; readonly turn_number: number };
+
+/**
+ * Optional transport capability for a *server-authoritative* rollback. Shaped
+ * exactly like `MatchConcedeCapability` above, and for the same reason: only
+ * the adapter that can actually bind the request to an authenticated wire
+ * session declares it, so no other adapter is forced to answer a question it
+ * has no meaningful answer to. A local-authority adapter rewinds its own state
+ * instead and must NOT claim this.
+ */
+export interface ServerRewindCapability {
+  readonly supportsServerRewind: true;
+  sendRequestTakeback(target?: RewindTarget): void;
+}
+
+export function supportsServerRewind(
+  adapter: EngineAdapter | null,
+): adapter is EngineAdapter & ServerRewindCapability {
+  return adapter !== null
+    && (adapter as Partial<ServerRewindCapability>).supportsServerRewind === true
+    && typeof (adapter as Partial<ServerRewindCapability>).sendRequestTakeback === "function";
 }

@@ -10,6 +10,7 @@
     "cantActivateDuring": "Não pode ser ativada agora",
     "prohibited": "Ativar esta habilidade é proibido"
   },
+  "manaSourceSelection": { "title": "Escolha uma fonte de mana", "description": "Esta habilidade de mana exige sacrificar uma permanente.", "sacrifice": "Sacrificar", "back": "Voltar ao pagamento de mana", "unknownSource": "Fonte de mana" },
   "comboShortcut": {
     "declareTitle": "Loop Shortcut",
     "declareSubtitle": "You control a loop with a determined outcome. Take the shortcut to resolve it.",
@@ -273,6 +274,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Desvirar",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -573,13 +575,15 @@
   "mana": {
     "free": "Grátis",
     "chooseXTitle": "Escolha um valor para X",
-    "chooseXAria": "Escolher valor de X",
     "chooseXInputAria": "Inserir valor de X",
     "decreaseX": "Diminuir valor de X",
     "increaseX": "Aumentar valor de X",
-    "xEquals": "X = {{value}}",
     "minMax": "mín {{min}} / máx {{max}}",
     "maxOnly": "máx {{max}}",
+    "amountOutOfRange": "Digite um número inteiro entre {{min}} e {{max}}",
+    "decreaseAmount": "Diminuir a quantia",
+    "increaseAmount": "Aumentar a quantia",
+    "confirmAmount": "Confirmar",
     "confirmX": "Confirmar X = {{value}}",
     "payMana": "Pagar Custo de Mana",
     "convokeHint": "Vire criaturas para ajudar a pagar.",
@@ -626,6 +630,10 @@
     "cardBack": "Verso da carta",
     "organizeLabel": "Organizar mão",
     "reorderPausedHint": "Arrastar para reordenar está pausado enquanto a mão está ordenada ou filtrada."
+  },
+  "storm": {
+    "copies_one": "Tempestade: {{count}} cópia",
+    "copies_other": "Tempestade: {{count}} cópias"
   },
   "opponentHud": {
     "ally": "Aliado",
@@ -2192,6 +2200,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Desvirar",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",

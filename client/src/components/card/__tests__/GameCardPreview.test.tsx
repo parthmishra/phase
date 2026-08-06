@@ -62,6 +62,7 @@ afterEach(() => {
   useUiStore.setState({
     inspectedObjectId: null,
     inspectedFaceIndex: 0,
+    previewPlacement: "cursor",
     isDragging: false,
     mobileHandGesture: null,
     shiftHeld: false,
@@ -100,6 +101,17 @@ describe("GameCardPreview", () => {
     const liveCard = screen.getByRole("article", { name: "Pithing Needle" });
     expect(liveCard).toHaveAttribute("data-arena-power", "5");
     expect(liveCard).toHaveAttribute("data-arena-toughness", "4");
+  });
+
+  it("docks a preview opened from a modal even when cursor-follow is preferred", () => {
+    inspect(battlefieldObject());
+    useUiStore.setState({ previewPlacement: "side" });
+
+    const { container } = render(<GameCardPreview />);
+
+    expect(container.querySelector<HTMLElement>("[data-card-preview]")).toHaveStyle({
+      right: "calc(env(safe-area-inset-right) + 1rem + var(--game-right-rail-offset, 0px))",
+    });
   });
 
   it("anchors the preview to the hand card hovered through PlayerHand", async () => {

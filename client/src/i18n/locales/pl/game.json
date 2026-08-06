@@ -10,6 +10,7 @@
     "cantActivateDuring": "Nie można teraz aktywować",
     "prohibited": "Aktywacja tej zdolności jest zabroniona"
   },
+  "manaSourceSelection": { "title": "Wybierz źródło many", "description": "Ta zdolność many wymaga poświęcenia permanenta.", "sacrifice": "Poświęć", "back": "Wróć do płatności many", "unknownSource": "Źródło many" },
   "comboShortcut": {
     "declareTitle": "Loop Shortcut",
     "declareSubtitle": "You control a loop with a determined outcome. Take the shortcut to resolve it.",
@@ -273,6 +274,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Odkręć",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -573,13 +575,15 @@
   "mana": {
     "free": "Za darmo",
     "chooseXTitle": "Wybierz wartość dla X",
-    "chooseXAria": "Wybierz wartość X",
     "chooseXInputAria": "Wpisz wartość X",
     "decreaseX": "Zmniejsz wartość X",
     "increaseX": "Zwiększ wartość X",
-    "xEquals": "X = {{value}}",
     "minMax": "min {{min}} / maks {{max}}",
     "maxOnly": "maks {{max}}",
+    "amountOutOfRange": "Wpisz liczbę całkowitą od {{min}} do {{max}}",
+    "decreaseAmount": "Zmniejsz kwotę",
+    "increaseAmount": "Zwiększ kwotę",
+    "confirmAmount": "Potwierdź",
     "confirmX": "Potwierdź X = {{value}}",
     "payMana": "Zapłać koszt many",
     "convokeHint": "Obróć stwory, aby pomóc zapłacić.",
@@ -626,6 +630,10 @@
     "cardBack": "Rewers karty",
     "organizeLabel": "Uporządkuj rękę",
     "reorderPausedHint": "Zmiana kolejności przeciąganiem jest wstrzymana, gdy ręka jest posortowana lub przefiltrowana."
+  },
+  "storm": {
+    "copies_one": "Sztorm: {{count}} kopia",
+    "copies_other": "Sztorm: {{count}} kopie"
   },
   "opponentHud": {
     "ally": "Sojusznik",
@@ -2192,6 +2200,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Odkręć",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",

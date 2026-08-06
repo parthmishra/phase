@@ -10,6 +10,7 @@
     "cantActivateDuring": "Kann derzeit nicht aktiviert werden",
     "prohibited": "Das Aktivieren dieser Fähigkeit ist verboten"
   },
+  "manaSourceSelection": { "title": "Manaquelle wählen", "description": "Diese Manafähigkeit erfordert das Opfern einer bleibenden Karte.", "sacrifice": "Opfern", "back": "Zurück zur Manabezahlung", "unknownSource": "Manaquelle" },
   "comboShortcut": {
     "declareTitle": "Loop Shortcut",
     "declareSubtitle": "You control a loop with a determined outcome. Take the shortcut to resolve it.",
@@ -273,6 +274,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Enttappen",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -573,13 +575,15 @@
   "mana": {
     "free": "Gratis",
     "chooseXTitle": "Wähle einen Wert für X",
-    "chooseXAria": "X-Wert wählen",
     "chooseXInputAria": "X-Wert eingeben",
     "decreaseX": "X-Wert verringern",
     "increaseX": "X-Wert erhöhen",
-    "xEquals": "X = {{value}}",
     "minMax": "min {{min}} / max {{max}}",
     "maxOnly": "max {{max}}",
+    "amountOutOfRange": "Gib eine ganze Zahl zwischen {{min}} und {{max}} ein",
+    "decreaseAmount": "Menge verringern",
+    "increaseAmount": "Menge erhöhen",
+    "confirmAmount": "Bestätigen",
     "confirmX": "X = {{value}} bestätigen",
     "payMana": "Manakosten bezahlen",
     "convokeHint": "Tappe Kreaturen, um die Bezahlung zu unterstützen.",
@@ -626,6 +630,10 @@
     "cardBack": "Kartenrückseite",
     "organizeLabel": "Hand ordnen",
     "reorderPausedHint": "Das Umsortieren per Ziehen ist pausiert, solange die Hand sortiert oder gefiltert ist."
+  },
+  "storm": {
+    "copies_one": "Sturm: {{count}} Kopie",
+    "copies_other": "Sturm: {{count}} Kopien"
   },
   "opponentHud": {
     "ally": "Verbündeter",
@@ -2192,6 +2200,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Enttappen",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",

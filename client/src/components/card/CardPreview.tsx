@@ -74,6 +74,7 @@ if (typeof window !== "undefined") {
 
 export interface CardHoverInfo {
   name: string;
+  scryfallId?: string;
   sourcePrinting?: SourcePrinting;
 }
 

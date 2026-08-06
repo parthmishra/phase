@@ -1,4 +1,5 @@
-import type { BatchResolveResult, EngineAdapter, EngineSnapshot, GameAction, GameEvent, GameLogEntry, GameState, WaitingFor } from "../adapter/types";
+import type { AiActionProposal, BatchResolveResult, EngineAdapter, EngineSnapshot, GameAction, GameEvent, GameLogEntry, GameState, RewindOption, WaitingFor } from "../adapter/types";
+import type { InteractionSubmission } from "../adapter/generated/interaction";
 import { AdapterError, AdapterErrorCode } from "../adapter/types";
 import { attemptStateRehydrate, isEnginePanic, notifyEngineLost, routePanic } from "./engineRecovery";
 import { normalizeEvents } from "../animation/eventNormalizer";
@@ -76,6 +77,8 @@ interface PendingLocalAction {
   session: BoundGameSession | null;
   /** WaitingFor object that prompted this local action. */
   waitingFor: WaitingFor | null;
+  proposal?: AiActionProposal;
+  proposalOutcome?: (outcome: "applied" | "stale") => void;
   resolve: () => void;
   reject: (err: unknown) => void;
 }
@@ -85,6 +88,8 @@ interface PendingRemoteUpdate {
   snapshot: EngineSnapshot;
   events: GameEvent[];
   logEntries?: GameLogEntry[];
+  /** See `processRemoteUpdateInner`: `undefined` and `[]` mean different things. */
+  rewindTargets?: RewindOption[];
   resolve: () => void;
   reject: (err: unknown) => void;
 }
@@ -195,10 +200,22 @@ function waitingForActorMatches(
   if (typeof data !== "object" || data === null) return false;
   const fields = data as Record<string, unknown>;
 
-  if (waitingFor.type === "Priority") {
+  // CR 723: under a turn-control effect (Emrakul, the Promised End;
+  // Mindslaver; etc.) a single-actor WaitingFor's `player` field names the
+  // semantic seat whose decision this is, which can differ from the
+  // authenticated actor actually submitting it (the controller). The engine
+  // keeps `gameState.priority_player` synced to the authorized submitter for
+  // whichever WaitingFor is current — for every single-actor variant, not
+  // just "Priority" (`sync_priority_player_from_waiting_for` in
+  // `public_state.rs` runs off `WaitingFor::acting_player()`, which every
+  // single-actor variant implements). Every variant carrying a `player`
+  // field must therefore consult it too, not only "Priority" — otherwise a
+  // queued action for e.g. a flashback sacrifice-cost PayCost prompt gets
+  // dropped as "stale" purely because the controller's id doesn't match the
+  // controlled seat's id (#6431).
+  if ("player" in fields) {
     return fields.player === actor || gameState?.priority_player === actor;
   }
-  if (fields.player === actor) return true;
 
   const pending = fields.pending;
   return (
@@ -285,6 +302,8 @@ async function processAction(
   actor: number,
   generation: number,
   session: BoundGameSession | null,
+  proposal?: AiActionProposal,
+  proposalOutcome?: (outcome: "applied" | "stale") => void,
 ): Promise<void> {
   if (!isDispatchContextCurrent(generation, session)) return;
   const { adapter, gameState } = useGameStore.getState();
@@ -319,9 +338,26 @@ async function processAction(
   // PWA update desync, worker restart, etc.), transparently rehydrate from
   // the store snapshot and retry once. Safe because submitAction fails
   // before mutating any engine state when the cell is None.
+  const submit = async () => {
+    if (!proposal) return adapter.submitAction(action, actor);
+    if (!adapter.submitAiActionProposal) {
+      throw new Error("Current adapter cannot submit engine-issued AI proposals");
+    }
+    const outcome = await adapter.submitAiActionProposal(proposal);
+    if (outcome.status === "stale") return null;
+    if (outcome.status === "rejected") throw new Error(`AI proposal rejected: ${outcome.reason}`);
+    return outcome.result;
+  };
   let result;
   try {
-    result = await adapter.submitAction(action, actor);
+    result = await submit();
+    // A stale AI capability is a benign race: its action was never applied.
+    // The controller observes the unchanged prompt and asks the engine again.
+    if (result === null) {
+      proposalOutcome?.("stale");
+      return;
+    }
+    proposalOutcome?.("applied");
   } catch (err) {
     if (!isDispatchContextCurrent(generation, session)) return;
     // Stale click after a priority/turn shift: the engine's actor-auth guard
@@ -364,7 +400,12 @@ async function processAction(
     // that explicitly and surface via Layer 3 rather than letting the error
     // escape uncaught.
     try {
-      result = await adapter.submitAction(action, actor);
+      result = await submit();
+      if (result === null) {
+        proposalOutcome?.("stale");
+        return;
+      }
+      proposalOutcome?.("applied");
     } catch (retryErr) {
       if (!isDispatchContextCurrent(generation, session)) return;
       // Prefer the captured panic message over the bare retry tag — that's
@@ -566,12 +607,25 @@ async function processQueue(generation: number): Promise<void> {
           waitingFor: next.waitingFor,
         };
         try {
-          await processAction(next.action, next.actor, generation, next.session);
+          await processAction(
+            next.action,
+            next.actor,
+            generation,
+            next.session,
+            next.proposal,
+            next.proposalOutcome,
+          );
         } finally {
           if (isCurrentDispatchGeneration(generation)) inFlightLocalAction = null;
         }
       } else {
-        await processRemoteUpdateInner(next.snapshot, next.events, next.logEntries, generation);
+        await processRemoteUpdateInner(
+          next.snapshot,
+          next.events,
+          next.logEntries,
+          generation,
+          next.rewindTargets,
+        );
       }
       next.resolve();
     } catch (err) {
@@ -634,6 +688,8 @@ async function dispatchActionInternal(
   action: GameAction,
   actor: number,
   session: BoundGameSession | null,
+  proposal?: AiActionProposal,
+  proposalOutcome?: (outcome: "applied" | "stale") => void,
 ): Promise<void> {
   if (!isBoundGameSessionCurrent(session)) return;
   const { gameMode } = useGameStore.getState();
@@ -677,6 +733,8 @@ async function dispatchActionInternal(
         actor,
         session,
         waitingFor: currentWaitingFor,
+        proposal,
+        proposalOutcome,
         resolve,
         reject,
       });
@@ -692,7 +750,7 @@ async function dispatchActionInternal(
     waitingFor: currentWaitingFor,
   };
   try {
-    await processAction(submittedAction, actor, generation, session);
+    await processAction(submittedAction, actor, generation, session, proposal, proposalOutcome);
   } catch (e) {
     if (!isDispatchContextCurrent(generation, session)) return;
     debugLog(`dispatch error for ${submittedAction.type}: ${e instanceof Error ? e.message : String(e)}`);
@@ -709,6 +767,44 @@ export function dispatchAction(
   actor: number = getPlayerId(),
 ): Promise<void> {
   return dispatchActionInternal(action, actor, null);
+}
+
+/** Dispatch an engine-issued AI proposal without ever reconstructing its action. */
+export async function dispatchAiActionProposal(
+  proposal: AiActionProposal,
+): Promise<{ status: "applied" | "stale" }> {
+  let outcome: "applied" | "stale" = "stale";
+  await dispatchActionInternal(proposal.action, proposal.actor, null, proposal, (submitted) => {
+    outcome = submitted;
+  });
+  return { status: outcome };
+}
+
+/**
+ * Submit an engine-authored interaction response through the same adapter and
+ * atomic snapshot boundary used by ordinary game actions.  The response is
+ * opaque: UI callers cannot materialize or reinterpret a GameAction.
+ */
+export async function dispatchInteraction(
+  submission: InteractionSubmission,
+  actor: number = getPlayerId(),
+): Promise<void> {
+  const { adapter, gameState, gameMode } = useGameStore.getState();
+  if (!adapter || !gameState || gameMode === "spectate" || actor === SPECTATOR_PLAYER_ID) return;
+  if (!adapter.submitInteraction) {
+    throw new AdapterError(
+      AdapterErrorCode.UNSUPPORTED,
+      "This game connection does not support interaction responses",
+      false,
+    );
+  }
+
+  const result = await adapter.submitInteraction(submission, actor);
+  const snapshot = await adapter.getSnapshot();
+  useGameStore.getState().commitEngineSnapshot(snapshot, {
+    events: result.events,
+    logEntries: result.log_entries ?? [],
+  });
 }
 
 /** Dispatch a standing preference only while its captured game lifecycle is
@@ -731,6 +827,7 @@ async function processRemoteUpdateInner(
   events: GameEvent[],
   logEntries: GameLogEntry[] = [],
   generation: number,
+  rewindTargets?: RewindOption[],
 ): Promise<void> {
   if (!isCurrentDispatchGeneration(generation)) return;
   const state = snapshot.state;
@@ -784,6 +881,14 @@ async function processRemoteUpdateInner(
   if (!isCurrentDispatchGeneration(generation)) return;
   reconcileReleasedCardMotions(state);
   useGameStore.getState().commitEngineSnapshot(snapshot, { events, logEntries });
+  // Written INSIDE the generation gate, alongside the snapshot it describes:
+  // outside it, a superseded update would clobber the list with a stale one.
+  // `undefined` means "this transport does not publish rollback targets" (p2p,
+  // draft) and leaves the store alone; `[]` means "the server published none"
+  // and clears it. The two are deliberately not collapsed.
+  if (rewindTargets) {
+    useGameStore.getState().setRewindTargets(rewindTargets);
+  }
 
   // 6. Play victory/defeat stinger on GameOver
   const gameOverEvent = events.find((e) => e.type === "GameOver");
@@ -807,17 +912,18 @@ export async function processRemoteUpdate(
   snapshot: EngineSnapshot,
   events: GameEvent[],
   logEntries?: GameLogEntry[],
+  rewindTargets?: RewindOption[],
 ): Promise<void> {
   if (isAnimating) {
     return new Promise<void>((resolve, reject) => {
-      pendingQueue.push({ kind: "remote", snapshot, events, logEntries, resolve, reject });
+      pendingQueue.push({ kind: "remote", snapshot, events, logEntries, rewindTargets, resolve, reject });
     });
   }
 
   const generation = dispatchGeneration;
   isAnimating = true;
   try {
-    await processRemoteUpdateInner(snapshot, events, logEntries, generation);
+    await processRemoteUpdateInner(snapshot, events, logEntries, generation, rewindTargets);
   } finally {
     releaseDispatchMutex(generation);
   }

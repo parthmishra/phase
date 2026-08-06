@@ -10,6 +10,7 @@
     "cantActivateDuring": "No puede activarse ahora",
     "prohibited": "Activar esta habilidad está prohibido"
   },
+  "manaSourceSelection": { "title": "Elige una fuente de maná", "description": "Esta habilidad de maná requiere sacrificar un permanente.", "sacrifice": "Sacrificar", "back": "Volver al pago de maná", "unknownSource": "Fuente de maná" },
   "comboShortcut": {
     "declareTitle": "Loop Shortcut",
     "declareSubtitle": "You control a loop with a determined outcome. Take the shortcut to resolve it.",
@@ -273,6 +274,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Enderezar",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -573,13 +575,15 @@
   "mana": {
     "free": "Gratis",
     "chooseXTitle": "Elige un valor para X",
-    "chooseXAria": "Elegir el valor de X",
     "chooseXInputAria": "Introducir el valor de X",
     "decreaseX": "Disminuir el valor de X",
     "increaseX": "Aumentar el valor de X",
-    "xEquals": "X = {{value}}",
     "minMax": "mín. {{min}} / máx. {{max}}",
     "maxOnly": "máx. {{max}}",
+    "amountOutOfRange": "Introduce un número entero entre {{min}} y {{max}}",
+    "decreaseAmount": "Disminuir la cantidad",
+    "increaseAmount": "Aumentar la cantidad",
+    "confirmAmount": "Confirmar",
     "confirmX": "Confirmar X = {{value}}",
     "payMana": "Pagar el coste de maná",
     "convokeHint": "Gira criaturas para ayudar a pagar.",
@@ -626,6 +630,10 @@
     "cardBack": "Dorso de la carta",
     "organizeLabel": "Organizar la mano",
     "reorderPausedHint": "El reordenamiento por arrastre está pausado mientras la mano está ordenada o filtrada."
+  },
+  "storm": {
+    "copies_one": "Tormenta: {{count}} copia",
+    "copies_other": "Tormenta: {{count}} copias"
   },
   "opponentHud": {
     "ally": "Aliado",
@@ -2192,6 +2200,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Enderezar",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",

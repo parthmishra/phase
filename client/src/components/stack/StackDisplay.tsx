@@ -7,6 +7,7 @@ import { effectiveStackPressure } from "../../utils/stackThroughput.ts";
 import { StackTargetArcs } from "./StackTargetArcs.tsx";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
+import type { MultiplayerBoardLayout } from "../../stores/preferencesStore.ts";
 import type { ObjectId, StackDisplayGroup, StackEntry as StackEntryType, StackEntryDisplay } from "../../adapter/types.ts";
 import { getStackCardSize } from "../board/boardSizing.ts";
 import { DraggableWidget } from "../flexlayout/DraggableWidget.tsx";
@@ -27,7 +28,11 @@ function getViewportSize() {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-export function StackDisplay() {
+export function StackDisplay({
+  effectiveMultiplayerBoardLayout: _effectiveMultiplayerBoardLayout,
+}: {
+  effectiveMultiplayerBoardLayout?: MultiplayerBoardLayout;
+} = {}) {
   const gameState = useGameStore((s) => s.gameState);
   const stack = gameState?.stack ?? EMPTY_STACK;
   // Engine-authored stack grouping rides on the same state snapshot that

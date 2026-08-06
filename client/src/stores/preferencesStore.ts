@@ -89,7 +89,7 @@ export type CommandZoneDisplay = "compact" | "inline" | "auto";
  *  tri-state "auto" precedent. Lands and support each carry their own value. */
 export type ZoneCollapseMode = "auto" | "on" | "off";
 export type TapRotation = "mtga" | "classic";
-export type SpellPaymentMode = "auto" | "manual";
+export type SpellPaymentMode = "auto" | "autoExceptSacrificialMana" | "manual";
 /** Which screen edge the resolving-stack panel docks to (and collapses toward).
  *  User-chosen so a player can keep the stack off whichever side of the
  *  battlefield they care about — e.g. dock left to free the right action rail. */
@@ -846,7 +846,9 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       // v27 → v28: Add showCardPreviewFooter; legacy stores default to true
       //          via the shallow merge, preserving the prior presentation.
       // v28 → v29: Use the neutral Slate background while the Arena 3D
-      //          experiment establishes its own visual language.
+      //          experiment establishes its own visual language, and add the
+      //          sacrificial-mana-aware automatic payment mode. Existing
+      //          payment values remain valid.
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         let migrated = persisted as Record<string, unknown>;
@@ -938,6 +940,17 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
 
         if (version < 8) {
           migrated = { ...migrated, spellPaymentMode: "auto" };
+        }
+
+        if (version < 29) {
+          const mode = (migrated as { spellPaymentMode?: unknown }).spellPaymentMode;
+          migrated = {
+            ...migrated,
+            spellPaymentMode:
+              mode === "auto" || mode === "autoExceptSacrificialMana" || mode === "manual"
+                ? mode
+                : "auto",
+          };
         }
 
         if (version < 9) {

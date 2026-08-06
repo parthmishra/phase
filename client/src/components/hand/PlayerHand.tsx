@@ -60,10 +60,12 @@ import {
   playerHudBottomForCardTop,
 } from "./handFanPresentation.ts";
 import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import { StormCopyBadge } from "./StormCopyBadge.tsx";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
 const EMPTY_OBJECTS: Record<string, GameObject> = {};
+const EMPTY_STORM_COUNTS: Record<string, number> = {};
 
 // The whole-row fan geometry — the overlap / tilt / arc that lays hand cards
 // (plus the castable exile / graveyard "wings") out as one held hand — now
@@ -95,6 +97,9 @@ export function PlayerHand() {
   // otherwise rebuild the drag-end callback on every update.
   const hand = player?.hand;
   const objects = useGameStore((s) => s.gameState?.objects);
+  const prospectiveStormCounts = useGameStore(
+    (s) => s.gameState?.derived?.prospective_storm_counts ?? EMPTY_STORM_COUNTS,
+  );
   // Use dispatchAction (animation pipeline) instead of store dispatch
   const inspectObject = useUiStore((s) => s.inspectObject);
   const setPendingAbilityChoice = useUiStore((s) => s.setPendingAbilityChoice);
@@ -770,6 +775,7 @@ export function PlayerHand() {
               isPlayable={isPlayable}
               isSelected={selectedCardId === obj.id}
               hasPriority={hasPriority}
+              stormCopyCount={prospectiveStormCounts[String(obj.id)]}
               onDragEnd={handleDragEnd}
               onDrag={handleDrag}
               onClick={handleCardClick}
@@ -905,6 +911,7 @@ interface HandCardProps {
   isSelected: boolean;
   isDragging: boolean;
   hasPriority: boolean;
+  stormCopyCount?: number;
   onDragStart: (id: number) => void;
   onDragStop: () => void;
   onDragEnd: (objectId: number, event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => boolean;
@@ -932,6 +939,7 @@ const HandCard = memo(function HandCard({
   isSelected,
   isDragging,
   hasPriority,
+  stormCopyCount,
   onDragStart: onDragStartProp,
   onDragStop,
   onDragEnd,
@@ -948,6 +956,12 @@ const HandCard = memo(function HandCard({
       state.releasedCardMotions.has(objectId)
       || state.inFlightObjectIds.has(objectId),
   );
+  const isMobileDragged = useUiStore(
+    (state) =>
+      state.mobileHandGesture?.phase === "drag"
+      && state.mobileHandGesture.objectId === objectId,
+  );
+  const isHandSourceOwned = isMotionOwned || isMobileDragged;
 
   // Slide-apart displacement: derive this card's signed x offset from the shared
   // insertion signal. useTransform updates imperatively when the MotionValues
@@ -1108,13 +1122,15 @@ const HandCard = memo(function HandCard({
       }}
       onMouseEnter={() => onMouseEnter(objectId)}
       onMouseLeave={onMouseLeave}
-      data-hand-held-source={isMotionOwned || undefined}
-      aria-hidden={isMotionOwned || undefined}
+      data-hand-held-source={isHandSourceOwned || undefined}
+      aria-hidden={isHandSourceOwned || undefined}
       className={`relative cursor-pointer leading-[0] select-none ${
         isMotionOwned ? "invisible" : ""
+      } ${
+        isMobileDragged ? "w-0 overflow-hidden opacity-0" : ""
       }`}
       style={{
-        marginLeft,
+        marginLeft: isMobileDragged ? 0 : marginLeft,
         // Selected card sits above every non-selected hand card. Offset by
         // handSize (not a fixed 20) so it still wins in a Commander-sized hand
         // whose plain indices can exceed 20.
@@ -1137,6 +1153,9 @@ const HandCard = memo(function HandCard({
           displayCost={displayCost}
           isCostReduced={isReduced}
         />
+        {stormCopyCount !== undefined && (
+          <StormCopyBadge count={stormCopyCount} variant="fan" />
+        )}
         {/* Inner-edge drop highlights. Always rendered, normally invisible; their
             opacity is driven by MotionValues so the glow toggles without a
             re-render. They sit inside the displaced + rotated card, so they track

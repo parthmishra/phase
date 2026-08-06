@@ -62,9 +62,13 @@ fn load_migrated_dump() -> GameState {
     ));
     let envelope: serde_json::Value =
         serde_json::from_str(&json).expect("dump envelope parses as JSON");
-    let raw: GameState = serde_json::from_value(envelope["gameState"].clone())
-        .expect("the real 4p gameState must deserialize into the current GameState");
-    PersistedGameState::Raw(Box::new(raw)).into_game_state()
+    // Decode AS `PersistedGameState` rather than decoding a bare `GameState` and wrapping
+    // it in `Raw`: only the former runs `reject_legacy_raw_prompt_authority` and
+    // `decode_persisted_resolution_state`, which is the rest of the production chokepoint.
+    // `.expect(..)`, not `?`: `into_game_state` returns `GameState`, not `Result`.
+    serde_json::from_value::<PersistedGameState>(envelope["gameState"].clone())
+        .expect("gameState deserializes through the production decoder")
+        .into_game_state()
 }
 
 /// The acting player for the current beat (choice prompts carry their own `player`; a priority beat
@@ -165,6 +169,20 @@ fn drive_one_live_cycle(state: &mut GameState) {
 ///   unreplayable.
 /// - FIX-2 (counter-growth cover disjunct) — the completed drive's +1-charge frames fail
 ///   `loop_states_equal_modulo_resources`.
+///
+/// R4c — NAMED ACCEPTANCE ARM for the player-choice legality authority (CR 115.10a). Routing
+/// `resolve_target`'s `TargetPin::Player` arm through the CHOICE authority
+/// (`players::player_exists_for_choice`) rather than the TARGET one must not suppress a
+/// shipped offer on a REAL dump, and this row is what says so: if a later change routes that
+/// arm through `targeting::player_is_legal_target`, the over-veto class returns and this row
+/// must still pass — so it is the acceptance side of the pair whose refusal side is
+/// `analysis::decision_template::tests::a_shrouded_seat_is_untargetable_yet_still_choosable_
+/// at_the_pin_recheck`.
+///
+/// ⚠ WHAT THIS ROW DOES NOT WITNESS, stated so nobody credits it with more than it covers:
+/// this dump's pins are `ByIdentity` and `ManaColor`, NOT `TargetPin::Player`, so the Player
+/// arm is not on its path at all. It is an acceptance arm for the offer PIPELINE, not a
+/// witness for the Player-pin seam; that witness is R2b.
 #[test]
 fn kilo_migrated_dump_fires_object_growth_offer() {
     let mut state = load_migrated_dump();
@@ -294,18 +312,25 @@ fn kilo_reinjected_pinless_history_suppresses_offer() {
     );
 }
 
-/// Drive the APNAP accept of the ∞ offer through the PUBLIC `apply()` boundary: P0 (the
-/// proposer) declares `Fixed(1)`, then every prompted opponent accepts in turn order until the
-/// protocol closes back to ordinary priority (CR 800.4a). `template: None` skips declare-time
-/// pin validation; the materialize re-derives from the intact `last_loop_action_sequence`.
+/// Drive the APNAP accept of the ∞ offer through the PUBLIC `apply()` boundary at the harness
+/// default of one cycle. CR 732.2c makes the accepted count BINDING on the boundary collapse
+/// prompt, so a caller that later collapses to N must use [`drive_all_accept_n`].
 fn drive_all_accept(state: &mut GameState) {
+    drive_all_accept_n(state, 1);
+}
+
+/// Drive the APNAP accept at `n`: P0 (the proposer) declares `Fixed(n)`, then every prompted
+/// opponent accepts in turn order until the protocol closes back to ordinary priority (CR
+/// 800.4a). `template: None` skips declare-time pin validation; the materialize re-derives from
+/// the intact `last_loop_action_sequence`. CR 732.2c: `n` bounds the CR 500.5 collapse prompt.
+fn drive_all_accept_n(state: &mut GameState, n: u32) {
     use engine::analysis::decision_template::IterationCount;
     use engine::analysis::loop_check::ShortcutResponse;
     apply(
         state,
         P0,
         GameAction::DeclareShortcut {
-            count: IterationCount::Fixed(1),
+            count: IterationCount::Fixed(n),
             template: None,
         },
     )
@@ -409,13 +434,74 @@ fn kilo_accept_marks_pentad_charge_as_unbounded_display_target() {
         "display-only: Pentad's REAL charge count is unchanged by the ∞ mark (CR 701.34a)"
     );
 
-    // (3) DERIVED VIEW (FLIPS on revert): the projection surfaces Pentad's charge as ∞ for the
-    // FE, filtered to battlefield objects.
+    // (3) THE PER-SURFACE COUNTER-PILL ROW, on a REAL production fixture. The accept registers an
+    // observed-growth `DriveSequence` naming the charge-counter axis, but the engine DEFERS
+    // applying it to the CR 500.5 boundary — an engine deviation, pre-existing and deliberate. The
+    // real charge count is unchanged (asserted just above) and the ∞ mark is live, so the pill
+    // stays ∞ throughout that window. Filter nothing: (2) above is unchanged and still passes.
+    //
+    // REVERT-PROBE (RP-1c, RUN): restore the `collapse_scheduled(..)` guard in `derive_views`'
+    // counter-pill loop ⇒ THIS `assert_eq!` fails (`left: None`) while (2) above and the pile
+    // and row channels stay green.
     let views = derive_views(&state, None);
+
+    // Cross-seam wire pin, PART 1 — compute + (optionally) REGENERATE. Provenance: every
+    // key/value below is ENGINE-EMITTED (`serde_json::to_value(&derive_views(..))`). The three ∞
+    // keys are lifted BY NAME from the real serialized DerivedViews so unrelated derived-view churn
+    // cannot move this golden, while the field names and value encodings — the part the TS mirror
+    // must match — stay engine-authored.
+    //
+    // The WRITE deliberately precedes every ∞ assertion in this fn, and the drift COMPARE
+    // deliberately follows them: a revert probe that reds one of those assertions must still be
+    // able to regenerate the client goldens with `UPDATE_WIRE_GOLDEN=1`, or the client-side half of
+    // that probe (RP-1b, RP-2) is unreachable. An assert panic aborts the test.
+    //
+    // DETERMINISM: `unbounded_counters` is a std `HashMap` (derived_views.rs), but
+    // `serde_json::Map` is BTreeMap-backed (serde_json has no `preserve_order` feature in this
+    // workspace — see Cargo.lock), so `to_value` re-sorts every map key. Measured byte-identical
+    // across independent test processes. No normalization needed.
+    let wire = serde_json::to_value(&views).expect("derived views serialize");
+    let golden: serde_json::Map<String, serde_json::Value> = [
+        "unbounded_pile",
+        "unbounded_resources",
+        "unbounded_counters",
+    ]
+    .into_iter()
+    .filter_map(|k| wire.get(k).map(|v| (k.to_string(), v.clone())))
+    .collect();
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../client/src/test/fixtures/unbounded-counter-wire.json"
+    );
+    if std::env::var_os("UPDATE_WIRE_GOLDEN").is_some() {
+        // `client/src/test/fixtures/` may not exist yet; `fs::write` does not create parents.
+        std::fs::create_dir_all(
+            std::path::Path::new(path)
+                .parent()
+                .expect("golden has a parent"),
+        )
+        .expect("create the client wire-golden directory");
+        std::fs::write(
+            path,
+            format!("{}\n", serde_json::to_string_pretty(&golden).unwrap()),
+        )
+        .expect("write the wire golden");
+    }
+
     assert_eq!(
         views.unbounded_counters.get(&PENTAD),
         Some(&vec![charge.clone()]),
-        "derive_views projects (Pentad → [charge]) so the FE renders ∞ on the charge pill"
+        "the ∞ charge pill stays projected while the collapse is merely SCHEDULED"
+    );
+
+    // Cross-seam wire pin, PART 2 — the drift COMPARE (see PART 1 for why it sits here).
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("committed wire golden"))
+            .unwrap();
+    assert_eq!(
+        serde_json::Value::Object(golden),
+        committed,
+        "the client's wire golden drifted from engine output — re-run with UPDATE_WIRE_GOLDEN=1"
     );
 
     // (4) WIRE ROUND-TRIP (FLIPS on revert): the populated channel serializes, is present on
@@ -492,7 +578,8 @@ fn kilo_accept_collapses_at_boundary_to_exactly_n_counters() {
     // `materialize_object_growth_shortcut`, where `counter_growth_is_observed` is true for the
     // real proliferate loop, so a DriveSequence stash is REGISTERED (not grafted). Accept is
     // display-only: the real count is deferred to the boundary.
-    drive_all_accept(&mut state);
+    // CR 732.2c: the accepted count binds the boundary collapse, so accept at exactly N.
+    drive_all_accept_n(&mut state, N);
     assert_eq!(
         state.objects[&PENTAD].counters.get(&charge).copied(),
         Some(baseline),

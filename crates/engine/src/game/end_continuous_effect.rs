@@ -28,7 +28,7 @@ use crate::types::mana::SpecialAction;
 use crate::types::player::PlayerId;
 
 use super::casting::{self, SpecialActionManaPayment};
-use super::engine::EngineError;
+use super::engine::{EngineError, PriorityAnnouncementFacadeAccess, PriorityPrincipal};
 use super::layers;
 
 /// Engine-authored presentation payload for one legal CR 116.2c action.
@@ -41,6 +41,43 @@ pub struct EndContinuousEffectCandidate {
     pub group: EndEffectGroupId,
     pub source_name: String,
     pub cost: crate::types::mana::ManaCost,
+}
+
+/// An engine-authored pay-to-end announcement for the Priority preflight.
+/// The existing public candidate remains the presentation surface; this private
+/// wrapper keeps its fixed reducer primer provider-owned until facade conversion.
+pub(in crate::game) struct PriorityEndContinuousEffectAnnouncement {
+    group: EndEffectGroupId,
+    source_name: String,
+    cost: crate::types::mana::ManaCost,
+}
+
+impl PriorityEndContinuousEffectAnnouncement {
+    fn from_candidate(candidate: EndContinuousEffectCandidate) -> Self {
+        Self {
+            group: candidate.group,
+            source_name: candidate.source_name,
+            cost: candidate.cost,
+        }
+    }
+
+    pub(in crate::game) fn group(
+        &self,
+        _access: &PriorityAnnouncementFacadeAccess,
+    ) -> EndEffectGroupId {
+        self.group
+    }
+
+    pub(in crate::game) fn source_name(&self, _access: &PriorityAnnouncementFacadeAccess) -> &str {
+        &self.source_name
+    }
+
+    pub(in crate::game) fn cost(
+        &self,
+        _access: &PriorityAnnouncementFacadeAccess,
+    ) -> &crate::types::mana::ManaCost {
+        &self.cost
+    }
 }
 
 /// CR 116.2c: every live pay-to-end permission `player` controls, one entry per
@@ -137,6 +174,18 @@ pub fn end_continuous_effect_candidates(
         .collect()
 }
 
+/// Enumerates the existing finite CR 116.2c offer authority for the current
+/// Priority holder as opaque reducer primers.
+pub(in crate::game) fn priority_end_continuous_effect_announcements(
+    state: &GameState,
+    principal: &PriorityPrincipal,
+) -> Vec<PriorityEndContinuousEffectAnnouncement> {
+    end_continuous_effect_candidates(state, principal.semantic_holder())
+        .into_iter()
+        .map(PriorityEndContinuousEffectAnnouncement::from_candidate)
+        .collect()
+}
+
 /// CR 116.2c + CR 118.1: pay the permission's printed cost.
 ///
 /// `PaymentContext::SpecialAction(EndContinuousEffect)` is what makes mana
@@ -190,7 +239,7 @@ fn pay_end_continuous_effect_cost(
 /// widened `sba::check_illegal_attachment_unattach`. Do NOT call the pipeline
 /// explicitly here: this function runs INSIDE `apply_action`, so an explicit
 /// call would run it twice.
-fn commit_end_continuous_effect(
+pub(crate) fn finish_paid_end_continuous_effect(
     state: &mut GameState,
     player: PlayerId,
     group: EndEffectGroupId,
@@ -232,9 +281,9 @@ pub fn handle_end_continuous_effect(
     }
 
     match pay_end_continuous_effect_cost(state, player, group, &candidate.cost, events)? {
-        SpecialActionManaPayment::Paid => {
-            Ok(commit_end_continuous_effect(state, player, group, events))
-        }
+        SpecialActionManaPayment::Paid => Ok(finish_paid_end_continuous_effect(
+            state, player, group, events,
+        )),
         SpecialActionManaPayment::Paused => Ok(state.waiting_for.clone()),
     }
 }
@@ -253,9 +302,9 @@ pub(crate) fn resume_end_continuous_effect_payment(
     events: &mut Vec<GameEvent>,
 ) -> Result<WaitingFor, EngineError> {
     match pay_end_continuous_effect_cost(state, player, group, &cost, events)? {
-        SpecialActionManaPayment::Paid => {
-            Ok(commit_end_continuous_effect(state, player, group, events))
-        }
+        SpecialActionManaPayment::Paid => Ok(finish_paid_end_continuous_effect(
+            state, player, group, events,
+        )),
         SpecialActionManaPayment::Paused => Ok(state.waiting_for.clone()),
     }
 }

@@ -10,6 +10,13 @@
     "cantActivateDuring": "Can't be activated right now",
     "prohibited": "Activating this ability is prohibited"
   },
+  "manaSourceSelection": {
+    "title": "Choose a mana source",
+    "description": "This mana ability requires sacrificing a permanent.",
+    "sacrifice": "Sacrifice",
+    "back": "Back to mana payment",
+    "unknownSource": "Mana source"
+  },
   "comboShortcut": {
     "declareTitle": "Loop Shortcut",
     "declareSubtitle": "You control a loop with a determined outcome. Take the shortcut to resolve it.",
@@ -273,6 +280,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Untap",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -287,6 +295,7 @@
       "return": "Return",
       "exile": "Exile",
       "tap": "Tap",
+      "untap": "Untap",
       "crew": "Crew",
       "saddle": "Saddle",
       "station": "Station",
@@ -605,13 +614,15 @@
   "mana": {
     "free": "Free",
     "chooseXTitle": "Choose a value for X",
-    "chooseXAria": "Choose X value",
     "chooseXInputAria": "Enter X value",
     "decreaseX": "Decrease X value",
     "increaseX": "Increase X value",
-    "xEquals": "X = {{value}}",
     "minMax": "min {{min}} / max {{max}}",
     "maxOnly": "max {{max}}",
+    "amountOutOfRange": "Enter a whole number between {{min}} and {{max}}",
+    "decreaseAmount": "Decrease amount",
+    "increaseAmount": "Increase amount",
+    "confirmAmount": "Confirm",
     "confirmX": "Confirm X = {{value}}",
     "payMana": "Pay Mana Cost",
     "convokeHint": "Tap creatures to help pay.",
@@ -658,6 +669,10 @@
     "cardBack": "Card back",
     "organizeLabel": "Organize hand",
     "reorderPausedHint": "Drag-to-reorder is paused while the hand is sorted or filtered."
+  },
+  "storm": {
+    "copies_one": "Storm: {{count}} copy",
+    "copies_other": "Storm: {{count}} copies"
   },
   "opponentHud": {
     "ally": "Ally",

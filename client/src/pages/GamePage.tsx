@@ -19,6 +19,7 @@ import type {
   ObjectId,
   SerializedAbilityCost,
 } from "../adapter/types";
+import { supportsMatchConcede } from "../adapter/types";
 import type {
   InteractionManaRestriction,
   InteractionPresentationSurface,
@@ -73,7 +74,7 @@ import { HelpSheet } from "../components/help/HelpSheet.tsx";
 import { GameLogPanel } from "../components/log/GameLogPanel.tsx";
 import { ChooseXValueUI } from "../components/mana/ChooseXValueUI.tsx";
 import { AssistPaymentUI } from "../components/mana/AssistPaymentUI.tsx";
-import { ManaPaymentUI } from "../components/mana/ManaPaymentUI.tsx";
+import { ManaPaymentUI, ManaSourceSelectionUI } from "../components/mana/ManaPaymentUI.tsx";
 import { PayAmountChoiceUI } from "../components/mana/PayAmountChoiceUI.tsx";
 import { RichLabel } from "../components/mana/RichLabel.tsx";
 import { CardDataMissingModal } from "../components/modal/CardDataMissingModal.tsx";
@@ -147,9 +148,10 @@ import { useGameDispatch } from "../hooks/useGameDispatch.ts";
 import { useInspectHoverProps } from "../hooks/useInspectHoverProps.ts";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.ts";
 import { clearPromptOverlayState } from "../game/sessionCleanup.ts";
-import { clearGame, loadActiveGame, useGameStore } from "../stores/gameStore.ts";
+import { clearGame, hasRemoteHumans, loadActiveGame, useGameStore } from "../stores/gameStore.ts";
 import { useUiStore } from "../stores/uiStore.ts";
 import { usePreferencesStore } from "../stores/preferencesStore.ts";
+import type { MultiplayerBoardLayout } from "../stores/preferencesStore.ts";
 import {
   FORMAT_DEFAULTS,
   getOpponentDisplayName,
@@ -174,6 +176,7 @@ import { LoyaltyBadge } from "../components/ui/LoyaltyBadge.tsx";
 import {
   getCastableZoneViewerTarget,
   getBoardChoiceView,
+  getSeatCount,
   getWaitingForObjectChoiceIds,
   type ZoneViewerTarget,
 } from "../viewmodel/gameStateView.ts";
@@ -336,6 +339,7 @@ export function GamePage() {
     {},
   );
   const [gameStartedAt, setGameStartedAt] = useState<number | null>(null);
+  const [terminalReason, setTerminalReason] = useState<string | null>(null);
   const hasConcededRef = useRef(false);
   // GH #1507: "request takeback" — the table-wide pending request, if any.
   const [pendingTakeback, setPendingTakeback] = useState<
@@ -411,6 +415,17 @@ export function GamePage() {
         useGameStore.setState({
           waitingFor: { type: "GameOver", data: { winner: event.winner } },
         });
+        break;
+      case "terminalDelivery":
+        clearPromptOverlayState();
+        if (gameId) clearGame(gameId);
+        setTerminalReason(event.delivery.display.reason);
+        useGameStore.setState({
+          waitingFor: { type: "GameOver", data: { winner: event.delivery.display.winner } },
+        });
+        break;
+      case "terminalUnavailable":
+        useMultiplayerStore.getState().showToast(event.message);
         break;
       case "emoteReceived":
         setReceivedEmote(event.emote);
@@ -629,6 +644,17 @@ export function GamePage() {
           waitingFor: { type: "GameOver", data: { winner: event.winner } },
         });
         break;
+      case "terminalResult":
+        clearPromptOverlayState();
+        if (gameId) void clearGame(gameId);
+        setTerminalReason(event.result.display.reason);
+        useGameStore.setState({
+          waitingFor: { type: "GameOver", data: { winner: event.result.display.winner } },
+        });
+        break;
+      case "terminalUnavailable":
+        useMultiplayerStore.getState().showToast(event.message);
+        break;
       case "deckRejected":
         navigate("/multiplayer", {
           state: {
@@ -745,6 +771,7 @@ export function GamePage() {
           receivedEmote={receivedEmote}
           timerRemaining={timerRemaining}
           gameStartedAt={gameStartedAt}
+          terminalReason={terminalReason}
           pendingTakeback={pendingTakeback}
           onCloseTakebackDialog={() => setPendingTakeback(null)}
           disconnectChoice={disconnectChoice}
@@ -783,6 +810,7 @@ interface GamePageContentProps {
   receivedEmote: string | null;
   timerRemaining: Record<number, number>;
   gameStartedAt: number | null;
+  terminalReason: string | null;
   pendingTakeback: { requester: number; requesterName: string } | null;
   onCloseTakebackDialog: () => void;
   // 3-4p P2P additions
@@ -814,6 +842,7 @@ function GamePageContent({
   receivedEmote,
   timerRemaining,
   gameStartedAt,
+  terminalReason,
   pendingTakeback,
   onCloseTakebackDialog,
   disconnectChoice,
@@ -832,6 +861,9 @@ function GamePageContent({
   const dispatch = useGameDispatch();
   useGameViewportLock();
   const gameState = useGameStore((s) => s.gameState);
+  const isBestOfThree = gameState?.match_config?.match_type === "Bo3";
+  const draftMatchPairing = useMultiplayerDraftStore((s) => s.matchPairing);
+  const submitIntergameCommand = useMultiplayerDraftStore((s) => s.submitIntergameCommand);
   const objects = useGameStore((s) => s.gameState?.objects);
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
   const turnNumber = useGameStore((s) => s.gameState?.turn_number);
@@ -897,14 +929,15 @@ function GamePageContent({
   const canActForWaitingState = useCanActForWaitingState();
   const boardChoiceLayerActive = useMemo(() => {
     const choice = getBoardChoiceView(waitingFor, objects);
-    return canActForWaitingState && choice?.player === playerId;
-  }, [canActForWaitingState, objects, playerId, waitingFor]);
+    return canActForWaitingState && choice != null;
+  }, [canActForWaitingState, objects, waitingFor]);
   const helpSheetOpen = useUiStore((s) => s.helpSheetOpen);
   const setHelpSheetOpen = useUiStore((s) => s.setHelpSheetOpen);
   const dismissedFlowHelpNudge = usePreferencesStore((s) => s.dismissedFlowHelpNudge);
   const dismissedSandboxToolsNudge = usePreferencesStore((s) => s.dismissedSandboxToolsNudge);
   const dismissedReportCardNudge = usePreferencesStore((s) => s.dismissedReportCardNudge);
   const cardReportDialogOpen = useUiStore((s) => s.cardReportDialogOpen);
+  const multiplayerBoardLayout = usePreferencesStore((s) => s.multiplayerBoardLayout);
   const debugPanelOpen = useUiStore((s) => s.debugPanelOpen);
   const debugClickModeButtonVisible = useUiStore((s) => s.debugClickModeButtonVisible);
   const toggleDebugClickModeButtonVisible = useUiStore(
@@ -912,6 +945,15 @@ function GamePageContent({
   );
   const opponentDisplayName = useMultiplayerStore((s) => s.opponentDisplayName);
   const adapter = useGameStore((s) => s.adapter);
+  // The AUTHORITATIVE game mode. The URL-derived `mode` prop structurally
+  // cannot contain `native-ai` (desktop solo arrives as `rawMode === "ai"`), so
+  // it cannot answer "is anyone else at this table?".
+  const storeGameMode = useGameStore((s) => s.gameMode);
+  const seatCount = getSeatCount(gameState);
+  const effectiveMultiplayerBoardLayout: MultiplayerBoardLayout =
+    seatCount > 2 && canActForWaitingState && getBoardChoiceView(waitingFor, objects)?.intent === "untap"
+      ? "split"
+      : multiplayerBoardLayout;
   const handleKickPlayer = useCallback((pid: number) => {
     const adapter = useGameStore.getState().adapter as
       | { kickPlayer?: (pid: number) => Promise<void> }
@@ -951,6 +993,13 @@ function GamePageContent({
       } else if ("sendConcede" in adapter && typeof adapter.sendConcede === "function") {
         void (adapter.sendConcede as () => void | Promise<void>)();
       }
+    }
+    onHideConcedeDialog();
+  }, [adapter, onHideConcedeDialog]);
+
+  const handleMatchConcede = useCallback(() => {
+    if (supportsMatchConcede(adapter)) {
+      adapter.sendMatchConcede();
     }
     onHideConcedeDialog();
   }, [adapter, onHideConcedeDialog]);
@@ -1143,22 +1192,30 @@ function GamePageContent({
 
   const handleSubmitSideboard = useCallback(
     (main: DeckCardCount[], sideboard: DeckCardCount[]) => {
+      if (draftMatchPairing?.matchConfig.match_type === "Bo3") {
+        void submitIntergameCommand({ type: "SubmitSideboard", main, sideboard });
+        return;
+      }
       dispatch({
         type: "SubmitSideboard",
         data: { main, sideboard },
       });
     },
-    [dispatch],
+    [dispatch, draftMatchPairing, submitIntergameCommand],
   );
 
   const handleChoosePlayDraw = useCallback(
     (playFirst: boolean) => {
+      if (draftMatchPairing?.matchConfig.match_type === "Bo3") {
+        void submitIntergameCommand({ type: "ChoosePlayDraw", playFirst });
+        return;
+      }
       dispatch({
         type: "ChoosePlayDraw",
         data: { play_first: playFirst },
       });
     },
-    [dispatch],
+    [dispatch, draftMatchPairing, submitIntergameCommand],
   );
 
 
@@ -1264,7 +1321,7 @@ function GamePageContent({
     >
       <SpectatorChrome />
       <BattlefieldBackground key={`${boardBackground}-${playerId}`} />
-      <StackDisplay />
+      <StackDisplay effectiveMultiplayerBoardLayout={effectiveMultiplayerBoardLayout} />
 
       {/* Persistent Sandbox banner — visible to all players whenever the
           game's format_config has debug actions enabled. Not dismissible. */}
@@ -1455,6 +1512,7 @@ function GamePageContent({
             ? handleRequestTakeback
             : undefined
         }
+        takebackAudience={hasRemoteHumans(storeGameMode) ? "table" : "solo"}
         showSandboxTools={mode === "ai" || mode === "local" || isSandboxGame}
         onSandboxToolsClick={() => useUiStore.getState().openSandboxTools()}
         debugClickModeButtonVisible={debugClickModeButtonVisible}
@@ -1630,8 +1688,8 @@ function GamePageContent({
       <DiceRollOverlay />
 
       {/* Combat SVG overlays: blocker assignments + attack target arrows */}
-      <BlockAssignmentLines />
-      <AttackTargetLines />
+      <BlockAssignmentLines effectiveMultiplayerBoardLayout={effectiveMultiplayerBoardLayout} />
+      <AttackTargetLines effectiveMultiplayerBoardLayout={effectiveMultiplayerBoardLayout} />
       {/* Per-attacker "needs N blockers" badges (menace / "blocked by N or more").
           Self-gates: renders nothing unless the local player is assigning blockers
           to attackers that carry a minimum-blocker requirement. */}
@@ -1659,6 +1717,8 @@ function GamePageContent({
         {waitingFor != null &&
           MANA_PAYMENT_WAITING_FOR_TYPES.has(waitingFor.type) &&
           canActForWaitingState && <ManaPaymentUI />}
+        {waitingFor?.type === "ManaSourceSelection" &&
+          canActForWaitingState && <ManaSourceSelectionUI />}
         {waitingFor?.type === "ChooseXValue" &&
           canActForWaitingState && <ChooseXValueUI />}
         {waitingFor?.type === "PayAmountChoice" &&
@@ -1754,11 +1814,6 @@ function GamePageContent({
         {waitingFor?.type === "CipherEncodeChoice" &&
           canActForWaitingState && (
             <CipherEncodeModal />
-          )}
-
-        {waitingFor?.type === "UntapChoice" &&
-          canActForWaitingState && (
-            <UntapChoiceModal />
           )}
 
         {/* CR 701.43d: Optional "exert as it attacks" choice (Combat Celebrant). */}
@@ -1922,7 +1977,16 @@ function GamePageContent({
         <>
           <ConcedeDialog
             isOpen={showConcedeDialog}
-            onConfirm={handleConcede}
+            gameAction={{
+              kind: "game",
+              consequence: isBestOfThree ? "best-of-three-game" : "ordinary-game",
+              onConfirm: handleConcede,
+            }}
+            matchAction={
+              supportsMatchConcede(adapter) && isBestOfThree
+                ? { kind: "match", onConfirm: handleMatchConcede }
+                : undefined
+            }
             onCancel={onHideConcedeDialog}
           />
           <TakebackRequestDialog
@@ -1963,6 +2027,7 @@ function GamePageContent({
           mode={mode}
           isOnlineMode={isOnlineMode}
           gameStartedAt={gameStartedAt}
+          terminalReason={terminalReason}
         />
       )}
 
@@ -2532,11 +2597,13 @@ function GameOverScreen({
   mode,
   isOnlineMode = false,
   gameStartedAt,
+  terminalReason,
 }: {
   winner: number | null;
   mode: string | null;
   isOnlineMode?: boolean;
   gameStartedAt?: number | null;
+  terminalReason?: string | null;
 }) {
   const { t } = useTranslation("game");
   const navigate = useNavigate();
@@ -2661,6 +2728,7 @@ function GameOverScreen({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
           >
+            {terminalReason && <p className="mb-2 text-sm text-slate-300">{terminalReason}</p>}
             <p className="text-base text-gray-200 sm:text-lg">
               <Trans
                 i18nKey="gamePage.gameOver.lifeSummary"
@@ -3117,50 +3185,6 @@ function CipherEncodeModal() {
   if (waitingFor?.type !== "CipherEncodeChoice") return null;
 
   return <CipherEncodeChoiceModalContent waitingFor={waitingFor} objects={objects} dispatch={dispatch} />;
-}
-
-// ── Untap Choice Modal ─────────────────────────────────────────────────
-
-function UntapChoiceModal() {
-  const { t } = useTranslation("game");
-  const dispatch = useGameDispatch();
-  const waitingFor = useGameStore((s) => s.waitingFor);
-  const objects = useGameStore((s) => s.gameState?.objects);
-
-  if (waitingFor?.type !== "UntapChoice") return null;
-
-  const objectId = waitingFor.data.candidates[0];
-  if (objectId == null) return null;
-
-  const object = objects?.[objectId];
-  const name = object?.name ?? t("gamePage.untap.permanentFallback");
-
-  return (
-    <ChoiceModal
-      title={t("gamePage.untap.title", { name })}
-      subtitle={t("gamePage.untap.subtitle")}
-      previewCardName={object?.name}
-      previewCardTypes={object?.card_types}
-      options={[
-        {
-          id: "untap",
-          label: t("gamePage.untap.untap"),
-          description: t("gamePage.untap.untapDescription", { name }),
-        },
-        {
-          id: "keep-tapped",
-          label: t("gamePage.untap.keepTapped"),
-          description: t("gamePage.untap.keepTappedDescription", { name }),
-        },
-      ]}
-      onChoose={(id) =>
-        dispatch({
-          type: "ChooseUntap",
-          data: { object_id: objectId, untap: id === "untap" },
-        })
-      }
-    />
-  );
 }
 
 // ── Exert Choice Modal (CR 701.43d: exert as it attacks) ────────────────
