@@ -71,6 +71,19 @@ The remaining shared JSON data defaults to `https://data.phase-rs.dev`. Override
 `SHARED_DATA_BASE_URL` to use another compatible host. Override
 `PAGES_PUBLIC_URL` when deploying behind a custom Pages domain.
 
+`RUNTIME_PUBLIC_URL` can independently pin the client to a verified immutable
+Pages deployment URL. This is useful when the production alias has promoted
+new static assets but its Pages Function routing is still serving the previous
+deployment. For example:
+
+```bash
+RUNTIME_PUBLIC_URL=https://<deployment-id>.phase-arena-3d.pages.dev \
+  ./scripts/deploy-cf.sh phase-arena-3d
+```
+
+The script verifies the decoded runtime at that origin byte-for-byte while the
+canonical application remains at `PAGES_PUBLIC_URL`.
+
 `SKIP_WASM_BUILD=1` is safe only when `client/src/wasm/engine_wasm_bg.wasm` was
 just built from the current checkout. Pairing newer JavaScript glue with an old
 WASM is known to stall AI games at the mulligan prompt.

@@ -13,8 +13,13 @@ export async function proxyCompressedRuntimeAsset(
 
   const assetUrl = new URL(assetPath, context.request.url);
   const asset = await context.env.ASSETS.fetch(assetUrl);
+  const assetContentType = asset.headers.get("Content-Type")?.toLowerCase();
+  const isSpaFallback = assetContentType?.startsWith("text/html") ?? false;
 
-  let body = asset.ok ? asset.body : null;
+  // Pages' SPA fallback returns index.html with status 200 for a missing
+  // runtime asset. Treat that HTML response as a miss so R2-backed
+  // deployments fetch the content-addressed object instead.
+  let body = asset.ok && !isSpaFallback ? asset.body : null;
   if (body === null && context.env.RUNTIME_BUCKET !== undefined) {
     const version = new URL(context.request.url).searchParams.get("v");
     if (version === null || !RUNTIME_VERSION_PATTERN.test(version)) {

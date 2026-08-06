@@ -8,6 +8,7 @@ R2_BUCKET="${R2_BUCKET:-phase-arena-3d-data}"
 CF_RUNTIME_STORAGE="${CF_RUNTIME_STORAGE:-auto}"
 CF_PAGES_BRANCH="${CF_PAGES_BRANCH:-codex/arena-3d-experiment}"
 PAGES_PUBLIC_URL="${PAGES_PUBLIC_URL:-https://$PROJECT_NAME.pages.dev}"
+RUNTIME_PUBLIC_URL="${RUNTIME_PUBLIC_URL:-$PAGES_PUBLIC_URL}"
 SHARED_DATA_BASE_URL="${SHARED_DATA_BASE_URL:-https://data.phase-rs.dev}"
 SKIP_WASM_BUILD="${SKIP_WASM_BUILD:-0}"
 CF_COMPATIBILITY_DATE="${CF_COMPATIBILITY_DATE:-2026-08-06}"
@@ -22,7 +23,9 @@ done
 
 wrangler() {
   if [ -n "$CLOUDFLARE_ENV_FILE" ]; then
-    (cd client && pnpm exec wrangler --env-file "$CLOUDFLARE_ENV_FILE" "$@")
+    # Wrangler's --env-file option accepts multiple values, so placing it
+    # before the command can consume the command name as another file path.
+    (cd client && pnpm exec wrangler "$@" --env-file "$CLOUDFLARE_ENV_FILE")
   else
     (cd client && pnpm exec wrangler "$@")
   fi
@@ -109,7 +112,8 @@ fi
 
 CARD_DATA_SOURCE="client/public/card-data.json"
 ENGINE_WASM_SOURCE="client/src/wasm/engine_wasm_bg.wasm"
-for file in "$CARD_DATA_SOURCE" "$ENGINE_WASM_SOURCE"; do
+RUNTIME_PROXY_SOURCE="client/deploy/cloudflare-pages/compressed-runtime-proxy.js"
+for file in "$CARD_DATA_SOURCE" "$ENGINE_WASM_SOURCE" "$RUNTIME_PROXY_SOURCE"; do
   if [ ! -s "$file" ]; then
     echo "ERROR: required build artifact is missing: $file" >&2
     echo "Run ./scripts/setup.sh --no-tilt first." >&2
@@ -119,6 +123,7 @@ done
 
 CARD_DATA_HASH=$(hash16 "$CARD_DATA_SOURCE")
 ENGINE_WASM_HASH=$(hash16 "$ENGINE_WASM_SOURCE")
+RUNTIME_PROXY_HASH=$(hash16 "$RUNTIME_PROXY_SOURCE")
 CARD_DATA_OBJECT="card-data-$CARD_DATA_HASH.json"
 ENGINE_WASM_OBJECT="wasm/engine_wasm_bg-$ENGINE_WASM_HASH.wasm"
 DEPLOY_TMP=$(mktemp -d)
@@ -139,6 +144,7 @@ upload_brotli() {
 
 SHARED_DATA_BASE_URL="${SHARED_DATA_BASE_URL%/}"
 PAGES_PUBLIC_URL="${PAGES_PUBLIC_URL%/}"
+RUNTIME_PUBLIC_URL="${RUNTIME_PUBLIC_URL%/}"
 
 if [ "$RUNTIME_STORAGE" = "r2" ]; then
   if [ ! -r client/deploy/cloudflare-pages/wrangler.r2.jsonc ]; then
@@ -151,12 +157,12 @@ if [ "$RUNTIME_STORAGE" = "r2" ]; then
   upload_brotli "$ENGINE_WASM_SOURCE" "$ENGINE_WASM_OBJECT" application/wasm
 
   export DATA_BASE_URL="$SHARED_DATA_BASE_URL"
-  export CARD_DATA_URL="$PAGES_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH"
-  export ENGINE_WASM_URL="$PAGES_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH"
+  export CARD_DATA_URL="$RUNTIME_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH&proxy=$RUNTIME_PROXY_HASH"
+  export ENGINE_WASM_URL="$RUNTIME_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH&proxy=$RUNTIME_PROXY_HASH"
 else
   export DATA_BASE_URL="$SHARED_DATA_BASE_URL"
-  export CARD_DATA_URL="$PAGES_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH"
-  export ENGINE_WASM_URL="$PAGES_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH"
+  export CARD_DATA_URL="$RUNTIME_PUBLIC_URL/runtime/card-data.json?v=$CARD_DATA_HASH&proxy=$RUNTIME_PROXY_HASH"
+  export ENGINE_WASM_URL="$RUNTIME_PUBLIC_URL/runtime/engine_wasm_bg.wasm?v=$ENGINE_WASM_HASH&proxy=$RUNTIME_PROXY_HASH"
 fi
 
 echo "Building deployable frontend..."
