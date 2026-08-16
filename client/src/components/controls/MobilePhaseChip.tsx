@@ -82,6 +82,7 @@ export function MobilePhaseChip({ className }: { className?: string } = {}) {
         aria-label={t("phaseStop.chipAria", { phase: phaseLabel })}
         aria-haspopup="dialog"
         aria-expanded={sheetOpen}
+        data-mobile-phase-chip=""
         className={`arena-control-chip relative flex min-h-11 items-center justify-center gap-1.5 border border-cyan-400/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-stone-300 transition-all duration-200 hover:border-cyan-300/40 hover:text-white lg:min-h-0 ${className ?? ""}`}
       >
         {/* Seat-color dot: whose turn it is, mirroring the HUD plate's

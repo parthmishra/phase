@@ -37,8 +37,9 @@ engine GameObject + derived presentation state
                    Three.js permanent
 ```
 
-The hand remains a DOM interaction surface, but its visible face is a
-high-resolution canvas composition shared by hand and inspection modes. It uses
+The local hand remains a DOM interaction surface, but its visible face is a
+high-resolution canvas composition shared by hand and inspection modes.
+Concealed opponent hands are world-space Three.js seat objects. Both paths use
 the PoC's measured M15 frame geometry, Beleren title/type typography, MPlantin
 rules typography, and locally rasterized Scryfall pips. Battlefield permanents
 use small, bounded canvas textures that rebuild only when their presentation
@@ -51,15 +52,18 @@ The existing Phase dispatch pipeline remains authoritative. Three.js hit tests
 route object IDs into the same engine-provided legal action buckets and
 waiting-state responses used by the DOM board.
 
-Critical controls remain screen-space DOM: life totals, phase and priority
-controls, pass/resolve actions, the hand, menus, stack controls, and zone
-viewers. They never inherit the world's perspective. This keeps text crisp and
-touch targets stable across desktop, iPad, and phone layouts. Three.js owns
-cards, piles, combat positions, attachments, and future environment themes.
+Critical controls remain screen-space DOM: life totals and player names, phase
+and priority controls, pass/resolve actions, the local hand, menus, stack
+controls, and zone viewers. They never inherit the world's perspective. This
+keeps text crisp and touch targets stable across desktop, iPad, and phone
+layouts. Three.js owns battlefield cards, opponent hands and their public
+command-zone leaders, piles, combat positions, attachments, and future
+environment themes.
 
 ## First vertical slice
 
-The first slice targets a focused 1v1 match across desktop, tablet, and phone:
+The first slice targets matches across desktop, tablet, and phone, including
+four-player Commander pods:
 
 - live engine state on a perspective material plane;
 - current characteristics composed over art crops;
@@ -70,9 +74,8 @@ The first slice targets a focused 1v1 match across desktop, tablet, and phone:
 - capped DPR, demand rendering, no post-processing, and delayed texture
   disposal.
 
-Four-player camera choreography, attachments, combat lines, flight/impact
-events, stack projection anchors, and a full semantic rules-text document are
-the next milestones.
+Attachments, combat lines, flight/impact events, stack projection anchors, and
+a full semantic rules-text document are the next milestones.
 
 ## Responsive stage composition
 
@@ -98,6 +101,39 @@ Information hierarchy is intentionally asymmetric:
 
 The command shelf groups those controls into one translucent near-edge surface
 instead of stacking independent floating panels over the battlefield.
+
+## Multiplayer seat hands and command zones
+
+`ArenaGameBoard` assigns every live opponent to a stable `left`, `far`, or
+`right` seat with `assignArenaOpponentSeats`. Each seat receives one
+`ArenaHeldHand` group. The group's world position, Y-axis facing angle, and
+scale are the single transform authority for both the concealed hand fan and
+the public command-zone leaders beside it; command cards are not screen-space
+elements with approximate CSS rotations.
+
+Opponent hand presentation is deliberately bounded:
+
+- up to seven cards render in the world-space fan;
+- hands above that presentation capacity keep their authoritative engine count
+  and show it on a small count sprite beside the fan;
+- the HUD nameplate does not duplicate hand size while the visible fan remains
+  within capacity;
+- engine-filtered reveal/look state remains the only authority for whether a
+  held card renders its face.
+
+`commandZoneLeaders` supplies commanders, partners, backgrounds, and
+Oathbreaker signature spells that are currently in the command zone. Their
+Three.js held-card meshes continue the same seat plane immediately after the
+hand fan, so side and far seats inherit identical camera perspective. Clicking
+an opponent leader routes its object ID to the existing inspector. The local
+player's command-zone cards remain in the DOM hand dock, where
+`CommanderCardZone` continues to own casting, commander tax, commander
+ninjutsu, drag interaction, and mana-payment preview.
+
+Opponent identity remains screen-space: compact portrait-filled pills show the
+life total and smaller name text without a redundant hand count. The persistent
+"Follow active opponent" preference lives under Settings → Multiplayer rather
+than reserving a top-center gameplay control.
 
 ## Second vertical slice
 
@@ -143,7 +179,8 @@ object mount rather than guessed from card text or zone names.
   no glove, clip, holder, or heavy cast shadow competing with the battlefield.
   The same component covers far, left, and right pod seats; card identities
   still come only from the engine-filtered state and existing reveal/look
-  visibility contract.
+  visibility contract. Public command-zone leaders continue the same fan plane
+  rather than using separately rotated DOM cards.
 - Sea-glass blue: a soft underlight for an engine-authored available action.
 - Muted teal: solid corner brackets for an engine-authored legal target.
 - Muted copper: a low-energy combat underlight.
@@ -179,9 +216,10 @@ What should be rejected or changed in the next slice:
 
 - Permanents resolve directly into a lane; they need projected zone-to-stage
   travel and impact timing before spell resolution has Master Duel-like weight.
-- The focused-opponent layout is usable for 1v1 but is not a four-player
-  composition. Four seats need deliberate camera choreography and focus
-  transitions, not additional rows squeezed into a duel composition.
+- The stable left/far/right pod composition keeps all three opponent hands and
+  public command-zone leaders visible without adding dashboard rows. Future
+  focus transitions may still add camera emphasis, but are not required for
+  basic four-player readability.
 - Sound and particles should reinforce engine events only after projected
   anchors exist. Generic ambient spectacle would make priority-heavy Magic
   harder to read.
@@ -191,7 +229,7 @@ What should be rejected or changed in the next slice:
 - Battlefield textures are 640×420 without mipmaps.
 - Texture entries are revision-keyed, shared, reference-counted, and disposed
   after a short reuse window.
-- Canvas DPR is capped at 1.5.
+- Canvas DPR is capped at 2.
 - The material plane uses one authored 1254×1254 sRGB PNG albedo, mirrored at
   moderate scale with mipmaps and anisotropic filtering. It uses scalar
   roughness only: no bump, normal, roughness-map, or displacement texture
@@ -210,7 +248,6 @@ What should be rejected or changed in the next slice:
 
 ## Known first-slice limitations
 
-- Only the focused opponent is placed in the scene.
 - Attachments and exile links are not yet spatialized.
 - The old DOM animation position registry does not yet receive projected
   Three.js anchors, so some event overlays will not originate from the mesh.

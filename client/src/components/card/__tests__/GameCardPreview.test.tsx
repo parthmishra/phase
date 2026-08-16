@@ -196,6 +196,8 @@ describe("GameCardPreview", () => {
       `[data-hand-card][data-object-id="${card.id}"]`,
     );
     expect(source).not.toBeNull();
+    const fanSlot = source?.parentElement;
+    expect(fanSlot).not.toBeNull();
 
     const sourceOrigin = {
       bottom: 700,
@@ -218,7 +220,7 @@ describe("GameCardPreview", () => {
     });
 
     expect(source).not.toHaveAttribute("data-hand-held-source");
-    expect(source).not.toHaveClass("w-0", "opacity-0");
+    expect(fanSlot).not.toHaveClass("w-0", "opacity-0");
 
     act(() => {
       useUiStore.getState().setMobileHandGesture({
@@ -233,7 +235,7 @@ describe("GameCardPreview", () => {
     });
 
     expect(source).toHaveAttribute("data-hand-held-source", "true");
-    expect(source).toHaveClass("w-0", "opacity-0");
+    expect(fanSlot).toHaveClass("w-0", "opacity-0");
   });
 
   it("renders no preview while a card is being dragged", () => {

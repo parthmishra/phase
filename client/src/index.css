@@ -158,24 +158,69 @@
 }
 
 .arena-command-shelf::after {
-  border-radius: 2px;
+  display: none;
 }
 
 .arena-command-shelf {
-  border-color: var(--arena-ui-edge);
-  background:
-    linear-gradient(115deg, rgba(202, 186, 145, 0.055), transparent 34%),
-    linear-gradient(180deg, rgba(25, 28, 23, 0.96), rgba(10, 12, 10, 0.97));
-  box-shadow:
-    inset 0 1px 0 rgba(239, 225, 184, 0.15),
-    inset 0 -2px 0 rgba(0, 0, 0, 0.5),
-    0 18px 42px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(14px);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .arena-command-shelf > * {
   position: relative;
   z-index: 1;
+}
+
+/* Compact touch controls use the dark, optically dense glass treatment of
+   iOS system controls: a neutral tint, soft refraction highlight, and a fine
+   light rim instead of a colored gradient. */
+.arena-liquid-glass-control {
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 30% 12%, rgba(255, 255, 255, 0.17), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(12, 12, 15, 0.24));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.48),
+    0 10px 28px rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(24px) saturate(145%) brightness(0.84);
+  backdrop-filter: blur(24px) saturate(145%) brightness(0.84);
+}
+
+.arena-liquid-glass-control::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  inset: 1px;
+  z-index: 1;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: inherit;
+}
+
+.arena-liquid-glass-control:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background:
+    radial-gradient(circle at 30% 12%, rgba(255, 255, 255, 0.21), transparent 44%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(12, 12, 15, 0.29));
+}
+
+.arena-liquid-glass-rail {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.095), transparent 42%),
+    rgba(14, 14, 17, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.36),
+    0 9px 24px rgba(0, 0, 0, 0.32);
+  -webkit-backdrop-filter: blur(22px) saturate(140%) brightness(0.88);
+  backdrop-filter: blur(22px) saturate(140%) brightness(0.88);
 }
 
 .arena-control-chip,
@@ -194,8 +239,17 @@
   letter-spacing: 0.055em;
 }
 
+[data-action-button-panel] > [data-next-phase-action],
+[data-action-button-panel] > [data-pass-action] {
+  border-radius: 9999px;
+}
+
 [data-action-button-panel] > button:only-child {
   grid-column: 1 / -1;
+}
+
+[data-advance-label-compact] {
+  display: none;
 }
 
 @media (width >= 64rem) {
@@ -209,6 +263,10 @@
     width: 100%;
     min-width: 0;
   }
+
+  .arena-command-shelf [data-action-button-panel][data-compact-pass-layout="true"] {
+    grid-template-columns: minmax(11rem, 1fr) 2.75rem;
+  }
 }
 
 [data-opponent-hud-rail] {
@@ -216,36 +274,28 @@
 }
 
 [data-opponent-hud-seats] {
-  /* Keep the multi-seat treatment compact on phones and short landscape
-     viewports; full-height desktop canvases receive an Arena-scale curve
-     below instead of sharing this mobile-first ceiling. */
-  --arena-opponent-avatar-size:
-    clamp(2.5rem, calc(1.5rem + 1vw), 4rem);
-  --arena-opponent-marker-width:
-    calc(var(--arena-opponent-avatar-size) + 1rem);
+  /* Match the local player's portrait-filled pill by default. Full-height
+     desktop canvases receive a modestly larger version below. */
+  --arena-opponent-pill-width: var(--arena-life-pill-width);
+  --arena-opponent-pill-height: var(--arena-life-pill-height);
+  --arena-opponent-marker-width: var(--arena-opponent-pill-width);
   --arena-opponent-life-size:
-    clamp(1rem, calc(0.75rem + 0.2vw), 1.25rem);
+    clamp(1.125rem, min(3.8dvw, 5dvh), 1.5rem);
   --arena-opponent-name-size:
-    clamp(0.5rem, calc(0.375rem + 0.12vw), 0.6875rem);
-  --arena-opponent-follow-size:
-    clamp(1.75rem, calc(1.25rem + 0.4vw), 2.5rem);
+    clamp(0.4rem, calc(0.325rem + 0.08vw), 0.5625rem);
 }
 
 @media (min-width: 64rem) and (min-height: 42rem) {
   [data-opponent-hud-seats] {
-    /* MTG Arena's opponent portrait occupies roughly 110–125px in a
-       1920×1080 gameplay frame. This curve lands near 107px at 1080p,
-       160px at 4K, and remains bounded at 176px on 5K displays. */
-    --arena-opponent-avatar-size:
-      clamp(5.25rem, calc(3.375rem + 2.75vw), 11rem);
-    --arena-opponent-marker-width:
-      calc(var(--arena-opponent-avatar-size) + 1.5rem);
+    --arena-opponent-pill-height:
+      clamp(3rem, calc(2rem + 1vw), 4.25rem);
+    --arena-opponent-pill-width:
+      calc(var(--arena-opponent-pill-height) * 2.0833);
+    --arena-opponent-marker-width: var(--arena-opponent-pill-width);
     --arena-opponent-life-size:
-      clamp(1.25rem, calc(0.9rem + 0.45vw), 2rem);
+      clamp(1.375rem, calc(0.95rem + 0.42vw), 1.75rem);
     --arena-opponent-name-size:
-      clamp(0.625rem, calc(0.45rem + 0.2vw), 0.9rem);
-    --arena-opponent-follow-size:
-      clamp(2.25rem, calc(1.5rem + 0.75vw), 3.5rem);
+      clamp(0.5rem, calc(0.375rem + 0.12vw), 0.6875rem);
   }
 }
 
@@ -253,16 +303,25 @@
   width: var(--arena-opponent-marker-width);
 }
 
-.arena-opponent-seat-avatar {
-  width: var(--arena-opponent-avatar-size);
-  height: var(--arena-opponent-avatar-size);
-  min-width: var(--arena-opponent-avatar-size);
-  min-height: var(--arena-opponent-avatar-size);
-  max-width: var(--arena-opponent-avatar-size);
-  max-height: var(--arena-opponent-avatar-size);
-  flex-basis: var(--arena-opponent-avatar-size);
-  aspect-ratio: 1;
+.arena-opponent-seat-portrait {
+  isolation: isolate;
+  overflow: hidden;
+  width: var(--arena-opponent-pill-width);
+  height: var(--arena-opponent-pill-height);
+  border-radius: 9999px;
   contain: layout paint size;
+}
+
+.arena-opponent-seat-avatar {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: inherit;
 }
 
 .arena-opponent-seat-avatar > img {
@@ -280,16 +339,13 @@
 @media (pointer: coarse) and (max-width: 80rem),
   (pointer: coarse) and (max-height: 50rem) {
   [data-opponent-hud-seats] {
-    --arena-opponent-avatar-size:
-      clamp(3.25rem, min(7vw, 13dvh), 4.5rem);
-    --arena-opponent-marker-width:
-      calc(var(--arena-opponent-avatar-size) + 0.875rem);
+    --arena-opponent-pill-width: var(--arena-life-pill-width);
+    --arena-opponent-pill-height: var(--arena-life-pill-height);
+    --arena-opponent-marker-width: var(--arena-opponent-pill-width);
     --arena-opponent-life-size:
-      clamp(0.875rem, min(2.4vw, 3.8dvh), 1.125rem);
+      clamp(1.125rem, min(3.8dvw, 5dvh), 1.5rem);
     --arena-opponent-name-size:
-      clamp(0.5rem, min(1.4vw, 2.2dvh), 0.625rem);
-    --arena-opponent-follow-size:
-      clamp(2.75rem, min(5.5vw, 11dvh), 3.25rem);
+      clamp(0.4rem, min(1vw, 1.6dvh), 0.5rem);
   }
 }
 
@@ -315,12 +371,6 @@
 .arena-hud-plate:focus-visible {
   outline: 2px solid rgba(164, 220, 218, 0.75);
   outline-offset: 2px;
-}
-
-.arena-icon-control[data-arena-follow-control="true"] {
-  width: var(--arena-opponent-follow-size);
-  height: var(--arena-opponent-follow-size);
-  border-radius: 9999px;
 }
 
 /* iPad and other coarse-pointer layouts can share the denser desktop
@@ -365,6 +415,30 @@
   --action-btn-bottom: 0.75rem;
   --action-btn-right: 3.5rem;
   --game-edge-right: 0.75rem;
+  /* Full-bleed arena art may extend beneath curved display corners, but fixed
+     controls must remain inside the device's dynamic safe area. `max()` keeps
+     a normal 12px margin on rectangular displays without adding extra space
+     to the larger inset Safari reports for rounded iPhone/iPad hardware. */
+  --game-control-safe-left: max(0.75rem, env(safe-area-inset-left, 0px));
+  --game-control-safe-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  --game-control-safe-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  --game-control-safe-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  /* Lower-corner controls sit below the camera housing, so the full-width
+     landscape safe rectangle is unnecessarily conservative. Use the larger
+     horizontal hardware inset for both sides so rotating the Dynamic Island
+     cannot make one cluster hug the glass more tightly than the other. */
+  --game-control-lower-inline: clamp(
+    0.75rem,
+    max(
+      env(safe-area-inset-left, 0px),
+      env(safe-area-inset-right, 0px)
+    ),
+    1.5rem
+  );
+  /* Shared touch identity silhouette. Both the local and opponent life
+     portraits consume these dimensions so their shape cannot drift. */
+  --arena-life-pill-width: clamp(5.5rem, min(18dvw, 24dvh), 6.25rem);
+  --arena-life-pill-height: clamp(2.75rem, min(8dvw, 12dvh), 3rem);
   --card-base: clamp(4rem, calc((7vw + 11vh) / 2), 6.75rem);
   --card-w: calc(var(--card-base) * var(--card-size-scale) * var(--card-viewport-scale));
   --card-h: calc(var(--card-w) * 1.4);
@@ -780,6 +854,239 @@ select.select-dark option {
   }
 }
 
+[data-hud-plate-art] {
+  display: none;
+}
+
+/* Keep the local Arena identity immediately above the resting hand fan on
+   phones and touch-first tablets through the 13-inch iPad Pro. The compact
+   portrait-filled pill clears the center card instead of occupying battlefield
+   space farther up the table. Undo and the persistent mode toggles remain
+   independent glass controls around the edge of the play surface. */
+@media (width < 64rem),
+  (pointer: coarse) and (max-width: 87.5rem) {
+  [data-game-menu-anchor] {
+    --game-menu-inline: var(--game-control-lower-inline);
+  }
+
+  [data-touch-action-cluster] {
+    width: 100%;
+  }
+
+  [data-arena-screen-space-ui="player-hud"] {
+    --edge-pill-hand-offset: clamp(4.5rem, 19dvh, 5rem);
+    position: fixed !important;
+    right: 0;
+    left: 0;
+    bottom: calc(
+      env(safe-area-inset-bottom) + var(--edge-pill-hand-offset)
+    ) !important;
+    width: 100vw;
+    z-index: 40;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] {
+    --mobile-player-hud-body-width: var(--arena-life-pill-width);
+    --mobile-player-hud-body-height: var(--arena-life-pill-height);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate] {
+    isolation: isolate;
+    width: var(--mobile-player-hud-body-width);
+    min-height: 0;
+    height: var(--mobile-player-hud-body-height);
+    overflow: hidden;
+    padding: 0;
+    gap: 0;
+    border-radius: 9999px;
+    clip-path: none;
+    z-index: 2;
+    filter: drop-shadow(0 4px 9px rgba(0, 0, 0, 0.42));
+  }
+
+  /* A passive life portrait may visually overlap the base of the fan, but it
+     must not steal taps from those cards. It becomes interactive only when
+     the engine exposes it as a legal player target and HudPlate renders it as
+     a button. */
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate]:not(button) {
+    pointer-events: none;
+  }
+
+  [data-major-phase-stop-rail] {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    min-height: 2.5rem;
+    align-self: flex-end;
+    justify-content: center;
+    gap: 0;
+    margin-inline: auto 0;
+    padding: 0.25rem 0.3125rem;
+  }
+
+  [data-major-phase-stop-rail] [data-phase-stop-dot] {
+    width: clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem) !important;
+    height: clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem) !important;
+    flex: 0 0 clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem);
+    border-radius: 9999px;
+  }
+
+  [data-advance-label-compact] {
+    display: inline;
+  }
+
+  [data-advance-label-full] {
+    display: none;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate]::after {
+    display: none;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-avatar] {
+    display: none;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-art] {
+    display: block;
+    z-index: 0;
+    opacity: 1;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-art] > img {
+    object-position: center 22%;
+    filter: saturate(1.02) contrast(1.05);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-art][data-avatar-fallback="true"] {
+    background:
+      radial-gradient(circle at 42% 26%, color-mix(in srgb, currentColor 54%, white 12%), transparent 48%),
+      linear-gradient(145deg, color-mix(in srgb, currentColor 34%, #111318), #090a0c);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-profile-fallback] {
+    padding: 0.45rem 0.38rem 0;
+    color: rgba(255, 255, 255, 0.28);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-art]::after {
+    position: absolute;
+    content: "";
+    inset: 0;
+    background:
+      radial-gradient(circle at 50% 42%, transparent 22%, rgba(5, 8, 7, 0.28) 78%),
+      linear-gradient(180deg, rgba(255, 244, 207, 0.04), rgba(4, 7, 6, 0.36));
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-content] {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    height: 100%;
+    flex: 1 1 auto;
+    flex-direction: row;
+    gap: 0;
+    overflow: hidden;
+    transform: none;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-label] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-primary] {
+    flex: 0 0 auto;
+    gap: 0;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-life-total-value] {
+    padding: 0;
+    font-size: clamp(1.25rem, min(4.5dvw, 6dvh), 1.75rem);
+    line-height: 1;
+    color: rgba(240, 253, 244, 0.96);
+    text-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.98),
+      0 0 8px rgba(0, 0, 0, 0.72);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-player-hud-corner-controls] {
+    left: var(--game-control-lower-inline);
+    bottom: var(--game-control-safe-bottom);
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-player-hud-undo-control] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    right: var(--game-control-safe-right);
+    top: var(--game-control-safe-top);
+  }
+
+  /* The persistent Full Control toggle belongs with the other always-present
+     corner modes, not in the transient priority/combat action rail. */
+  [data-flex-zone="actionRail"] [data-full-control-toggle] {
+    display: none;
+  }
+
+  /* The compact lower-right glass rail owns phase stops on edge layouts. */
+  [data-combat-phase-indicator] {
+    display: none;
+  }
+}
+
+/* Dock phase stops directly below one compact row of advance/pass actions.
+   The cluster grows inward from the lower-right edge and ends before the
+   centered hand fan, including on a 13-inch iPad in landscape. */
+@media (width < 64rem) and (orientation: landscape),
+  (pointer: coarse) and (min-width: 64rem) and (max-width: 87.5rem) {
+  [data-touch-action-cluster] {
+    width: clamp(10.25rem, 18dvw, 11.5rem);
+    max-width: calc(100vw - 0.5rem);
+  }
+
+  [data-flex-zone="actionRail"] [data-action-button-panel] {
+    display: grid;
+    width: 100%;
+    max-width: none;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.85fr);
+    align-items: stretch;
+    gap: 0.3125rem;
+  }
+
+  [data-flex-zone="actionRail"] [data-action-button-panel][data-compact-pass-layout="true"] {
+    grid-template-columns: minmax(0, 1fr) 2.75rem;
+  }
+
+  [data-flex-zone="actionRail"] [data-action-button-panel] > button {
+    width: 100%;
+    min-width: 0 !important;
+    min-height: 2.75rem;
+    padding-inline: 0.5rem;
+    font-size: 0.625rem;
+    line-height: 1.1;
+  }
+
+  [data-flex-zone="actionRail"] [data-action-button-panel][data-compact-pass-layout="true"] > [data-pass-action] {
+    padding-inline: 0;
+  }
+}
+
+@media (width < 64rem) {
+  [data-arena-screen-space-ui="player-hud"] {
+    --edge-pill-hand-offset: 4.75rem;
+  }
+}
+
 /* Mobile PORTRAIT only: lift the fanned hand above the fixed bottom action
    rail and split the dock into left/right clusters. Landscape (<lg) keeps the
    desktop-style right-anchored rail; short landscape viewports are handled by
@@ -792,6 +1099,12 @@ select.select-dark option {
     --game-mobile-command-lift: 0.5rem;
     --game-mobile-player-hud-lift: 12.75rem;
     --game-mobile-player-hud-shift-x: 1.125rem;
+  }
+
+  [data-arena-screen-space-ui="player-hud"] {
+    bottom: calc(
+      env(safe-area-inset-bottom) + 5.25rem
+    ) !important;
   }
 
   [data-flex-zone="player-row"] {
@@ -848,8 +1161,8 @@ select.select-dark option {
     flex-direction: row !important;
     align-items: flex-end !important;
     justify-content: space-between !important;
-    padding-left: calc(env(safe-area-inset-left) + var(--game-edge-right, 0.75rem));
-    padding-right: calc(env(safe-area-inset-right) + var(--game-edge-right, 0.75rem));
+    padding-left: var(--game-control-lower-inline);
+    padding-right: var(--game-control-lower-inline);
     transform-origin: bottom center !important;
   }
 
@@ -859,10 +1172,6 @@ select.select-dark option {
 
   [data-mobile-action-right] {
     width: 56%;
-  }
-
-  [data-arena-screen-space-ui="player-hud"] {
-    bottom: calc(env(safe-area-inset-bottom) + clamp(13rem, 26dvh, 17rem)) !important;
   }
 
   [data-opponent-hud-rail] {
@@ -889,17 +1198,6 @@ select.select-dark option {
   [data-flex-zone="playerHandRow"] {
     transform: translateY(max(env(safe-area-inset-bottom), 0.5rem));
   }
-
-  /* Keep the local identity attached to the near edge but above the resting
-     fan silhouette. PlayerHand updates this stage-scoped value from the
-     rendered center card, including during the mobile tap-lift animation. */
-  [data-arena-screen-space-ui="player-hud"] {
-    bottom: var(
-      --arena-player-hud-bottom,
-      calc(env(safe-area-inset-bottom) + 0.75rem)
-    ) !important;
-    z-index: 40;
-  }
 }
 
 @media (width < 64rem) and (max-aspect-ratio: 10/11) {
@@ -915,7 +1213,6 @@ select.select-dark option {
 @media (width < 30rem) and (orientation: portrait) {
   [data-opponent-hud-seats] {
     --arena-opponent-row-top: calc(env(safe-area-inset-top) + 0.5rem);
-    --arena-opponent-follow-top: calc(env(safe-area-inset-top) + 0.7rem);
   }
 
   [data-opponent-tab] .arena-opponent-avatar {

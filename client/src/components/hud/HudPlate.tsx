@@ -104,20 +104,58 @@ export function HudPlate({
           className="pointer-events-none absolute inset-0 z-30 outline-2 outline-fuchsia-300"
         />
       )}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        data-avatar-fallback={avatarUrl ? undefined : "true"}
+        data-hud-plate-art=""
+        style={avatarUrl || !seatColor ? undefined : { color: seatColor }}
+      >
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <svg
+            viewBox="0 0 64 64"
+            className="absolute inset-0 h-full w-full"
+            fill="currentColor"
+            data-hud-plate-profile-fallback=""
+          >
+            <circle cx="32" cy="23" r="12" />
+            <path d="M10 59c1.4-14 9.3-22 22-22s20.6 8 22 22H10Z" />
+          </svg>
+        )}
+      </div>
       {cornerBadge ? (
-        <div className="absolute -top-0.5 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2">{cornerBadge}</div>
+        <div
+          className="absolute -top-0.5 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2"
+          data-hud-plate-corner=""
+        >
+          {cornerBadge}
+        </div>
       ) : null}
       <div className="pointer-events-none absolute inset-[1px] border-t border-[#f5eac8]/10" />
       {avatarUrl ? (
-        <HudAvatar
-          label={label}
-          avatarUrl={avatarUrl}
-          seatColor={seatColor}
-          compact={compact}
-        />
+        <div className="contents" data-hud-plate-avatar="">
+          <HudAvatar
+            label={label}
+            avatarUrl={avatarUrl}
+            seatColor={seatColor}
+            compact={compact}
+          />
+        </div>
       ) : null}
-      <div className={`relative flex min-w-0 flex-col items-center justify-center ${contentGap}`}>
-        <div className={`flex min-w-0 items-center justify-center ${contentGap}`}>
+      <div
+        className={`relative flex min-w-0 flex-col items-center justify-center ${contentGap}`}
+        data-hud-plate-content=""
+      >
+        <div
+          className={`flex min-w-0 items-center justify-center ${contentGap}`}
+          data-hud-plate-label=""
+        >
           {!avatarUrl && seatColor && (
             <span
               aria-hidden
@@ -132,7 +170,10 @@ export function HudPlate({
             {label}
           </span>
         </div>
-        <div className={`flex min-w-0 items-center justify-center ${childGap}`}>
+        <div
+          className={`flex min-w-0 items-center justify-center ${childGap}`}
+          data-hud-plate-primary=""
+        >
           {children}
         </div>
       </div>

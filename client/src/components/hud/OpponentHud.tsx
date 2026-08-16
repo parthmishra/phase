@@ -245,10 +245,6 @@ export function OpponentHud({
       setFollowActiveOpponent,
     ],
   );
-  const handleToggleFollowActiveOpponent = useCallback(() => {
-    setFollowActiveOpponent(!followActiveOpponent);
-  }, [followActiveOpponent, setFollowActiveOpponent]);
-
   const disconnectedPlayers = useMultiplayerStore((s) => s.disconnectedPlayers);
   const connectionStatus = useMultiplayerStore((s) => s.connectionStatus);
   const isOnline = connectionStatus !== "disconnected";
@@ -329,19 +325,6 @@ export function OpponentHud({
               {renderOpponentTab(opponentId, "seat")}
             </div>
           ))}
-        </div>
-        <div
-          className="pointer-events-auto absolute left-1/2 ml-7"
-          style={{
-            top: "var(--arena-opponent-follow-top, calc(env(safe-area-inset-top) + clamp(0.7rem, 1.4dvh, 1.2rem)))",
-          }}
-        >
-          <FollowActiveToggle
-            enabled={followActiveOpponent}
-            onToggle={handleToggleFollowActiveOpponent}
-            compact
-            seatMarker
-          />
         </div>
         {createPortal(
           <KickConfirmDialog
@@ -477,11 +460,6 @@ export function OpponentHud({
           }
         />
       )}
-      <FollowActiveToggle
-        enabled={followActiveOpponent}
-        onToggle={handleToggleFollowActiveOpponent}
-        compact={forceCompactHud || splitOverview}
-      />
       {createPortal(
         <KickConfirmDialog
           isOpen={kickTarget !== null}
@@ -495,68 +473,6 @@ export function OpponentHud({
         document.body,
       )}
     </div>
-  );
-}
-
-function FollowActiveToggle({
-  enabled,
-  onToggle,
-  compact = false,
-  seatMarker = false,
-}: {
-  enabled: boolean;
-  onToggle: () => void;
-  compact?: boolean;
-  seatMarker?: boolean;
-}) {
-  const { t } = useTranslation("game");
-  const tooltipId = useId();
-  const tooltip = enabled
-    ? t("opponentHud.followingActiveOpponent")
-    : t("opponentHud.followActiveOpponent");
-
-  return (
-    <button
-      type="button"
-      aria-label={tooltip}
-      aria-describedby={tooltipId}
-      aria-pressed={enabled}
-      data-arena-follow-control={seatMarker ? "true" : undefined}
-      onClick={onToggle}
-      className={`arena-icon-control group relative flex shrink-0 items-center justify-center border transition-colors duration-150 ${
-        seatMarker
-          ? "rounded-full"
-          : compact
-            ? "h-11 w-11"
-            : "h-10 w-10"
-      } ${
-        enabled
-          ? "border-amber-300/45 bg-amber-950/72 text-amber-100"
-          : "border-white/10 bg-slate-950/82 text-slate-300 hover:border-white/20 hover:bg-slate-900 hover:text-white"
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`relative flex items-center justify-center rounded-full border ${compact ? "h-3.5 w-3.5" : "h-[18px] w-[18px]"} ${
-          enabled ? "border-amber-200" : "border-current"
-        }`}
-      >
-        <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-current opacity-75" />
-        <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-current opacity-75" />
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            enabled ? "bg-amber-200" : "bg-current"
-          }`}
-        />
-      </span>
-      <span
-        id={tooltipId}
-        role="tooltip"
-        className="pointer-events-none absolute right-0 bottom-full z-[130] mb-2 hidden w-64 rounded-[8px] border border-white/10 bg-slate-950 px-3 py-2 text-left text-[11px] leading-snug font-medium text-slate-100 shadow-xl shadow-black/40 group-hover:block group-focus-visible:block"
-      >
-        {tooltip}
-      </span>
-    </button>
   );
 }
 
@@ -923,6 +839,7 @@ function OpponentTab({
         title={titleTooltip}
         data-player-hud={String(playerId)}
         data-arena-opponent-marker
+        data-player-life-shape="pill"
         data-phased-out={isPhasedOut ? "true" : undefined}
         onMouseEnter={hoverEnabled ? openPopover : undefined}
         onMouseLeave={hoverEnabled ? scheduleClosePopover : undefined}
@@ -932,9 +849,14 @@ function OpponentTab({
           commitReady ? "cursor-pointer" : ""
         } ${isEliminated || isPhasedOut ? "opacity-40 grayscale" : ""}`}
       >
+        <NextUpBadge
+          playerId={playerId}
+          compact
+          className="absolute -left-1 -top-1 z-50"
+        />
         <span
           data-arena-opponent-portrait
-          className={`relative flex rounded-full border p-0.5 transition-[border-color,background-color,box-shadow,transform] duration-150 group-hover:-translate-y-0.5 ${borderClass}`}
+          className={`arena-opponent-seat-portrait relative flex border transition-[border-color,background-color,box-shadow,transform] duration-150 group-hover:-translate-y-0.5 ${borderClass}`}
         >
           {isUnderAttack && (
             <>
@@ -951,18 +873,11 @@ function OpponentTab({
             compact
             seatMarker
           />
-          <NextUpBadge
-            playerId={playerId}
-            compact
-            className="absolute -left-1 -top-1 z-20"
+          <span
+            aria-hidden
+            data-arena-opponent-fill-shade
+            className="absolute inset-0 z-10 bg-black/30"
           />
-          <span className="absolute -bottom-0.5 -left-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full border border-stone-300/25 bg-stone-950/92 px-1 text-[8px] font-bold tabular-nums text-stone-100 shadow-md">
-            <span aria-hidden>▰</span>
-            <span className="ml-0.5">{handCount}</span>
-            <span className="sr-only">
-              {t("opponentHud.statHand")} {handCount}
-            </span>
-          </span>
           {waitingReasonText ? (
             <PriorityMarker
               active
@@ -1043,32 +958,29 @@ function OpponentTab({
             </span>
           )}
           <span
-            data-arena-opponent-life
-            className={`arena-opponent-seat-life absolute bottom-[8%] left-1/2 z-30 flex min-w-9 -translate-x-1/2 items-center justify-center gap-0.5 rounded-full border px-1.5 py-0.5 font-black leading-none tabular-nums shadow-[0_5px_12px_rgba(0,0,0,0.55)] ${
-              isTheirTurn
-                ? "border-rose-300/60 bg-rose-950/95 text-rose-100"
-                : isFocused
-                  ? "border-amber-300/50 bg-stone-950/95 text-amber-100"
-                  : "border-stone-400/35 bg-stone-950/95 text-stone-100"
-            }`}
+            data-arena-opponent-copy
+            className="absolute inset-0 z-30 flex flex-col items-center justify-center"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden
-              className="h-2.5 w-2.5 text-rose-400"
+            <span
+              data-arena-opponent-life
+              className={`arena-opponent-seat-life font-black leading-[0.9] tabular-nums [text-shadow:0_1px_2px_rgba(0,0,0,0.98),0_0_8px_rgba(0,0,0,0.72)] ${
+                isTheirTurn
+                  ? "text-rose-100"
+                  : isFocused
+                    ? "text-amber-100"
+                    : "text-stone-100"
+              }`}
             >
-              <path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" />
-            </svg>
-            {player.life}
+              {player.life}
+            </span>
+            <span
+              data-arena-opponent-name
+              className="arena-opponent-seat-name block w-[76%] truncate font-bold leading-none uppercase tracking-[0.04em] [text-shadow:0_1px_3px_rgba(0,0,0,1)]"
+              style={{ color: seatColor }}
+            >
+              {label}
+            </span>
           </span>
-        </span>
-
-        <span
-          className="arena-opponent-seat-name relative z-20 -mt-1 block w-full truncate rounded-full border border-stone-400/20 bg-stone-950/88 px-1 py-0.5 font-bold uppercase tracking-[0.08em] shadow-[0_4px_10px_rgba(0,0,0,0.38)] backdrop-blur-sm"
-          style={{ color: seatColor }}
-        >
-          {label}
         </span>
 
         <span className="arena-opponent-seat-statuses mt-0.5 flex flex-wrap items-center justify-center gap-0.5">
@@ -1351,14 +1263,16 @@ function OpponentAvatar({
   // Compact-density mode pins it to a small fixed tile so the whole rail stays
   // a single thin row regardless of tab width.
   const tileClassName = seatMarker
-    ? "arena-opponent-avatar arena-opponent-seat-avatar relative shrink-0 overflow-hidden rounded-full border border-white/15 bg-slate-950 shadow-[0_8px_18px_rgba(0,0,0,0.38)]"
+    ? "arena-opponent-avatar arena-opponent-seat-avatar shrink-0 overflow-hidden bg-slate-950"
     : compact
     ? "arena-opponent-avatar relative h-6 w-6 shrink-0 overflow-hidden rounded-[4px] border border-white/15 bg-slate-950 shadow-[0_8px_18px_rgba(0,0,0,0.32)]"
     : "arena-opponent-avatar relative h-8 w-7 shrink-0 overflow-hidden rounded-[4px] border border-white/15 bg-slate-950 shadow-[0_8px_18px_rgba(0,0,0,0.32)] @min-[11rem]:h-10 @min-[11rem]:w-9";
-  const tileStyle: CSSProperties = {
-    borderColor: `${seatColor}cc`,
-    boxShadow: `0 0 0 1px ${seatColor}55, 0 8px 18px rgba(0,0,0,0.32), 0 0 14px ${seatColor}2e`,
-  };
+  const tileStyle: CSSProperties = seatMarker
+    ? {}
+    : {
+        borderColor: `${seatColor}cc`,
+        boxShadow: `0 0 0 1px ${seatColor}55, 0 8px 18px rgba(0,0,0,0.32), 0 0 14px ${seatColor}2e`,
+      };
 
   if (!avatarUrl) {
     return <div className={tileClassName} style={tileStyle} title={label}>{inner}</div>;

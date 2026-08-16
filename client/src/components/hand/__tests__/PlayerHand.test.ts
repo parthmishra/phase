@@ -17,7 +17,6 @@ import {
   handFanGeometry,
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
-  playerHudBottomForCardTop,
 } from "../handFanPresentation.ts";
 
 describe("player hand fan presentation", () => {
@@ -49,18 +48,9 @@ describe("player hand fan presentation", () => {
     const compactMetrics = handFanVerticalMetrics(true);
     const compactFan = handFanGeometry(8, "--hand-card-w", compactMetrics.arcScale);
 
-    expect(compactMetrics.restingY).toBeCloseTo(43.2);
+    expect(compactMetrics.restingY).toBeCloseTo(37.8);
     expect(compactMetrics.hoverY).toBeCloseTo(34.2);
     expect(compactFan.arc(0)).toBeCloseTo(28.8);
-  });
-
-  it("anchors the player HUD just above the center hand card", () => {
-    expect(playerHudBottomForCardTop(390, 336)).toBe(62);
-    expect(playerHudBottomForCardTop(390, 308)).toBe(90);
-  });
-
-  it("keeps the player HUD offset inside the game stage", () => {
-    expect(playerHudBottomForCardTop(390, 420)).toBe(0);
   });
 });
 

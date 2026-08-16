@@ -6,10 +6,9 @@ const HAND_FAN_WIDTH_BUDGET_VW = 92;
 
 /** Resting cards sit mostly below the viewport edge, matching Arena's shallow
  *  bottom ribbon while leaving the battlefield vertically unobstructed. */
-export const HAND_FAN_RESTING_Y = 48;
+export const HAND_FAN_RESTING_Y = 42;
 export const HAND_FAN_HOVER_Y = 38;
 export const MOBILE_HAND_FAN_LIFT_Y = -28;
-export const PLAYER_HUD_HAND_GAP_PX = 8;
 export const HAND_CARD_HEIGHT_SCALE = 1.4;
 export const OPPONENT_CARD_SCALE = 0.78;
 const COMPACT_HEIGHT_VERTICAL_SCALE = 0.9;
@@ -62,15 +61,4 @@ export function playerHandFanSizingStyle(totalCards: number): CSSProperties {
     "--hand-card-w": `min(calc(var(--card-w) * var(--hand-card-scale)), ${widthCapVw}vw)`,
     "--hand-card-h": `calc(var(--hand-card-w) * ${HAND_CARD_HEIGHT_SCALE})`,
   } as CSSProperties;
-}
-
-/** Position the local HUD immediately above the visible center hand card.
- * Both inputs are viewport coordinates, while the returned value is the
- * stage-relative CSS `bottom` offset used by the screen-space HUD. */
-export function playerHudBottomForCardTop(
-  stageBottom: number,
-  cardTop: number,
-  gap = PLAYER_HUD_HAND_GAP_PX,
-): number {
-  return Math.max(0, stageBottom - cardTop + gap);
 }

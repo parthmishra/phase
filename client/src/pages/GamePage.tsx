@@ -54,7 +54,6 @@ import { BlockerConstraintBadges } from "../components/combat/BlockerConstraintB
 import { ArenaGameBoard } from "../components/arena3d/ArenaGameBoard.tsx";
 import type { ArenaSeatAssignment } from "../components/arena3d/arenaLayout.ts";
 import {
-  ArenaFocusedOpponentCommandZone,
   ArenaHandCommandZone,
 } from "../components/arena3d/ArenaHandCommandZone.tsx";
 import { CardImage } from "../components/card/CardImage.tsx";
@@ -62,8 +61,10 @@ import { GameCardPreview } from "../components/card/GameCardPreview.tsx";
 import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
 import { ActionButton } from "../components/board/ActionButton.tsx";
 import { FullControlToggle } from "../components/controls/FullControlToggle.tsx";
-import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
-import { MobilePhaseChip } from "../components/controls/MobilePhaseChip.tsx";
+import {
+  CombatPhaseIndicator,
+  MajorPhaseStopRail,
+} from "../components/controls/PhaseStopBar.tsx";
 import { MayTriggerAutoChoiceList } from "../components/board/MayTriggerAutoChoiceList.tsx";
 import { PriorityYieldList } from "../components/board/PriorityYieldList.tsx";
 import { PlayerHand } from "../components/hand/PlayerHand.tsx";
@@ -1380,18 +1381,6 @@ function GamePageContent({
           onViewZone={handleViewZone}
         />
 
-        {/* The opponent's concealed hand now belongs to the Three.js seat.
-            Keep only the focused command-zone interaction in screen space. */}
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-20 min-w-0 overflow-visible"
-          data-flex-zone="opp-row"
-          data-arena-opponent-dock
-        >
-          <div className="pointer-events-auto absolute right-[max(0.5rem,env(safe-area-inset-right))] top-[max(0.25rem,env(safe-area-inset-top))]">
-            <ArenaFocusedOpponentCommandZone />
-          </div>
-        </div>
-
         {/* The near-edge hand floats over the table apron. It has a responsive
             interaction band rather than a fixed page row, so battlefield space
             remains useful on phones and tablets. */}
@@ -1417,7 +1406,6 @@ function GamePageContent({
               <PlayerHand />
             </div>
             <div className="pointer-events-auto flex min-w-0 items-end justify-start gap-2 pb-3 pl-4">
-              <MobilePhaseChip className="lg:hidden" />
               <div className="mb-20 hidden lg:block">
                 <CombatPhaseIndicator />
               </div>
@@ -1432,15 +1420,15 @@ function GamePageContent({
         flexZone="actionRail"
         scaleKey="actionRail"
         resizeCorner="bl"
-        className="arena-command-shelf fixed z-30 flex flex-col items-end gap-1.5 border p-2 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
+        className="arena-command-shelf fixed z-30 flex flex-col items-end gap-1.5 p-0 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
         style={{
           bottom:
             "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + 0.4rem)",
-          right: "calc(env(safe-area-inset-right) + var(--game-edge-right) + var(--game-right-rail-offset, 0px))",
+          right:
+            "calc(var(--game-control-lower-inline) + var(--game-right-rail-offset, 0px))",
           // Anchor box-scale to the docked corner so it grows inward, not off-screen.
           transformOrigin: "bottom right",
         }}
-        data-arena-command-shelf
       >
         {!isSpectatorMode && (
           <div
@@ -1472,7 +1460,10 @@ function GamePageContent({
                 <MayTriggerAutoChoiceList />
                 <FullControlToggle />
               </div>
-              <ActionButton />
+              <div className="flex flex-col items-end gap-1" data-touch-action-cluster="">
+                <ActionButton />
+                <MajorPhaseStopRail />
+              </div>
             </>
           )}
         </div>

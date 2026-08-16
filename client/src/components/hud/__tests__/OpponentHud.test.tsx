@@ -99,7 +99,17 @@ describe("OpponentHud", () => {
     expect(screen.getByTitle("This player's turn is next.")).toHaveTextContent("Next Up");
   });
 
-  it("renders compact portrait-and-life markers at Arena opponent seats", () => {
+  it("renders portrait-filled life pills at Arena opponent seats", () => {
+    useGameStore.setState({
+      gameState: createGameState({
+        derived: {
+          turn_order: [
+            { player: 2, slot_index: 1, turns_from_now: 1, turn_number: 2 },
+          ],
+        },
+      }),
+    });
+
     render(
       <OpponentHud
         arenaSeats={[
@@ -136,14 +146,47 @@ describe("OpponentHud", () => {
       const life = playerMarker?.querySelector<HTMLElement>(
         "[data-arena-opponent-life]",
       );
+      const name = playerMarker?.querySelector<HTMLElement>(
+        "[data-arena-opponent-name]",
+      );
+      const copy = playerMarker?.querySelector<HTMLElement>(
+        "[data-arena-opponent-copy]",
+      );
+      const shade = playerMarker?.querySelector<HTMLElement>(
+        "[data-arena-opponent-fill-shade]",
+      );
       expect(playerMarker).not.toBeNull();
+      expect(playerMarker).toHaveAttribute("data-player-life-shape", "pill");
       expect(life).toHaveTextContent("40");
       expect(portrait).toContainElement(life ?? null);
+      expect(portrait).toContainElement(name ?? null);
+      expect(copy).toContainElement(life ?? null);
+      expect(copy).toContainElement(name ?? null);
+      expect(portrait).toContainElement(shade ?? null);
+      expect(shade).toHaveClass("bg-black/30");
+      expect(
+        playerMarker?.querySelector("[data-arena-opponent-hand-count]"),
+      ).toBeNull();
+      expect(name).toHaveTextContent(`Opp ${playerId + 1}`);
+      expect(copy).toHaveClass("flex-col");
+      expect(name).not.toHaveClass("rounded-full");
+      expect(name).not.toHaveClass("bg-black/55");
+      expect(portrait).toHaveClass("arena-opponent-seat-portrait");
       expect(
         playerMarker?.querySelector(".arena-opponent-avatar"),
-      ).toHaveClass("arena-opponent-seat-avatar", "rounded-full");
+      ).toHaveClass("arena-opponent-seat-avatar");
+      expect(life?.querySelector("svg")).toBeNull();
       expect(playerMarker).toHaveClass("arena-opponent-seat-marker");
     }
+
+    const nextUpBadge = screen.getByTitle("This player's turn is next.");
+    const nextUpMarker = document.querySelector('[data-player-hud="2"]');
+    const nextUpPortrait = nextUpMarker?.querySelector(
+      "[data-arena-opponent-portrait]",
+    );
+    expect(nextUpMarker).toContainElement(nextUpBadge);
+    expect(nextUpPortrait).not.toContainElement(nextUpBadge);
+    expect(nextUpBadge).toHaveClass("absolute", "-top-1", "z-50");
   });
 
   it("keeps Arena seat markers wired to opponent focus", () => {
@@ -180,9 +223,8 @@ describe("OpponentHud", () => {
   });
 
   it("auto-selects the active opponent when Follow is enabled", async () => {
+    usePreferencesStore.setState({ followActiveOpponent: true });
     render(<OpponentHud />);
-
-    fireEvent.click(screen.getByRole("button", { name: /follow active opponent/i }));
 
     await waitFor(() => {
       expect(useUiStore.getState().focusedOpponent).toBe(2);
@@ -255,7 +297,7 @@ describe("OpponentHud", () => {
     });
   });
 
-  it("keeps the Follow toggle usable after selecting the last opponent", async () => {
+  it("keeps the persistent Follow preference out of the opponent HUD", async () => {
     usePreferencesStore.setState({ followActiveOpponent: true });
     render(<OpponentHud />);
 
@@ -269,9 +311,9 @@ describe("OpponentHud", () => {
       expect(usePreferencesStore.getState().followActiveOpponent).toBe(false);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /follow active opponent/i }));
-
-    expect(usePreferencesStore.getState().followActiveOpponent).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: /follow active opponent/i }),
+    ).toBeNull();
   });
 
   it("keeps Follow enabled when selecting the active opponent", async () => {

@@ -119,6 +119,49 @@ describe("ActionButton", () => {
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
   });
 
+  it("renders Pass as an accessible fast-forward icon in the compact action layout", () => {
+    const waitingFor = priorityPrompt();
+    useGameStore.setState({
+      gameState: {
+        ...createGameState(waitingFor),
+        active_player: 0,
+        phase: "PreCombatMain",
+        stack: [],
+        auto_pass: {},
+      },
+      waitingFor,
+      legalActions: [],
+    });
+    useMultiplayerStore.setState({ activePlayerId: 0, actionPending: false });
+
+    const { container } = render(<ActionButton />);
+
+    const panel = container.querySelector("[data-action-button-panel]");
+    const pass = screen.getByRole("button", { name: "Pass" });
+    const nextPhase = screen.getByRole("button", { name: "To Begin Combat" });
+    expect(panel).toHaveAttribute("data-compact-pass-layout", "true");
+    expect(pass).toHaveAttribute("data-pass-action");
+    expect(pass).toHaveAttribute("aria-describedby");
+    const passIcon = pass.querySelector("[data-pass-fast-forward-icon]");
+    expect(passIcon).toBeInTheDocument();
+    expect(passIcon).toHaveAttribute("viewBox", "0 0 24 24");
+    expect(passIcon).toHaveClass("block", "h-5", "w-5");
+    expect(pass.querySelector(".sr-only")).toHaveTextContent("Pass");
+    expect(nextPhase).toHaveAttribute("data-next-phase-action");
+    expect(nextPhase.querySelector("[data-advance-label-full]")).toHaveTextContent(
+      "To Begin Combat",
+    );
+    expect(nextPhase.querySelector("[data-advance-label-compact]")).toHaveTextContent(
+      "To Combat",
+    );
+
+    fireEvent.click(pass);
+    expect(vi.mocked(dispatchAction)).toHaveBeenCalledWith({
+      type: "SetAutoPass",
+      data: { mode: { type: "UntilTurnBoundary", until: "EndOfCurrentTurn" } },
+    });
+  });
+
   it("disables resolve controls while Resolve All is draining", () => {
     useGameStore.setState({
       gameMode: "online",

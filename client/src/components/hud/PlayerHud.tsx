@@ -6,20 +6,28 @@ import { usePlayerDesignations } from "../../hooks/usePlayerDesignations.ts";
 import { useSeatColor } from "../../hooks/useSeatColor.ts";
 import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
 import { useIsMobile } from "../../hooks/useIsMobile.ts";
+import { useMediaQuery } from "../../hooks/useMediaQuery.ts";
 import { useTurnStatus } from "../../hooks/useTurnStatus.ts";
-import { useGameStore } from "../../stores/gameStore.ts";
+import { isAuthorityRemote, useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerDisplayName, useMultiplayerStore } from "../../stores/multiplayerStore.ts";
 import { ScoreBadge } from "../draft/ScoreBadge.tsx";
 import { ManualManaToggle } from "../board/ManualManaToggle.tsx";
 import { UndoButton } from "../board/UndoButton.tsx";
+import { FullControlToggle } from "../controls/FullControlToggle.tsx";
 import { LifeTotal } from "../controls/LifeTotal.tsx";
 import { ManaPoolSummary } from "./ManaPoolSummary.tsx";
-import { PhaseIndicatorLeft, PhaseIndicatorRight } from "../controls/PhaseStopBar.tsx";
+import {
+  PhaseIndicatorLeft,
+  PhaseIndicatorRight,
+} from "../controls/PhaseStopBar.tsx";
 import { CityBlessingBadge, ConditionBadge, CounterBadge, DungeonBadge, familyOf, InitiativeBadge, MonarchBadge, PendingSpellBadge, RingBenefitsBadge, StatusBadge, UnboundedBadge } from "./HudBadges.tsx";
 import { EnchantmentsBadge } from "./EnchantmentsBadge.tsx";
 import { HudPlate } from "./HudPlate.tsx";
 import { NextUpBadge } from "./NextUpBadge.tsx";
 import { PriorityMarker } from "./TurnStatusLine.tsx";
+
+export const TOUCH_TABLET_PLAYER_HUD_QUERY =
+  "(pointer: coarse) and (max-width: 1400px)";
 
 export function PlayerHud() {
   const { t } = useTranslation("game");
@@ -42,9 +50,14 @@ export function PlayerHud() {
   const showMatchScore = useGameStore((s) => s.gameState?.match_config?.match_type === "Bo3");
   const waitingFor = useGameStore((s) => s.waitingFor);
   const dispatch = useGameStore((s) => s.dispatch);
+  const canUndo = useGameStore(
+    (s) => s.stateHistory.length > 0 && !isAuthorityRemote(s.gameMode),
+  );
   const isMobile = useIsMobile();
+  const isTouchTablet = useMediaQuery(TOUCH_TABLET_PLAYER_HUD_QUERY);
+  const usesEdgePill = isMobile || isTouchTablet;
   const isCompactHeight = useIsCompactHeight();
-  const compact = isMobile || isCompactHeight;
+  const compact = usesEdgePill || isCompactHeight;
   const { waitingSeatId, reason } = useTurnStatus();
 
   const isHumanTargetSelection =
@@ -88,12 +101,15 @@ export function PlayerHud() {
   return (
     <div
       data-player-hud={playerId}
+      data-local-player-hud=""
+      data-edge-pill-layout={usesEdgePill ? "true" : undefined}
+      data-player-life-shape={usesEdgePill ? "pill" : undefined}
       data-phased-out={isPhasedOut ? "true" : undefined}
-      className={`relative z-20 flex shrink-0 flex-row flex-nowrap items-center justify-center ${compact ? "gap-1 px-0.5 py-0.5" : "gap-1.5 px-1 py-1 lg:gap-2 lg:px-2"} ${
+      className={`relative z-20 flex shrink-0 flex-row flex-nowrap items-center justify-center ${usesEdgePill ? "gap-0 p-0" : compact ? "gap-1 px-0.5 py-0.5" : "gap-1.5 px-1 py-1 lg:gap-2 lg:px-2"} ${
         isPhasedOut ? "opacity-40 grayscale" : ""
       }`}
     >
-      <PhaseIndicatorLeft />
+      {!usesEdgePill ? <PhaseIndicatorLeft /> : null}
       <HudPlate
         label={getPlayerDisplayName(playerId, playerId)}
         tone={hudTone}
@@ -104,7 +120,7 @@ export function PlayerHud() {
         playerId={playerId}
         density={compact ? "compact" : "default"}
         onClick={isValidTarget ? handleTargetClick : undefined}
-        cornerBadge={
+        cornerBadge={usesEdgePill ? undefined : (
           <div className="flex items-center gap-1">
             <NextUpBadge playerId={playerId} compact={compact} />
             <PriorityMarker
@@ -114,8 +130,8 @@ export function PlayerHud() {
               title={priorityTitle}
             />
           </div>
-        }
-        trailing={
+        )}
+        trailing={usesEdgePill ? undefined : (
           <>
             <EnchantmentsBadge playerId={playerId} />
             {showMatchScore && matchScore ? <ScoreBadge score={matchScore} player={0} /> : null}
@@ -156,24 +172,49 @@ export function PlayerHud() {
               ),
             )}
           </>
-        }
+        )}
       >
         <div className={`flex min-w-0 items-center ${compact ? "gap-1" : "gap-2"}`}>
-          <LifeTotal playerId={playerId} size={compact ? "sm" : "lg"} hideLabel />
-          <ManaPoolSummary playerId={playerId} size={compact ? "sm" : "default"} />
+          <LifeTotal
+            playerId={playerId}
+            size={usesEdgePill ? "lg" : compact ? "sm" : "lg"}
+            hideLabel
+          />
+          {!usesEdgePill ? (
+            <ManaPoolSummary playerId={playerId} size={compact ? "sm" : "default"} />
+          ) : null}
         </div>
       </HudPlate>
-      <PhaseIndicatorRight />
-      {/* Manual mana + undo ride the HUD (drag offsets and the mobile portrait
-          shift included) instead of overlaying the land column, where they
-          collided with land stacks and the zone piles. Absolutely positioned
-          off the right edge so the plate keeps its centered anchor. The
-          pointer-events split keeps the column's empty bounding-box regions
-          (chip gap, short-chip gutter) tappable through to fanned hand cards. */}
-      <div className="pointer-events-none absolute left-full top-1/2 z-20 ml-1 flex -translate-y-1/2 flex-col items-start gap-1 [&>*]:pointer-events-auto">
-        <ManualManaToggle />
-        <UndoButton />
-      </div>
+      {!usesEdgePill ? <PhaseIndicatorRight /> : null}
+      {usesEdgePill ? (
+        <>
+          <div
+            className="pointer-events-auto fixed z-20 flex flex-col gap-2"
+            data-player-hud-corner-controls=""
+          >
+            <FullControlToggle iconOnly />
+            <ManualManaToggle iconOnly />
+          </div>
+          {canUndo ? (
+            <div
+              className="pointer-events-auto fixed z-40"
+              data-player-hud-undo-control=""
+            >
+              <UndoButton iconOnly />
+            </div>
+          ) : null}
+        </>
+      ) : (
+        /* Manual mana + undo ride the HUD instead of overlaying the land
+           column, where they collide with land stacks and zone piles. */
+        <div
+          className="pointer-events-none absolute left-full top-1/2 z-20 ml-1 flex -translate-y-1/2 flex-col items-start gap-1 [&>*]:pointer-events-auto"
+          data-player-hud-utility-layout="column"
+        >
+          <ManualManaToggle />
+          <UndoButton />
+        </div>
+      )}
     </div>
   );
 }

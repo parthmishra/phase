@@ -117,7 +117,6 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
       >
         <div className="contents pointer-events-auto">{props.playerHud}</div>
       </div>
-
       <div className="absolute inset-0 overflow-hidden">
         <Canvas
           shadows

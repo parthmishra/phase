@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARENA_CARD_DEPTH,
+  ARENA_MAX_VISIBLE_HELD_CARDS,
   ARENA_TAPPED_CARD_FOOTPRINT,
   ARENA_CARD_WIDTH,
   arenaHeldCardFan,
+  arenaHeldCommanderRow,
   arenaHeldHandLayout,
+  arenaVisibleHeldCardCount,
   arenaLaneZoneLayouts,
   arenaZoneLayout,
   assignArenaOpponentSeats,
@@ -97,6 +100,26 @@ describe("arenaHeldCardFan", () => {
     expect(fan[0].rotationZ).toBeGreaterThan(0);
     expect(fan[fan.length - 1].rotationZ).toBeLessThan(0);
     expect(fan.every((card) => card.scale === 0.68)).toBe(true);
+  });
+
+  it("caps the rendered opponent fan at the seven-card presentation capacity", () => {
+    expect(ARENA_MAX_VISIBLE_HELD_CARDS).toBe(7);
+    expect(arenaVisibleHeldCardCount(5)).toBe(5);
+    expect(arenaVisibleHeldCardCount(7)).toBe(7);
+    expect(arenaVisibleHeldCardCount(12)).toBe(7);
+  });
+});
+
+describe("arenaHeldCommanderRow", () => {
+  it("continues the hand plane immediately after the visible fan", () => {
+    const hand = arenaHeldCardFan(7);
+    const commanders = arenaHeldCommanderRow(7, 2);
+
+    expect(commanders).toHaveLength(2);
+    expect(commanders[0].x).toBeGreaterThan(hand[hand.length - 1].x);
+    expect(commanders[1].x).toBeGreaterThan(commanders[0].x);
+    expect(commanders.every((card) => card.rotationZ === 0)).toBe(true);
+    expect(commanders.every((card) => card.scale === 0.84)).toBe(true);
   });
 });
 

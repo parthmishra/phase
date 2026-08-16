@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useGameStore } from "../../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../../stores/preferencesStore.ts";
 import { buildGameState } from "../../../test/factories/gameStateFactory.ts";
-import { CombatPhaseIndicator, PhaseIndicatorLeft } from "../PhaseStopBar.tsx";
+import {
+  CombatPhaseIndicator,
+  MajorPhaseStopRail,
+  PhaseIndicatorLeft,
+} from "../PhaseStopBar.tsx";
 
 describe("PhaseStopBar", () => {
   beforeEach(() => {
@@ -89,5 +93,19 @@ describe("PhaseStopBar", () => {
         name: /Phase stop: Declare attackers step\. The attacking player chooses attackers\./,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("renders only major phases in the compact rail with a lightweight active state", () => {
+    const { container } = render(<MajorPhaseStopRail />);
+
+    const rail = container.querySelector('[data-major-phase-stop-rail]');
+    expect(rail?.querySelectorAll("[data-phase-stop-dot]")).toHaveLength(5);
+    expect(rail?.querySelector('[data-phase-stop-dot="Draw"]')).not.toBeInTheDocument();
+    expect(rail?.querySelector('[data-phase-stop-dot="DeclareAttackers"]')).not.toBeInTheDocument();
+
+    const activePhase = rail?.querySelector('[data-active-phase="true"]');
+    expect(activePhase).toHaveAttribute("data-phase-stop-dot", "PreCombatMain");
+    expect(activePhase).toHaveClass("bg-transparent", "text-cyan-200");
+    expect(activePhase).not.toHaveClass("bg-cyan-950/82");
   });
 });

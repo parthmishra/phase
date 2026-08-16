@@ -99,6 +99,14 @@ const COMBAT_PHASES: Phase[] = [
   "EndCombat",
 ];
 
+const MAJOR_PHASES: Phase[] = [
+  "Upkeep",
+  "PreCombatMain",
+  "BeginCombat",
+  "PostCombatMain",
+  "End",
+];
+
 // i18n key suffix per phase, used to look up the localized label/description
 // from the `phaseStop` group in game.json (e.g. `phaseStop.untapLabel`).
 export const PHASE_KEY: Record<Phase, string> = {
@@ -206,17 +214,16 @@ function PhaseDot({ phase }: { phase: Phase }) {
       aria-label={tooltip}
       aria-describedby={tooltipId}
       aria-pressed={hasStop}
+      data-phase-stop-dot={phase}
+      data-active-phase={isActive ? "true" : undefined}
       className={`group relative flex h-6 w-6 items-center justify-center rounded-[7px] border transition-colors duration-150 lg:h-8 lg:w-8 lg:p-1 ${
         isActive
-          ? "border-cyan-300/45 bg-cyan-950/82 text-white"
+          ? "border-transparent bg-transparent text-cyan-200 drop-shadow-[0_0_6px_rgba(103,232,249,0.85)]"
           : hasStop
             ? "border-white/12 bg-white/8 text-slate-200 hover:border-white/20 hover:text-white"
             : "border-transparent bg-transparent text-slate-500 hover:border-white/10 hover:bg-white/5 hover:text-slate-200"
       }`}
     >
-      {isActive && (
-        <span className="absolute -top-1 left-1/2 h-1 w-3 -translate-x-1/2 rounded-[2px] bg-amber-300" />
-      )}
       {PHASE_ICONS[phase]}
       {stop && (
         <span
@@ -227,6 +234,22 @@ function PhaseDot({ phase }: { phase: Phase }) {
         {tooltip}
       </GameplayTooltip>
     </button>
+  );
+}
+
+/** Compact major-phase stop rail for touch layouts. GamePage docks it with the
+ *  transient action buttons so the life orb can remain independently centered
+ *  above the hand fan. */
+export function MajorPhaseStopRail() {
+  return (
+    <div
+      className="arena-liquid-glass-rail hidden items-center"
+      data-major-phase-stop-rail=""
+    >
+      {MAJOR_PHASES.map((phase) => (
+        <PhaseDot key={phase} phase={phase} />
+      ))}
+    </div>
   );
 }
 

@@ -17,6 +17,33 @@ export const ARENA_TAPPED_CARD_FOOTPRINT =
   )
   / Math.SQRT2;
 
+/** Keep the world-space opponent fan readable at the normal seven-card baseline. */
+export const ARENA_MAX_VISIBLE_HELD_CARDS = 7;
+
+export function arenaVisibleHeldCardCount(totalCount: number): number {
+  return Math.min(Math.max(totalCount, 0), ARENA_MAX_VISIBLE_HELD_CARDS);
+}
+
+/** Places public command-zone cards immediately after a concealed hand fan. */
+export function arenaHeldCommanderRow(
+  visibleHandCount: number,
+  commanderCount: number,
+): ArenaHeldCardTransform[] {
+  if (commanderCount <= 0) return [];
+  const handFan = arenaHeldCardFan(visibleHandCount);
+  const handRightEdge = handFan[handFan.length - 1]?.x ?? 0;
+  const startX = handRightEdge + ARENA_CARD_WIDTH * 0.92;
+  const step = ARENA_CARD_WIDTH * 0.78;
+
+  return Array.from({ length: commanderCount }, (_, index) => ({
+    x: startX + index * step,
+    y: 0.04,
+    z: 0.22 + index * 0.012,
+    rotationZ: 0,
+    scale: 0.84,
+  }));
+}
+
 export interface ArenaSeatAssignment {
   playerId: PlayerId;
   seat: Exclude<ArenaSeat, "local">;

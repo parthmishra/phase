@@ -1,13 +1,23 @@
 const RUNTIME_VERSION_PATTERN = /^[0-9a-f]{16}$/;
+const CORS_HEADERS = {
+  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Max-Age": "86400",
+};
 
 export async function proxyCompressedRuntimeAsset(
   context,
   { assetPath, r2ObjectForVersion, contentType },
 ) {
+  if (context.request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   if (context.request.method !== "GET" && context.request.method !== "HEAD") {
     return new Response("Method not allowed", {
       status: 405,
-      headers: { Allow: "GET, HEAD" },
+      headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" },
     });
   }
 
@@ -23,16 +33,25 @@ export async function proxyCompressedRuntimeAsset(
   if (body === null && context.env.RUNTIME_BUCKET !== undefined) {
     const version = new URL(context.request.url).searchParams.get("v");
     if (version === null || !RUNTIME_VERSION_PATTERN.test(version)) {
-      return new Response("Invalid runtime version", { status: 400 });
+      return new Response("Invalid runtime version", {
+        status: 400,
+        headers: CORS_HEADERS,
+      });
     }
     const object = await context.env.RUNTIME_BUCKET.get(r2ObjectForVersion(version));
     if (object === null) {
-      return new Response("Runtime asset unavailable", { status: 502 });
+      return new Response("Runtime asset unavailable", {
+        status: 502,
+        headers: CORS_HEADERS,
+      });
     }
     body = object.body;
   }
   if (body === null) {
-    return new Response("Runtime asset unavailable", { status: 502 });
+    return new Response("Runtime asset unavailable", {
+      status: 502,
+      headers: CORS_HEADERS,
+    });
   }
 
   return new Response(body, {
@@ -41,6 +60,7 @@ export async function proxyCompressedRuntimeAsset(
     // untouched, which makes browsers parse Brotli data as JSON/WASM.
     encodeBody: "manual",
     headers: {
+      ...CORS_HEADERS,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Content-Encoding": "br",
       "Content-Type": contentType,
