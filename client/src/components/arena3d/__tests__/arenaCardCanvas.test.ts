@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   arenaFrameLetter,
+  drawArenaStatText,
+  fitArenaStatFontSize,
+  fitArenaCardTitle,
   tokenizeArenaRulesParagraph,
 } from "../arenaCardCanvas.ts";
 
@@ -27,6 +30,133 @@ describe("arenaFrameLetter", () => {
         typeLine: "Legendary Creature",
       }),
     ).toBe("M");
+  });
+});
+
+describe("fitArenaCardTitle", () => {
+  const measure = (text: string, fontSize: number) =>
+    Array.from(text).length * fontSize;
+
+  it("uses the largest title size that fits without horizontal compression", () => {
+    expect(fitArenaCardTitle("Sol Ring", 480, measure)).toEqual({
+      fontSize: 58,
+      text: "Sol Ring",
+    });
+  });
+
+  it("ellipsizes names that do not fit at the minimum title size", () => {
+    const layout = fitArenaCardTitle(
+      "A Very Long Legendary Permanent Name",
+      460,
+      measure,
+    );
+
+    expect(layout.fontSize).toBe(46);
+    expect(layout.text.endsWith("…")).toBe(true);
+    expect(measure(layout.text, layout.fontSize)).toBeLessThanOrEqual(460);
+  });
+});
+
+describe("drawArenaStatText", () => {
+  it("uses a rounded high-contrast field and light serif numerals", () => {
+    const calls: string[] = [];
+    const textPositions: Array<[number, number]> = [];
+    const context = {
+      beginPath: () => calls.push("beginPath"),
+      fill: () => calls.push("fill"),
+      fillText: (text: string, x: number, y: number) => {
+        calls.push(`fillText:${text}`);
+        textPositions.push([x, y]);
+      },
+      measureText: () => ({
+        actualBoundingBoxAscent: 48,
+        actualBoundingBoxDescent: 12,
+        width: 100,
+      }),
+      restore: () => calls.push("restore"),
+      roundRect: () => calls.push("roundRect"),
+      save: () => calls.push("save"),
+      stroke: () => calls.push("stroke"),
+      fillStyle: "",
+      font: "",
+      lineJoin: "miter",
+      lineWidth: 1,
+      strokeStyle: "",
+      textAlign: "left",
+      textBaseline: "alphabetic",
+    } as unknown as CanvasRenderingContext2D;
+
+    drawArenaStatText(context, "12/12");
+
+    expect(calls[0]).toBe("save");
+    expect(calls.filter((call) => call === "beginPath")).toHaveLength(2);
+    expect(calls.filter((call) => call === "roundRect")).toHaveLength(2);
+    expect(calls.filter((call) => call === "fill")).toHaveLength(2);
+    expect(calls.filter((call) => call === "stroke")).toHaveLength(2);
+    expect(calls).toContain("fillText:12/12");
+    expect(calls[calls.length - 1]).toBe("restore");
+    const fontSize = Number(context.font.match(/400 ([\d.]+)px/)?.[1]);
+    expect(fontSize).toBeCloseTo(52.68, 1);
+    expect(textPositions[0]?.[0]).toBeCloseTo(0.861 * 1005);
+    expect(textPositions[0]?.[1]).toBeCloseTo(0.924 * 1407 + 18);
+  });
+
+  it("uses the preview badge asset as the background when available", () => {
+    const calls: string[] = [];
+    const context = {
+      beginPath: () => calls.push("beginPath"),
+      clip: () => calls.push("clip"),
+      drawImage: () => calls.push("drawImage"),
+      fillRect: () => calls.push("fillRect"),
+      fillText: () => calls.push("fillText"),
+      measureText: () => ({
+        actualBoundingBoxAscent: 48,
+        actualBoundingBoxDescent: 12,
+        width: 80,
+      }),
+      restore: () => calls.push("restore"),
+      roundRect: () => calls.push("roundRect"),
+      save: () => calls.push("save"),
+      fillStyle: "",
+      font: "",
+      textAlign: "left",
+      textBaseline: "alphabetic",
+    } as unknown as CanvasRenderingContext2D;
+
+    drawArenaStatText(context, "2/2", {} as CanvasImageSource);
+
+    expect(calls).toEqual([
+      "save",
+      "save",
+      "beginPath",
+      "roundRect",
+      "clip",
+      "fillRect",
+      "drawImage",
+      "restore",
+      "fillText",
+      "restore",
+    ]);
+  });
+});
+
+describe("fitArenaStatFontSize", () => {
+  it("keeps short values comfortably inside the inner field", () => {
+    expect(
+      fitArenaStatFontSize("2/2", 322, 176, () => 130),
+    ).toBeCloseTo(91.52);
+  });
+
+  it("scales wide values down to the inner-field width", () => {
+    const fontSize = fitArenaStatFontSize(
+      "123/123",
+      322,
+      176,
+      () => 300,
+    );
+
+    expect(fontSize).toBeCloseTo(62.87, 1);
+    expect((300 * fontSize) / (176 * 0.52)).toBeCloseTo(322 * 0.64);
   });
 });
 

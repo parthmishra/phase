@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
+import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
+
+import { configureArenaReadableTexture } from "./arenaTexture.ts";
+import { PHYSICAL_CARD_CORNER_RADIUS_RATIO } from "./arenaCardFrame.ts";
 
 /**
  * Loads a CORS-clean card image into a rounded CanvasTexture. Clipping at the
@@ -7,6 +11,9 @@ import * as THREE from "three";
  * backs and keeps every 3D card surface on the same silhouette.
  */
 export function useArenaImageTexture(source: string | null): THREE.Texture | null {
+  const maxAnisotropy = useThree(({ gl }) =>
+    gl.capabilities.getMaxAnisotropy()
+  );
   const [loaded, setLoaded] = useState<{
     source: string;
     texture: THREE.Texture;
@@ -30,20 +37,19 @@ export function useArenaImageTexture(source: string | null): THREE.Texture | nul
         0,
         canvas.width,
         canvas.height,
-        Math.round(canvas.width * 0.045),
+        Math.round(canvas.width * PHYSICAL_CARD_CORNER_RADIUS_RATIO),
       );
       context.clip();
       context.drawImage(image, 0, 0);
       const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = 8;
+      configureArenaReadableTexture(texture, maxAnisotropy);
       setLoaded({ source, texture });
     };
     image.src = source;
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [maxAnisotropy, source]);
 
   useEffect(
     () => () => {

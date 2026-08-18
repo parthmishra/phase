@@ -28,11 +28,25 @@ import {
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
+import {
+  makeRoundedCardBodyGeometry,
+  makeRoundedCardFaceGeometry,
+} from "./arenaCardFrame.ts";
 import { useArenaImageTexture } from "./useArenaImageTexture.ts";
 
 const HELD_CARD_WIDTH = ARENA_CARD_WIDTH * 0.92;
 const HELD_CARD_HEIGHT = ARENA_CARD_DEPTH * 0.92;
 const HELD_CARD_THICKNESS = 0.045;
+const HELD_CARD_BODY_GEOMETRY = makeRoundedCardBodyGeometry(
+  HELD_CARD_WIDTH,
+  HELD_CARD_HEIGHT,
+  HELD_CARD_THICKNESS,
+  { bevelSize: 0.01, bevelThickness: 0.007 },
+);
+const HELD_CARD_FACE_GEOMETRY = makeRoundedCardFaceGeometry(
+  HELD_CARD_WIDTH * 0.97,
+  HELD_CARD_HEIGHT * 0.97,
+);
 
 interface ArenaHeldHandProps {
   playerId: PlayerId;
@@ -244,12 +258,12 @@ function HeldCard({
           : undefined
       }
     >
-      <mesh position={[0, HELD_CARD_HEIGHT / 2, 0]}>
-        <boxGeometry
-          args={[HELD_CARD_WIDTH, HELD_CARD_HEIGHT, HELD_CARD_THICKNESS]}
-        />
+      <mesh
+        geometry={HELD_CARD_BODY_GEOMETRY}
+        position={[0, HELD_CARD_HEIGHT / 2, 0]}
+      >
         <meshStandardMaterial
-          color="#17191d"
+          color="#0b0b0b"
           roughness={0.96}
           metalness={0}
         />
@@ -290,9 +304,9 @@ function HeldFace({
 function HeldCardSurface({ texture }: { texture: THREE.Texture | null }) {
   return (
     <mesh
-      position={[0, HELD_CARD_HEIGHT / 2, HELD_CARD_THICKNESS / 2 + 0.003]}
+      position={[0, HELD_CARD_HEIGHT / 2, 0.003]}
+      geometry={HELD_CARD_FACE_GEOMETRY}
     >
-      <planeGeometry args={[HELD_CARD_WIDTH * 0.97, HELD_CARD_HEIGHT * 0.97]} />
       <meshLambertMaterial
         key={texture?.uuid ?? "held-card-loading"}
         map={texture}

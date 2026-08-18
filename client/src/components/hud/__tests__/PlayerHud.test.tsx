@@ -98,6 +98,9 @@ describe("PlayerHud", () => {
       screen.getByRole("button", { name: "Undo" }),
     );
     expect(plate).toHaveTextContent("20");
+    expect(
+      plate?.querySelector("[data-hud-plate-label-text]"),
+    ).toHaveTextContent("You");
     expect(plate?.querySelector("svg")).toBeNull();
     expect(plate?.querySelector('[data-hud-plate-art] img')).toHaveAttribute(
       "src",

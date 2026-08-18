@@ -72,6 +72,14 @@
     "holdCtrlFront": "Strg halten für Vorderseite",
     "holdCtrlFlip": "Strg halten zum Umdrehen",
     "flip": "Umdrehen",
+    "detailAriaLabel": "Kartendetails: {{name}}",
+    "closeDetails": "Kartendetails schließen",
+    "detailViewOptions": "Kartendetailansicht",
+    "detailView": {
+      "live": "Im Spiel",
+      "original": "Original",
+      "parse": "Analyse"
+    },
     "report": "Problem melden",
     "reported": "Gemeldet ✓",
     "altParsedAbilities": "Alt: eingelesene Fähigkeiten",

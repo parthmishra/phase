@@ -273,16 +273,20 @@
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.24));
 }
 
+[data-opponent-hud-seats],
+[data-local-player-hud][data-edge-pill-layout="true"] {
+  --arena-identity-life-size:
+    clamp(1.125rem, min(3.8dvw, 5dvh), 1.5rem);
+  --arena-identity-name-size:
+    clamp(0.4rem, calc(0.325rem + 0.08vw), 0.5625rem);
+}
+
 [data-opponent-hud-seats] {
   /* Match the local player's portrait-filled pill by default. Full-height
      desktop canvases receive a modestly larger version below. */
   --arena-opponent-pill-width: var(--arena-life-pill-width);
   --arena-opponent-pill-height: var(--arena-life-pill-height);
   --arena-opponent-marker-width: var(--arena-opponent-pill-width);
-  --arena-opponent-life-size:
-    clamp(1.125rem, min(3.8dvw, 5dvh), 1.5rem);
-  --arena-opponent-name-size:
-    clamp(0.4rem, calc(0.325rem + 0.08vw), 0.5625rem);
 }
 
 @media (min-width: 64rem) and (min-height: 42rem) {
@@ -292,9 +296,9 @@
     --arena-opponent-pill-width:
       calc(var(--arena-opponent-pill-height) * 2.0833);
     --arena-opponent-marker-width: var(--arena-opponent-pill-width);
-    --arena-opponent-life-size:
+    --arena-identity-life-size:
       clamp(1.375rem, calc(0.95rem + 0.42vw), 1.75rem);
-    --arena-opponent-name-size:
+    --arena-identity-name-size:
       clamp(0.5rem, calc(0.375rem + 0.12vw), 0.6875rem);
   }
 }
@@ -342,19 +346,23 @@
     --arena-opponent-pill-width: var(--arena-life-pill-width);
     --arena-opponent-pill-height: var(--arena-life-pill-height);
     --arena-opponent-marker-width: var(--arena-opponent-pill-width);
-    --arena-opponent-life-size:
+  }
+
+  [data-opponent-hud-seats],
+  [data-local-player-hud][data-edge-pill-layout="true"] {
+    --arena-identity-life-size:
       clamp(1.125rem, min(3.8dvw, 5dvh), 1.5rem);
-    --arena-opponent-name-size:
+    --arena-identity-name-size:
       clamp(0.4rem, min(1vw, 1.6dvh), 0.5rem);
   }
 }
 
 .arena-opponent-seat-life {
-  font-size: var(--arena-opponent-life-size);
+  font-size: var(--arena-identity-life-size);
 }
 
 .arena-opponent-seat-name {
-  font-size: var(--arena-opponent-name-size);
+  font-size: var(--arena-identity-name-size);
 }
 
 .arena-opponent-seat-statuses {
@@ -985,7 +993,7 @@ select.select-dark option {
     z-index: 1;
     height: 100%;
     flex: 1 1 auto;
-    flex-direction: row;
+    flex-direction: column;
     gap: 0;
     overflow: hidden;
     transform: none;
@@ -993,27 +1001,47 @@ select.select-dark option {
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-label] {
-    position: absolute;
-    width: 1px;
-    height: 1px;
+    position: static;
+    order: 2;
+    width: 76%;
+    height: auto;
     padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
     border: 0;
   }
 
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-label] > [aria-hidden] {
+    display: none;
+  }
+
+  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-label-text] {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    font-size: var(--arena-identity-name-size);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    text-overflow: ellipsis;
+    text-align: center;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 1);
+    white-space: nowrap;
+  }
+
   [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate-primary] {
+    order: 1;
     flex: 0 0 auto;
     gap: 0;
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] [data-life-total-value] {
     padding: 0;
-    font-size: clamp(1.25rem, min(4.5dvw, 6dvh), 1.75rem);
-    line-height: 1;
-    color: rgba(240, 253, 244, 0.96);
+    font-size: var(--arena-identity-life-size);
+    font-weight: 900;
+    line-height: 0.9;
+    color: rgb(245, 245, 244);
     text-shadow:
       0 1px 2px rgba(0, 0, 0, 0.98),
       0 0 8px rgba(0, 0, 0, 0.72);

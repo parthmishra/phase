@@ -72,6 +72,14 @@
     "holdCtrlFront": "Maintenez Ctrl pour la face avant",
     "holdCtrlFlip": "Maintenez Ctrl pour pivoter",
     "flip": "Pivoter",
+    "detailAriaLabel": "Détails de la carte : {{name}}",
+    "closeDetails": "Fermer les détails de la carte",
+    "detailViewOptions": "Affichage des détails de la carte",
+    "detailView": {
+      "live": "En jeu",
+      "original": "Original",
+      "parse": "Analyse"
+    },
     "report": "Signaler un problème",
     "reported": "Signalé ✓",
     "altParsedAbilities": "Alt : capacités analysées",

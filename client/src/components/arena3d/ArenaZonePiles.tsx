@@ -16,7 +16,16 @@ import {
   type ArenaSeat,
   type ArenaTableLayout,
 } from "./arenaLayout.ts";
+import {
+  makeRoundedCardBodyGeometry,
+  makeRoundedCardFaceGeometry,
+} from "./arenaCardFrame.ts";
 import { useArenaImageTexture } from "./useArenaImageTexture.ts";
+
+const ZONE_CARD_FACE_GEOMETRY = makeRoundedCardFaceGeometry(
+  ARENA_CARD_WIDTH,
+  ARENA_CARD_DEPTH,
+);
 
 type ViewableZone = "graveyard" | "exile" | "library";
 type ArenaCardZoneKind = "graveyard" | "library";
@@ -121,8 +130,24 @@ function ArenaCardZone({
     : count > 0
       ? 0.045
       : 0;
+  const bodyGeometry = useMemo(
+    () =>
+      count > 0
+        ? makeRoundedCardBodyGeometry(
+            ARENA_CARD_WIDTH,
+            ARENA_CARD_DEPTH,
+            stackHeight,
+            {
+              bevelSize: 0.01,
+              bevelThickness: Math.min(0.007, stackHeight * 0.12),
+            },
+          )
+        : null,
+    [count, stackHeight],
+  );
 
   useEffect(() => () => emptyTexture.dispose(), [emptyTexture]);
+  useEffect(() => () => bodyGeometry?.dispose(), [bodyGeometry]);
 
   const pointerOver = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -149,13 +174,12 @@ function ArenaCardZone({
       {count > 0 ? (
         <>
           <mesh
-            position={[0, stackHeight / 2, 0]}
+            geometry={bodyGeometry ?? undefined}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, stackHeight, 0]}
             castShadow
             receiveShadow
           >
-            <boxGeometry
-              args={[ARENA_CARD_WIDTH, stackHeight, ARENA_CARD_DEPTH]}
-            />
             <meshStandardMaterial
               color={stack ? "#0b0e0f" : "#15191a"}
               roughness={0.98}
@@ -163,12 +187,12 @@ function ArenaCardZone({
             />
           </mesh>
           <mesh
+            geometry={ZONE_CARD_FACE_GEOMETRY}
             rotation={[-Math.PI / 2, 0, 0]}
             position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
             castShadow
             receiveShadow
           >
-            <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
             <meshLambertMaterial
               key={texture?.uuid ?? "arena-zone-loading"}
               map={texture}
@@ -183,10 +207,10 @@ function ArenaCardZone({
         </>
       ) : (
         <mesh
+          geometry={ZONE_CARD_FACE_GEOMETRY}
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, 0.006, 0]}
         >
-          <planeGeometry args={[ARENA_CARD_WIDTH, ARENA_CARD_DEPTH]} />
           <meshBasicMaterial
             map={emptyTexture}
             transparent
@@ -214,6 +238,22 @@ function ArenaExileZone({
   onClick,
 }: ArenaExileZoneProps) {
   const [hovered, setHovered] = useState(false);
+  const depth = 0.036 + Math.min(count, 8) * 0.002;
+  const bodyGeometry = useMemo(
+    () =>
+      makeRoundedCardBodyGeometry(
+        ARENA_CARD_WIDTH,
+        ARENA_CARD_DEPTH,
+        depth,
+        {
+          bevelSize: 0.01,
+          bevelThickness: Math.min(0.007, depth * 0.12),
+        },
+      ),
+    [depth],
+  );
+
+  useEffect(() => () => bodyGeometry.dispose(), [bodyGeometry]);
 
   return (
     <group
@@ -235,17 +275,12 @@ function ArenaExileZone({
       }}
     >
       <mesh
-        position={[0, 0.018 + Math.min(count, 8) * 0.001, 0]}
+        geometry={bodyGeometry}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, depth, 0]}
         castShadow
         receiveShadow
       >
-        <boxGeometry
-          args={[
-            ARENA_CARD_WIDTH,
-            0.036 + Math.min(count, 8) * 0.002,
-            ARENA_CARD_DEPTH,
-          ]}
-        />
         <meshStandardMaterial
           color={hovered ? "#302d45" : "#211f31"}
           roughness={0.98}

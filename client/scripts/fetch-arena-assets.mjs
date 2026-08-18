@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const cardConjurerRaw =
   "https://raw.githubusercontent.com/fiahdrgn473/CardConjurer/master";
+const cardConjurerPreviewStatBadge =
+  "https://raw.githubusercontent.com/Investigamer/cardconjurer/master/img/frames/8th/pt/a.png";
 const clientRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = join(clientRoot, "public", "arena");
 const manaFontSource = join(
@@ -92,6 +94,13 @@ await mkdir(join(outputRoot, "fonts"), { recursive: true });
 await copyFile(manaFontSource, join(outputRoot, "fonts", "mana.woff2"));
 
 const { default: sharp } = await import("sharp");
+// Private-preview proof of concept. Keep the third-party artwork out of git;
+// fresh preview builds fetch the exact Card Conjurer source asset at runtime.
+await fetchTo(
+  cardConjurerPreviewStatBadge,
+  join(outputRoot, "frames", "card-conjurer", "8th-pt-a.png"),
+);
+
 for (const symbol of pips) {
   const destination = join(outputRoot, "pips", `${symbol}.png`);
   try {

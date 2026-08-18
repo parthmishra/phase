@@ -39,6 +39,7 @@ import { AnimationOverlay } from "../components/animation/AnimationOverlay.tsx";
 import { RevealOverlay } from "../components/animation/RevealOverlay.tsx";
 import { TurnBanner } from "../components/animation/TurnBanner.tsx";
 import { DiceRollOverlay } from "../components/animation/DiceRollOverlay.tsx";
+import { CommanderCutInHost } from "../components/animation/CommanderCutIn.tsx";
 import { flashStartingPlayerContest } from "../game/diceContest.ts";
 import { loopDetectionModeFromQuery } from "../game/loopDetectionMode.ts";
 import { BattlefieldBackground } from "../components/board/BattlefieldBackground.tsx";
@@ -1675,6 +1676,7 @@ function GamePageContent({
       <AnimationOverlay containerRef={containerRef} />
       {/* Multi-card top-of-library reveal (CR 701.20b), e.g. Lead the Stampede */}
       <RevealOverlay />
+      <CommanderCutInHost />
       <TurnBanner />
       <DiceRollOverlay />
 

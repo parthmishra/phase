@@ -72,6 +72,14 @@
     "holdCtrlFront": "Przytrzymaj Ctrl, aby zobaczyć przednią stronę",
     "holdCtrlFlip": "Przytrzymaj Ctrl, aby odwrócić",
     "flip": "Odwróć",
+    "detailAriaLabel": "Szczegóły karty: {{name}}",
+    "closeDetails": "Zamknij szczegóły karty",
+    "detailViewOptions": "Widok szczegółów karty",
+    "detailView": {
+      "live": "W grze",
+      "original": "Oryginał",
+      "parse": "Analiza"
+    },
     "report": "Zgłoś problem",
     "reported": "Zgłoszono ✓",
     "altParsedAbilities": "Alt: przeanalizowane zdolności",

@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
+import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type { ArenaCardPresentation } from "./arenaCardPresentation.ts";
 import { arenaCardRevision, buildArenaCardPresentation } from "./arenaCardPresentation.ts";
 import { arenaComposableArtSource } from "./arenaArtSource.ts";
+import { configureArenaReadableTexture } from "./arenaTexture.ts";
 import {
   ARENA_CARD_HEIGHT as FULL_CARD_TEXTURE_HEIGHT,
   ARENA_CARD_WIDTH as FULL_CARD_TEXTURE_WIDTH,
+  arenaCardStatText,
+  drawArenaBattlefieldTitle,
   renderArenaCardCanvas,
+  renderArenaStatBadgeCanvas,
 } from "./arenaCardCanvas.ts";
 import { useCardImage } from "../../hooks/useCardImage.ts";
 import { useEngineCardData } from "../../hooks/useEngineCardData.ts";
@@ -31,15 +36,19 @@ const textureCache = new Map<string, TextureCacheEntry>();
 export interface ArenaCardTextures {
   battlefield: THREE.CanvasTexture | null;
   fullCard: THREE.CanvasTexture | null;
+  statBadge: THREE.CanvasTexture | null;
 }
 
-type ArenaCardTextureVariant = "battlefield" | "full-card";
+type ArenaCardTextureVariant = "battlefield" | "full-card" | "stat-badge";
 
 export function useArenaCardTextures(
   objectId: number,
   pileCount: number,
   includeFullCard = false,
 ): ArenaCardTextures {
+  const maxAnisotropy = useThree(({ gl }) =>
+    gl.capabilities.getMaxAnisotropy()
+  );
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
   const attribution = useGameStore((state) => state.gameState?.attribution?.[String(objectId)]);
   const faceData = useEngineCardData(object?.face_down ? null : object?.name ?? null);
@@ -85,6 +94,7 @@ export function useArenaCardTextures(
     artSource,
     pileCount,
     "battlefield",
+    maxAnisotropy,
   );
   const fullCard = useCachedArenaCardTexture(
     revision && includeFullCard
@@ -94,9 +104,21 @@ export function useArenaCardTextures(
     artSource,
     pileCount,
     "full-card",
+    maxAnisotropy,
+  );
+  const statText = presentation ? arenaCardStatText(presentation) : null;
+  const statBadge = useCachedArenaCardTexture(
+    revision && statText
+      ? `stat-badge:${statText}`
+      : null,
+    presentation,
+    artSource,
+    pileCount,
+    "stat-badge",
+    maxAnisotropy,
   );
 
-  return { battlefield, fullCard };
+  return { battlefield, fullCard, statBadge };
 }
 
 function useCachedArenaCardTexture(
@@ -105,6 +127,7 @@ function useCachedArenaCardTexture(
   artSource: string | null,
   pileCount: number,
   variant: ArenaCardTextureVariant,
+  maxAnisotropy: number,
 ): THREE.CanvasTexture | null {
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
 
@@ -121,6 +144,7 @@ function useCachedArenaCardTexture(
       artSource,
       pileCount,
       variant,
+      maxAnisotropy,
     );
     entry.promise.then((nextTexture) => {
       if (!cancelled) setTexture(nextTexture);
@@ -132,7 +156,7 @@ function useCachedArenaCardTexture(
       cancelled = true;
       releaseTexture(key);
     };
-  }, [artSource, key, pileCount, presentation, variant]);
+  }, [artSource, key, maxAnisotropy, pileCount, presentation, variant]);
 
   return texture;
 }
@@ -143,6 +167,7 @@ function acquireTexture(
   artSource: string,
   pileCount: number,
   variant: ArenaCardTextureVariant,
+  maxAnisotropy: number,
 ): TextureCacheEntry {
   const cached = textureCache.get(key);
   if (cached) {
@@ -151,6 +176,9 @@ function acquireTexture(
       clearTimeout(cached.disposeTimer);
       cached.disposeTimer = null;
     }
+    void cached.promise.then((texture) => {
+      configureArenaReadableTexture(texture, maxAnisotropy);
+    }).catch(() => undefined);
     return cached;
   }
 
@@ -165,6 +193,7 @@ function acquireTexture(
     artSource,
     pileCount,
     variant,
+    maxAnisotropy,
   ).then(
     (texture) => {
       entry.texture = texture;
@@ -197,17 +226,21 @@ async function createArenaCardTexture(
   artSource: string,
   pileCount: number,
   variant: ArenaCardTextureVariant,
+  maxAnisotropy: number,
 ): Promise<THREE.CanvasTexture> {
   const canvas = variant === "full-card"
     ? await renderArenaFullCardCanvas(presentation, artSource, pileCount)
-    : await renderArenaBattlefieldCardCanvas(presentation, artSource, pileCount);
+    : variant === "battlefield"
+      ? await renderArenaBattlefieldCardCanvas(
+          presentation,
+          artSource,
+          pileCount,
+        )
+      : await renderArenaStatBadgeCanvas(
+          arenaCardStatText(presentation) ?? "",
+        );
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = 4;
-  texture.needsUpdate = true;
+  configureArenaReadableTexture(texture, maxAnisotropy);
   return texture;
 }
 
@@ -222,6 +255,12 @@ async function renderArenaFullCardCanvas(
   const canvas = await renderArenaCardCanvas(presentation, artSource);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("2D canvas unavailable");
+
+  drawArenaBattlefieldTitle(
+    context,
+    presentation.name,
+    presentation.manaSymbols.length,
+  );
 
   const badgeY = FULL_CARD_TEXTURE_HEIGHT * 0.16;
   const badgeScale = 1.8;

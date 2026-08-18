@@ -72,6 +72,14 @@
     "holdCtrlFront": "Mantén Ctrl para la cara frontal",
     "holdCtrlFlip": "Mantén Ctrl para girar",
     "flip": "Girar",
+    "detailAriaLabel": "Detalles de la carta: {{name}}",
+    "closeDetails": "Cerrar detalles de la carta",
+    "detailViewOptions": "Vista de detalles de la carta",
+    "detailView": {
+      "live": "En juego",
+      "original": "Original",
+      "parse": "Análisis"
+    },
     "report": "Informar de un problema",
     "reported": "Informado ✓",
     "altParsedAbilities": "Alt: habilidades analizadas",

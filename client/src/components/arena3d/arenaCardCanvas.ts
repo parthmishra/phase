@@ -4,6 +4,9 @@ export const ARENA_CARD_WIDTH = 1005;
 export const ARENA_CARD_HEIGHT = 1407;
 
 const CORNER_RADIUS = 44;
+const PHASE_STAT_BADGE_URL =
+  "/arena/frames/card-conjurer/8th-pt-a.png";
+const TITLE_FONT_SIZES = [62, 58, 54, 50, 46] as const;
 const RULES_SIZES = [50, 47, 44, 41, 38, 35, 32, 29];
 const GEOMETRY = {
   art: { x: 0.078, y: 0.114, width: 0.844, height: 0.437 },
@@ -14,8 +17,10 @@ const GEOMETRY = {
   rulesTop: 0.632,
   rulesBottom: 0.875,
   stats: { x: 0.762, y: 0.888, width: 0.198, height: 0.072 },
-  statsTextCenter: { x: 0.548, y: 0.447 },
+  statsTextCenter: { x: 0.5, y: 0.5 },
 } as const;
+const STAT_VALUE_FONT_HEIGHT_RATIO = 0.52;
+const STAT_VALUE_MAX_WIDTH_RATIO = 0.64;
 
 /** Shared crop boundaries used by the Three.js battlefield presentation. */
 export const ARENA_CARD_ART_BOTTOM_RATIO =
@@ -28,6 +33,11 @@ interface RichLine {
   tokens: RichToken[];
   width: number;
   gapBefore: number;
+}
+
+export interface ArenaCardTitleLayout {
+  fontSize: number;
+  text: string;
 }
 
 type RichToken =
@@ -71,9 +81,10 @@ export async function renderArenaCardCanvas(
   artSource: string,
 ): Promise<HTMLCanvasElement> {
   const frameLetter = arenaFrameLetter(presentation);
-  const [frameImage, artImage] = await Promise.all([
+  const [frameImage, artImage, statBadgeImage] = await Promise.all([
     loadImage(frameUrl(frameLetter)),
     loadImage(artSource),
+    loadImage(PHASE_STAT_BADGE_URL),
     ensureArenaCardFonts(),
   ]);
   const canvas = document.createElement("canvas");
@@ -177,42 +188,288 @@ export async function renderArenaCardCanvas(
     );
   }
 
+  const statText = arenaCardStatText(presentation);
+  if (statText) {
+    drawArenaStatText(context, statText, statBadgeImage);
+  }
+
+  return canvas;
+}
+
+export function arenaCardStatText(
+  presentation: Pick<
+    ArenaCardPresentation,
+    "damageMarked" | "loyalty" | "power" | "toughness"
+  >,
+): string | null {
   const effectiveToughness =
     presentation.toughness == null
       ? null
       : presentation.toughness - presentation.damageMarked;
-  const statText =
-    presentation.power != null && effectiveToughness != null
-      ? `${presentation.power}/${effectiveToughness}`
-      : presentation.loyalty == null
-        ? null
-        : String(presentation.loyalty);
-  if (statText) {
-    const statsImage = await loadImage(statsUrl(frameLetter));
-    const stats = GEOMETRY.stats;
+  return presentation.power != null && effectiveToughness != null
+    ? `${presentation.power}/${effectiveToughness}`
+    : presentation.loyalty == null
+      ? null
+      : String(presentation.loyalty);
+}
+
+/** Creates a dedicated, padded badge texture so mipmaps cannot sample card art. */
+export async function renderArenaStatBadgeCanvas(
+  statText: string,
+): Promise<HTMLCanvasElement> {
+  const [background] = await Promise.all([
+    loadImage(PHASE_STAT_BADGE_URL),
+    ensureArenaCardFonts(),
+  ]);
+  const canvas = document.createElement("canvas");
+  canvas.width = background.naturalWidth;
+  canvas.height = background.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("2D canvas unavailable");
+
+  context.drawImage(background, 0, 0, canvas.width, canvas.height);
+  drawArenaStatValue(
+    context,
+    statText,
+    canvas.width / 2,
+    canvas.height / 2,
+    canvas.width,
+    canvas.height,
+  );
+  return canvas;
+}
+
+/**
+ * Redraws the printed P/T or loyalty value as a high-contrast UI readout.
+ * The Three.js battlefield lifts this exact texture region onto a larger mesh,
+ * so a solid light field and large serif glyphs survive mipmaps and camera
+ * tilt while retaining the lighter printed character of a physical card.
+ */
+export function drawArenaStatText(
+  context: CanvasRenderingContext2D,
+  statText: string,
+  background?: CanvasImageSource,
+): void {
+  const stats = GEOMETRY.stats;
+  const x = stats.x * ARENA_CARD_WIDTH;
+  const y = stats.y * ARENA_CARD_HEIGHT;
+  const width = stats.width * ARENA_CARD_WIDTH;
+  const height = stats.height * ARENA_CARD_HEIGHT;
+  const outerInset = 2;
+  const insetX = 12;
+  const insetY = 10;
+
+  context.save();
+  if (background) {
+    context.save();
+    traceRoundedRect(context, x, y, width, height, height * 0.28);
+    context.clip();
+    context.fillStyle = "#17181b";
+    context.fillRect(x, y, width, height);
     context.drawImage(
-      statsImage,
-      stats.x * ARENA_CARD_WIDTH,
-      stats.y * ARENA_CARD_HEIGHT,
-      stats.width * ARENA_CARD_WIDTH,
-      stats.height * ARENA_CARD_HEIGHT,
+      background,
+      x - width * 0.03,
+      y - height * 0.05,
+      width * 1.06,
+      height * 1.1,
     );
-    context.font = '48px "Arena Beleren", "Times New Roman", serif';
-    context.textAlign = "center";
-    drawVerticallyCenteredText(
+    context.restore();
+  } else {
+    traceRoundedRect(
       context,
-      statText,
-      (stats.x + stats.width * GEOMETRY.statsTextCenter.x)
-        * ARENA_CARD_WIDTH,
-      (stats.y + stats.height * GEOMETRY.statsTextCenter.y)
-        * ARENA_CARD_HEIGHT,
-      undefined,
-      "4",
+      x + outerInset,
+      y + outerInset,
+      width - outerInset * 2,
+      height - outerInset * 2,
+      height * 0.28,
     );
-    context.textAlign = "left";
+    context.fillStyle = "#747579";
+    context.fill();
+    context.strokeStyle = "#38393c";
+    context.lineWidth = 4;
+    context.stroke();
+
+    const fieldX = x + insetX;
+    const fieldY = y + insetY;
+    const fieldWidth = width - insetX * 2;
+    const fieldHeight = height - insetY * 2;
+    traceRoundedRect(
+      context,
+      fieldX,
+      fieldY,
+      fieldWidth,
+      fieldHeight,
+      fieldHeight * 0.24,
+    );
+    context.fillStyle = "rgba(247, 244, 234, 0.98)";
+    context.fill();
+    context.strokeStyle = "#a7a7a3";
+    context.lineWidth = 3;
+    context.stroke();
   }
 
-  return canvas;
+  drawArenaStatValue(
+    context,
+    statText,
+    (stats.x + stats.width * GEOMETRY.statsTextCenter.x)
+      * ARENA_CARD_WIDTH,
+    (stats.y + stats.height * GEOMETRY.statsTextCenter.y)
+      * ARENA_CARD_HEIGHT,
+    width,
+    height,
+  );
+  context.restore();
+}
+
+function drawArenaStatValue(
+  context: CanvasRenderingContext2D,
+  statText: string,
+  centerX: number,
+  centerY: number,
+  badgeWidth: number,
+  badgeHeight: number,
+): void {
+  const fontSize = fitArenaStatFontSize(
+    statText,
+    badgeWidth,
+    badgeHeight,
+    (value, candidateFontSize) => {
+      context.font = arenaStatFont(candidateFontSize);
+      return context.measureText(value).width;
+    },
+  );
+  context.font = arenaStatFont(fontSize);
+  context.textAlign = "center";
+  context.fillStyle = "#050505";
+  drawVerticallyCenteredText(
+    context,
+    statText,
+    centerX,
+    centerY,
+    undefined,
+    statText,
+  );
+}
+
+/** Fits every P/T or loyalty value inside the asset's recessed inner field. */
+export function fitArenaStatFontSize(
+  statText: string,
+  badgeWidth: number,
+  badgeHeight: number,
+  measure: (value: string, fontSize: number) => number,
+): number {
+  const preferredSize = badgeHeight * STAT_VALUE_FONT_HEIGHT_RATIO;
+  const measuredWidth = measure(statText, preferredSize);
+  const maxWidth = badgeWidth * STAT_VALUE_MAX_WIDTH_RATIO;
+  return measuredWidth > maxWidth && measuredWidth > 0
+    ? (preferredSize * maxWidth) / measuredWidth
+    : preferredSize;
+}
+
+function arenaStatFont(fontSize: number): string {
+  return `400 ${fontSize}px "Arena MPlantin", "Times New Roman", serif`;
+}
+
+function traceRoundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  context.beginPath();
+  context.roundRect(
+    x,
+    y,
+    width,
+    height,
+    Math.min(radius, height / 2, width / 2),
+  );
+}
+
+/**
+ * Fits a card name without CanvasRenderingContext2D's horizontal max-width
+ * compression, which makes long names unnaturally thin at battlefield scale.
+ */
+export function fitArenaCardTitle(
+  text: string,
+  maxWidth: number,
+  measure: (candidate: string, fontSize: number) => number,
+): ArenaCardTitleLayout {
+  for (const fontSize of TITLE_FONT_SIZES) {
+    if (measure(text, fontSize) <= maxWidth) {
+      return { fontSize, text };
+    }
+  }
+
+  const fontSize = TITLE_FONT_SIZES[TITLE_FONT_SIZES.length - 1];
+  const ellipsis = "…";
+  const characters = Array.from(text);
+  while (characters.length > 0) {
+    const candidate = `${characters.join("").trimEnd()}${ellipsis}`;
+    if (measure(candidate, fontSize) <= maxWidth) {
+      return { fontSize, text: candidate };
+    }
+    characters.pop();
+  }
+  return { fontSize, text: ellipsis };
+}
+
+/**
+ * Strengthens only the world-space battlefield crown. Inspection and hand
+ * cards retain the full printed treatment, while small permanents receive a
+ * quiet parchment backing and a larger, unsquashed name.
+ */
+export function drawArenaBattlefieldTitle(
+  context: CanvasRenderingContext2D,
+  name: string,
+  manaSymbolCount: number,
+): void {
+  const left = GEOMETRY.textLeft * ARENA_CARD_WIDTH;
+  const right = GEOMETRY.textRight * ARENA_CARD_WIDTH;
+  const pipSize = 50;
+  const pipGap = 6;
+  const pipRowWidth =
+    manaSymbolCount > 0 ? manaSymbolCount * (pipSize + pipGap) : 0;
+  const maxWidth = Math.max(
+    120,
+    right - left - (pipRowWidth > 0 ? pipRowWidth + 16 : 0),
+  );
+  const centerY = GEOMETRY.titleY * ARENA_CARD_HEIGHT;
+  const layout = fitArenaCardTitle(
+    name,
+    maxWidth,
+    (candidate, fontSize) => {
+      context.font = `${fontSize}px "Arena Beleren", "Times New Roman", serif`;
+      return context.measureText(candidate).width;
+    },
+  );
+
+  context.save();
+  context.beginPath();
+  context.roundRect(left - 12, centerY - 38, maxWidth + 24, 76, 14);
+  context.fillStyle = "rgba(247, 239, 216, 0.84)";
+  context.fill();
+  context.strokeStyle = "rgba(19, 16, 13, 0.42)";
+  context.lineWidth = 2;
+  context.stroke();
+
+  context.font = `${layout.fontSize}px "Arena Beleren", "Times New Roman", serif`;
+  context.fillStyle = "#15110e";
+  context.strokeStyle = "rgba(255, 250, 235, 0.7)";
+  context.lineWidth = 2.5;
+  context.lineJoin = "round";
+  drawVerticallyCenteredText(
+    context,
+    layout.text,
+    left,
+    centerY,
+    undefined,
+    "Ag",
+    true,
+  );
+  context.restore();
 }
 
 async function drawRulesText(
@@ -422,12 +679,15 @@ function drawVerticallyCenteredText(
   centerY: number,
   maxWidth?: number,
   reference = "Ag",
+  stroke = false,
 ): void {
   const metrics = context.measureText(reference);
   const ascent = metrics.actualBoundingBoxAscent ?? 0;
   const descent = metrics.actualBoundingBoxDescent ?? 0;
   context.textBaseline = "alphabetic";
-  context.fillText(text, x, centerY + (ascent - descent) / 2, maxWidth);
+  const baseline = centerY + (ascent - descent) / 2;
+  if (stroke) context.strokeText(text, x, baseline, maxWidth);
+  context.fillText(text, x, baseline, maxWidth);
 }
 
 function loadImage(source: string): Promise<HTMLImageElement> {
@@ -449,11 +709,6 @@ function loadImage(source: string): Promise<HTMLImageElement> {
 
 function frameUrl(letter: FrameLetter): string {
   return `/arena/frames/m15/m15Frame${letter}.png`;
-}
-
-function statsUrl(letter: FrameLetter): string {
-  const statsLetter = letter === "L" ? "C" : letter;
-  return `/arena/frames/m15/m15PT${statsLetter}.png`;
 }
 
 export function arenaPipUrl(symbol: string): string {

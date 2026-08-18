@@ -28,6 +28,7 @@ import { dispatchAction } from "../../game/dispatch.ts";
 import { previewAutomaticManaPayment } from "../../game/manaPaymentPreview.ts";
 import type { GameObject, ManaCost, ObjectId } from "../../adapter/types.ts";
 import {
+  castActionsForObject,
   collectObjectActions,
   resolveDirectPlayOrCastAction,
   resolveSingleActionDispatch,
@@ -147,6 +148,15 @@ export function PlayerHand() {
 
   const playableObjectIds = useMemo(() => {
     return new Set(Object.keys(legalActionsByObject ?? {}).map(Number));
+  }, [legalActionsByObject]);
+  const castableObjectIds = useMemo(() => {
+    return new Set(
+      Object.keys(legalActionsByObject ?? {})
+        .map(Number)
+        .filter((objectId) =>
+          castActionsForObject(legalActionsByObject, objectId).length > 0
+        ),
+    );
   }, [legalActionsByObject]);
 
   // Display-only organizing of the player's own hand: persisted sort + ephemeral
@@ -731,7 +741,7 @@ export function PlayerHand() {
           {handObjects.map((obj, i) => {
           // Hand cards occupy absolute fan positions E .. E+H-1.
           const k = exileCount + i;
-          const isPlayable = hasPriority && playableObjectIds.has(Number(obj.id));
+          const isCastable = hasPriority && castableObjectIds.has(Number(obj.id));
 
           return (
             <HandCard
@@ -748,7 +758,7 @@ export function PlayerHand() {
               restingY={verticalMetrics.restingY}
               hoverY={verticalMetrics.hoverY}
               marginLeft={i === 0 ? 0 : fan.overlap}
-              isPlayable={isPlayable}
+              isCastable={isCastable}
               enableHover={!isMobile}
               isSelected={selectedCardId === obj.id}
               hasPriority={hasPriority}
@@ -886,7 +896,7 @@ interface HandCardProps {
   restingY: number;
   hoverY: number;
   marginLeft: string | number;
-  isPlayable: boolean;
+  isCastable: boolean;
   enableHover: boolean;
   isSelected: boolean;
   isDragging: boolean;
@@ -915,7 +925,7 @@ const HandCard = memo(function HandCard({
   restingY,
   hoverY,
   marginLeft,
-  isPlayable,
+  isCastable,
   enableHover,
   isSelected,
   isDragging,
@@ -1016,8 +1026,8 @@ const HandCard = memo(function HandCard({
   });
 
   const glowClass = hasPriority
-    ? isPlayable
-      ? "shadow-[0_0_18px_3px_rgba(94,184,198,0.34)] ring-1 ring-[#7bc7cc]/60"
+    ? isCastable
+      ? "shadow-[0_0_20px_4px_rgba(94,184,198,0.42)]"
       : ""
     : "";
 
@@ -1142,6 +1152,13 @@ const HandCard = memo(function HandCard({
             displayCost={displayCost}
             isCostReduced={isReduced}
           />
+          {hasPriority && isCastable && (
+            <div
+              aria-hidden
+              data-playable-hand-card-edge
+              className="pointer-events-none absolute inset-[1px] z-40 rounded-[4.4%/3.15%] border-[3px] border-cyan-300/95 shadow-[inset_0_0_5px_rgba(255,255,255,0.65),0_0_12px_2px_rgba(34,211,238,0.72)]"
+            />
+          )}
           {stormCopyCount !== undefined && (
             <StormCopyBadge count={stormCopyCount} variant="fan" />
           )}

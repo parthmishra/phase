@@ -27,8 +27,8 @@ export const ARENA_COLLAPSED_TEXTURE_RATIO =
  */
 export const ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO = 0.68;
 
-/** Time from battlefield arrival to the compact frame's settled state. */
-export const ARENA_CARD_COLLAPSE_DURATION_SECONDS = 0.72;
+/** Normal-speed time from battlefield arrival to the compact frame's settled state. */
+export const ARENA_CARD_COLLAPSE_DURATION_SECONDS = 0.46;
 
 /** Brief arrival beat before the lower frame begins moving. */
 export const ARENA_CARD_COLLAPSE_HOLD_FRACTION = 0.1;
@@ -45,10 +45,14 @@ export interface ArenaCardCollapseTransform {
 }
 
 /** Converts arrival age into the frame-only collapse phase. */
-export function arenaCardCollapseProgress(ageSeconds: number): number {
+export function arenaCardCollapseProgress(
+  ageSeconds: number,
+  durationSeconds = ARENA_CARD_COLLAPSE_DURATION_SECONDS,
+): number {
+  if (durationSeconds <= 0) return 1;
   const arrivalProgress = Math.min(
     1,
-    Math.max(0, ageSeconds / ARENA_CARD_COLLAPSE_DURATION_SECONDS),
+    Math.max(0, ageSeconds / durationSeconds),
   );
   return Math.min(
     1,
@@ -57,6 +61,25 @@ export function arenaCardCollapseProgress(ageSeconds: number): number {
       (arrivalProgress - ARENA_CARD_COLLAPSE_HOLD_FRACTION)
         / (1 - ARENA_CARD_COLLAPSE_HOLD_FRACTION),
     ),
+  );
+}
+
+/** Applies the persisted global animation-speed preference to the 3D arrival. */
+export function arenaCardCollapseDuration(
+  animationSpeedMultiplier: number,
+): number {
+  return ARENA_CARD_COLLAPSE_DURATION_SECONDS
+    * Math.max(0, animationSpeedMultiplier);
+}
+
+/** Frame-rate-independent response for the card's position, rotation, and scale. */
+export function arenaCardSettleResponse(
+  deltaSeconds: number,
+  animationSpeedMultiplier: number,
+): number {
+  if (animationSpeedMultiplier <= 0) return 1;
+  return 1 - Math.exp(
+    -Math.max(0, deltaSeconds) * 14 / animationSpeedMultiplier,
   );
 }
 

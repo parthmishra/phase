@@ -7,8 +7,10 @@ import {
   ARENA_CARD_COLLAPSE_HOLD_FRACTION,
   ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO,
   ARENA_COLLAPSED_TEXTURE_RATIO,
+  arenaCardCollapseDuration,
   arenaCardCollapseProgress,
   arenaCardCollapseTransform,
+  arenaCardSettleResponse,
   arenaCardStatUv,
   collapsedArenaCardV,
 } from "../arenaCardCollapse.ts";
@@ -70,6 +72,24 @@ describe("arenaCardCollapseTransform", () => {
     expect(
       arenaCardCollapseProgress(ARENA_CARD_COLLAPSE_DURATION_SECONDS),
     ).toBe(1);
-    expect(ARENA_CARD_COLLAPSE_DURATION_SECONDS).toBeLessThan(0.8);
+    expect(ARENA_CARD_COLLAPSE_DURATION_SECONDS).toBeLessThan(0.5);
+  });
+
+  it("honors the persisted animation-speed setting, including instant mode", () => {
+    expect(arenaCardCollapseDuration(1)).toBe(
+      ARENA_CARD_COLLAPSE_DURATION_SECONDS,
+    );
+    expect(arenaCardCollapseDuration(0.5)).toBeCloseTo(
+      ARENA_CARD_COLLAPSE_DURATION_SECONDS / 2,
+    );
+    expect(arenaCardCollapseProgress(0, arenaCardCollapseDuration(0))).toBe(1);
+
+    expect(arenaCardSettleResponse(1 / 60, 0)).toBe(1);
+    expect(arenaCardSettleResponse(1 / 60, 0.5)).toBeGreaterThan(
+      arenaCardSettleResponse(1 / 60, 1),
+    );
+    expect(arenaCardSettleResponse(1 / 60, 2)).toBeLessThan(
+      arenaCardSettleResponse(1 / 60, 1),
+    );
   });
 });

@@ -164,6 +164,7 @@ export function HudPlate({
             />
           )}
           <span
+            data-hud-plate-label-text=""
             className={labelClass}
             style={seatColor ? { color: seatColor } : { color: "rgba(255,255,255,0.68)" }}
           >
