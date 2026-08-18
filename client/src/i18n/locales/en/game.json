@@ -78,6 +78,14 @@
     "holdCtrlFront": "Hold Ctrl for front face",
     "holdCtrlFlip": "Hold Ctrl to flip",
     "flip": "Flip",
+    "detailAriaLabel": "Card details: {{name}}",
+    "closeDetails": "Close card details",
+    "detailViewOptions": "Card detail view",
+    "detailView": {
+      "live": "Live",
+      "original": "Original",
+      "parse": "Parse"
+    },
     "report": "Report a problem",
     "reported": "Reported ✓",
     "altParsedAbilities": "Alt: parsed abilities",

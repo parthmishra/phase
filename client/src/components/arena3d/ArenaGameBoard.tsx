@@ -1,16 +1,18 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { PlayerId } from "../../adapter/types.ts";
+import type { ObjectId, PlayerId } from "../../adapter/types.ts";
 import { usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
+import { useUiStore } from "../../stores/uiStore.ts";
 import {
   buildPlayerBattlefieldView,
   getOpponentIds,
   getSeatCount,
 } from "../../viewmodel/gameStateView.ts";
 import { ArenaHeldHand } from "./ArenaHeldHand.tsx";
+import { ArenaCardDetailOverlay } from "./ArenaCardDetailOverlay.tsx";
 import { ArenaFlightDestinations } from "./ArenaFlightDestinations.tsx";
 import { ArenaMaterialPlane } from "./ArenaMaterialPlane.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
@@ -46,6 +48,8 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
   props: ArenaGameBoardProps,
 ) {
   const gameState = useGameStore((state) => state.gameState);
+  const dismissPreview = useUiStore((state) => state.dismissPreview);
+  const [detailObjectId, setDetailObjectId] = useState<ObjectId | null>(null);
   const perspectivePlayerId = usePerspectivePlayerId();
   const opponents = useMemo(
     () => getOpponentIds(gameState, perspectivePlayerId),
@@ -93,6 +97,15 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
     ],
     [opponentSeats, opponentViews, playerView, tableLayout],
   );
+  const showCardDetails = useCallback(
+    (objectId: ObjectId) => {
+      dismissPreview();
+      document.body.style.cursor = "";
+      setDetailObjectId(objectId);
+    },
+    [dismissPreview],
+  );
+  const closeCardDetails = useCallback(() => setDetailObjectId(null), []);
 
   if (!gameState) return null;
 
@@ -193,11 +206,18 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             />
           ))}
           {placements.map((placement) => (
-            <ArenaPermanent key={placement.objectId} {...placement} />
+            <ArenaPermanent
+              key={placement.objectId}
+              {...placement}
+              onShowDetails={showCardDetails}
+            />
           ))}
         </Canvas>
-
       </div>
+      <ArenaCardDetailOverlay
+        objectId={detailObjectId}
+        onClose={closeCardDetails}
+      />
     </div>
   );
 });

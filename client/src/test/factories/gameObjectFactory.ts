@@ -1,6 +1,12 @@
 import { Factory } from "fishery";
 
-import type { CardType, GameObject, ObjectId, PlayerId } from "../../adapter/types.ts";
+import type {
+  CardType,
+  GameObject,
+  Keyword,
+  ObjectId,
+  PlayerId,
+} from "../../adapter/types.ts";
 
 const defaultCardType: CardType = {
   supertypes: [],
@@ -109,6 +115,10 @@ export class GameObjectFactory extends Factory<GameObject> {
 
   withCost(shards: string[], generic = 0) {
     return this.params({ mana_cost: { type: "Cost", shards, generic } });
+  }
+
+  withKeywords(...keywords: Keyword[]) {
+    return this.params({ keywords, base_keywords: keywords });
   }
 
   commander() {

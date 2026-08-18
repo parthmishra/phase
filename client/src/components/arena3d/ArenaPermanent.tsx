@@ -19,7 +19,9 @@ import {
 import { ARENA_CARD_STAT_RECT } from "./arenaCardCanvas.ts";
 import { ArenaCardGlow } from "./ArenaCardGlow.tsx";
 import { useArenaCardTextures } from "./useArenaCardTexture.ts";
+import { useArenaCardHold } from "./useArenaCardHold.ts";
 import { useArenaPermanentInteraction } from "./useArenaPermanentInteraction.ts";
+import type { ObjectId } from "../../adapter/types.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 
 const CARD_WIDTH = ARENA_CARD_WIDTH;
@@ -36,6 +38,7 @@ const CARD_STAT_BADGE_GEOMETRY = makeStatBadgeGeometry();
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
+  onShowDetails: (objectId: ObjectId) => void;
 }
 
 export function ArenaPermanent({
@@ -45,6 +48,7 @@ export function ArenaPermanent({
   faceAngle,
   attackVector,
   cardScale,
+  onShowDetails,
 }: ArenaPermanentProps) {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
   // ArenaPermanent only renders engine-authored battlefield objects, so every
@@ -68,6 +72,9 @@ export function ArenaPermanent({
     ? textures.fullCard
     : textures.battlefield;
   const interaction = useArenaPermanentInteraction(objectId);
+  const hold = useArenaCardHold({
+    onHold: () => onShowDetails(objectId),
+  });
   const groupRef = useRef<THREE.Group>(null);
   const surfaceRef = useRef<THREE.Group>(null);
   const bottomFrameRef = useRef<THREE.Mesh>(null);
@@ -263,8 +270,10 @@ export function ArenaPermanent({
     <group
       onClick={(event) => {
         event.stopPropagation();
+        if (hold.consumeClick()) return;
         interaction.onClick();
       }}
+      {...hold.handlers}
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
     >

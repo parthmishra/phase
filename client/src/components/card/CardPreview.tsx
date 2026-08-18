@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   AnimatePresence,
   motion,
@@ -1269,7 +1276,7 @@ function SupportSummary({ items }: { items: ParsedItem[] }) {
   );
 }
 
-interface ParsedAbilitiesPanelProps {
+export interface ParsedAbilitiesPanelProps {
   name: string;
   cardTypes?: { supertypes: string[]; core_types: string[]; subtypes: string[] } | null;
   /** Live object keywords, used to collapse a Changeling's expanded subtype
@@ -1279,13 +1286,13 @@ interface ParsedAbilitiesPanelProps {
    *  `cardTypes` when present (non-English locale with a translated card). */
   localizedTypeLine?: string | null;
   parseDetails: ParsedItem[] | null;
-  maxHeight?: number;
+  maxHeight?: CSSProperties["maxHeight"];
   /** In-game report context for the displayed face; absent in the deck builder
    *  (no live game), where the report button is not shown. */
   report?: CardReportContext;
 }
 
-function ParsedAbilitiesPanel({ name, cardTypes, keywords, localizedTypeLine, parseDetails, maxHeight, report }: ParsedAbilitiesPanelProps) {
+export function ParsedAbilitiesPanel({ name, cardTypes, keywords, localizedTypeLine, parseDetails, maxHeight, report }: ParsedAbilitiesPanelProps) {
   const { t } = useTranslation("game");
   const items = parseDetails ?? [];
   const rulings = useCardRulings(name);
