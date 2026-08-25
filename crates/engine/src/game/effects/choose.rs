@@ -168,6 +168,22 @@ pub(crate) fn resolve_random_in_chain(
     true
 }
 
+/// Returns whether this ability is the CR 805.9 active-player choice handled by
+/// the singleton-binding seam below.
+pub(crate) fn is_active_player_choice(ability: &ResolvedAbility) -> bool {
+    matches!(
+        &ability.effect,
+        Effect::Choose {
+            choice_type: ChoiceType::Player {
+                population: PlayerChoicePopulation::ActivePlayers,
+                ..
+            },
+            selection: TargetSelectionMode::Chosen,
+            ..
+        }
+    )
+}
+
 /// CR 805.9 + CR 608.2d: Outside a shared-team turn there is only one active
 /// player, so an active-player instruction has exactly one legal announcement.
 /// Bind that forced value at the mutable chain seam without publishing a

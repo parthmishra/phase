@@ -10593,7 +10593,7 @@ fn resolve_chain_body(
         }
         inline_choice_owned = owned;
         (&inline_choice_owned, true)
-    } else {
+    } else if choose::is_active_player_choice(ability) {
         let mut owned = ability.clone();
         if choose::resolve_single_active_player_in_chain(state, &mut owned, events) {
             inline_choice_owned = owned;
@@ -10601,6 +10601,8 @@ fn resolve_chain_body(
         } else {
             (ability, false)
         }
+    } else {
+        (ability, false)
     };
 
     if effect_depends_on_missing_chosen_player(ability) {
