@@ -2075,6 +2075,7 @@ pub(crate) fn resolve_quantity_for_trigger_check(
     controller: PlayerId,
     source_context: Option<&TriggerSourceContext>,
     event: Option<&crate::types::events::GameEvent>,
+    scoped_player: Option<PlayerId>,
 ) -> i32 {
     // CR 603.4 + CR 102.1: Derive the "scoped player" from the
     // triggering event so `PlayerScope::ScopedPlayer` (e.g. "that player has
@@ -2088,8 +2089,9 @@ pub(crate) fn resolve_quantity_for_trigger_check(
     // unrelated in-flight resolution in the same step (Keeper of the Accord
     // intervening-if at opponent end step — issue #1323).
     let resolution_event = event.or(state.current_trigger_event.as_ref());
-    let scoped_player =
-        resolution_event.and_then(|e| crate::game::targeting::extract_player_from_event(e, state));
+    let scoped_player = scoped_player.or_else(|| {
+        resolution_event.and_then(|e| crate::game::targeting::extract_player_from_event(e, state))
+    });
     let ctx = QuantityContext {
         entering: None,
         source: source_context
@@ -2166,6 +2168,7 @@ pub(crate) fn resolve_player_scope_for_trigger_check(
     controller: PlayerId,
     source_context: Option<&TriggerSourceContext>,
     event: Option<&crate::types::events::GameEvent>,
+    scoped_player: Option<PlayerId>,
 ) -> Option<PlayerId> {
     if scope.duration_timing_only() {
         return None;
@@ -2176,8 +2179,9 @@ pub(crate) fn resolve_player_scope_for_trigger_check(
     // the same step (issue #1323). Same precedence as the `scoped_player`
     // derivation in `resolve_quantity_for_trigger_check`.
     let resolution_event = event.or(state.current_trigger_event.as_ref());
-    let scoped_player =
-        resolution_event.and_then(|e| crate::game::targeting::extract_player_from_event(e, state));
+    let scoped_player = scoped_player.or_else(|| {
+        resolution_event.and_then(|e| crate::game::targeting::extract_player_from_event(e, state))
+    });
 
     // CR 603.4 + CR 109.4: "that player" is an ANAPHOR — it denotes nobody when
     // the triggering event names nobody. Fail closed here rather than let
@@ -18197,13 +18201,13 @@ mod tests {
             state.current_trigger_event.is_none(),
             "detection path requires current_trigger_event to be None"
         );
-        let count = resolve_quantity_for_trigger_check(&state, &expr, p0, None, Some(&event));
+        let count = resolve_quantity_for_trigger_check(&state, &expr, p0, None, Some(&event), None);
         assert_eq!(count, 1, "P2 is P1's un-attacked opponent → count 1");
 
         // CONTROL: P1 attacks both P0 and P2 (every opponent attacked) → count 0.
         let (state, attacker) = build_state(&[p0, p2]);
         let event = attack_event(attacker, &[p0, p2]);
-        let count = resolve_quantity_for_trigger_check(&state, &expr, p0, None, Some(&event));
+        let count = resolve_quantity_for_trigger_check(&state, &expr, p0, None, Some(&event), None);
         assert_eq!(count, 0, "every opponent of P1 is attacked → count 0");
     }
 

@@ -946,6 +946,7 @@ pub(crate) fn bind_resolution_scope(
         } => Some(TriggeredResolutionScope {
             condition: condition.as_ref(),
             controller: entry.controller,
+            scoped_player: entry.ability().and_then(|ability| ability.scoped_player),
             trigger_source: entry
                 .ability()
                 .and_then(|ability| ability.trigger_source.as_ref()),
@@ -971,6 +972,9 @@ pub(crate) fn bind_resolution_scope(
 pub(crate) struct TriggeredResolutionScope<'a> {
     pub condition: Option<&'a TriggerCondition>,
     pub controller: PlayerId,
+    /// CR 805.4d: Individual participant bound when a shared-team phase
+    /// creates one firing per named player.
+    pub scoped_player: Option<PlayerId>,
     pub trigger_source: Option<&'a TriggerSourceContext>,
     pub trigger_event: Option<&'a GameEvent>,
     pub subject_match_count: Option<u32>,
@@ -993,12 +997,13 @@ pub(crate) fn bind_triggered_resolution_scope(
     // CR 603.4: Intervening-if condition rechecked at resolution time.
     if let Some(scope) = &triggered {
         if let Some(condition) = scope.condition {
-            if !super::triggers::check_trigger_condition_with_source(
+            if !super::triggers::check_trigger_condition_with_source_for_scoped_player(
                 state,
                 condition,
                 scope.controller,
                 scope.trigger_source,
                 scope.trigger_event,
+                scope.scoped_player,
             ) {
                 return false;
             }
@@ -14023,6 +14028,7 @@ mod tests {
                 Some(TriggeredResolutionScope {
                     condition: None,
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: Some(&event_a),
                     subject_match_count: Some(4),
@@ -14048,6 +14054,7 @@ mod tests {
                 Some(TriggeredResolutionScope {
                     condition: None,
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: Some(&event_a),
                     subject_match_count: None,
@@ -14074,6 +14081,7 @@ mod tests {
                 Some(TriggeredResolutionScope {
                     condition: None,
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: None,
                     subject_match_count: Some(2),
@@ -14123,6 +14131,7 @@ mod tests {
                     // `setup()` is a 20-life board, so this is FALSE.
                     condition: Some(&TriggerCondition::LifeTotalGE { minimum: 99 }),
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: Some(&event_a),
                     subject_match_count: Some(4),
@@ -14153,6 +14162,7 @@ mod tests {
                 Some(TriggeredResolutionScope {
                     condition: Some(&TriggerCondition::LifeTotalGE { minimum: 5 }),
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: Some(&event_a),
                     subject_match_count: Some(4),
@@ -14201,6 +14211,7 @@ mod tests {
                 Some(TriggeredResolutionScope {
                     condition: Some(&TriggerCondition::LifeTotalGE { minimum: 5 }),
                     controller: PlayerId(0),
+                    scoped_player: None,
                     trigger_source: None,
                     trigger_event: Some(&event_a),
                     subject_match_count: Some(3),

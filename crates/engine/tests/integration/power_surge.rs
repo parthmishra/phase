@@ -22,6 +22,7 @@ use engine::types::FormatConfig;
 use crate::support::shared_card_db;
 
 const POWER_SURGE: &str = "Power Surge";
+const ASYLUM_VISITOR: &str = "Asylum Visitor";
 const P2: PlayerId = PlayerId(2);
 
 fn fixture_db() -> &'static engine::database::card_db::CardDatabase {
@@ -374,5 +375,98 @@ fn two_headed_giant_power_surge_fans_out_per_active_team_player() {
         engine::game::players::team_life_total(runner.state(), P0),
         team_life_before - 4,
         "the two individual damage events reduce the shared 2HG life total by four"
+    );
+}
+
+/// CR 603.4 + CR 805.4d: An intervening-if on an each-player phase trigger is
+/// checked once for each active-team participant, and the same participant is
+/// checked again at resolution. P0 is empty while P1 is not, so only P0's
+/// firing exists; giving P0 a card before resolution then makes that firing do
+/// nothing.
+#[test]
+fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
+    let db = fixture_db();
+    let mut scenario = GameScenario::new_with_format(FormatConfig::two_headed_giant(), 4, 42);
+    scenario.at_phase(Phase::Untap);
+    let asylum_visitor = scenario.add_real_card(P2, ASYLUM_VISITOR, Zone::Battlefield, db);
+    scenario.add_card_to_hand(P1, "P1 held card");
+    let p0_late_card = scenario.add_card_to_library_top(P0, "P0 late card");
+    let mut runner = scenario.build();
+    engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
+
+    runner.state_mut().active_player = P0;
+    runner.state_mut().priority_player = P0;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P0 };
+    engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), asylum_visitor);
+    assert_eq!(
+        runner.state().objects[&asylum_visitor].trigger_definitions[0]
+            .definition()
+            .phase_fanout,
+        PhaseTriggerFanout::EachPlayer,
+        "Asylum Visitor's condition names the individual upkeep player"
+    );
+
+    runner.advance_to_upkeep();
+    let asylum_entries: Vec<_> = runner
+        .state()
+        .stack
+        .iter()
+        .filter(|entry| entry.source_id == asylum_visitor)
+        .collect();
+    assert_eq!(
+        asylum_entries.len(),
+        1,
+        "only empty-handed P0 may create an Asylum Visitor firing"
+    );
+    assert_eq!(
+        asylum_entries[0]
+            .ability()
+            .expect("triggered ability")
+            .scoped_player,
+        Some(P0),
+        "the pending firing must retain the participant whose condition passed"
+    );
+
+    let p2_hand_before = runner
+        .state()
+        .players
+        .iter()
+        .find(|player| player.id == P2)
+        .expect("P2")
+        .hand
+        .len();
+    let p2_life_before = engine::game::players::team_life_total(runner.state(), P2);
+    engine::game::zones::move_to_zone(
+        runner.state_mut(),
+        p0_late_card,
+        Zone::Hand,
+        &mut Vec::new(),
+    );
+
+    for _ in 0..16 {
+        if runner.state().stack.is_empty() {
+            break;
+        }
+        runner
+            .act(GameAction::PassPriority)
+            .expect("priority passing must settle Asylum Visitor's trigger");
+    }
+    assert!(runner.state().stack.is_empty());
+    assert_eq!(
+        runner
+            .state()
+            .players
+            .iter()
+            .find(|player| player.id == P2)
+            .expect("P2")
+            .hand
+            .len(),
+        p2_hand_before,
+        "the resolution-time CR 603.4 recheck must prevent P2 from drawing"
+    );
+    assert_eq!(
+        engine::game::players::team_life_total(runner.state(), P2),
+        p2_life_before,
+        "the failed recheck must also prevent the life loss"
     );
 }

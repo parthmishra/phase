@@ -2690,24 +2690,6 @@ fn collect_matching_triggers_inner(
                     .first()
                     .cloned()
                     .expect("trigger event batch is never empty");
-                // Batched triggers already check their fire-time condition in
-                // `matching_batched_trigger_events` against the full candidate
-                // event before it is reduced to the resolution context. Rechecking
-                // here would make event-count qualifiers read the narrowed context
-                // instead of the declaration that caused the trigger.
-                if !trig_def.batched {
-                    if let Some(ref condition) = trig_def.condition {
-                        if !check_trigger_condition_with_source(
-                            state,
-                            condition,
-                            controller,
-                            Some(&source_context),
-                            Some(&trigger_event),
-                        ) {
-                            continue;
-                        }
-                    }
-                }
                 // CR 603.2c: For batched triggers, stash the filtered subject
                 // count so the resolved ability's `EventContextAmount` reads
                 // "that many" as the number of matching subjects (Dragons that
@@ -2725,6 +2707,33 @@ fn collect_matching_triggers_inner(
                     None
                 };
                 for scoped_player in scoped_phase_players.iter().copied() {
+                    // Batched triggers already check their fire-time condition
+                    // in `matching_batched_trigger_events` against the full
+                    // candidate event before it is reduced to the resolution
+                    // context. Rechecking here would make event-count qualifiers
+                    // read the narrowed context instead of the declaration that
+                    // caused the trigger.
+                    //
+                    // CR 603.4 + CR 805.4d: A non-batched shared-phase trigger
+                    // checks its intervening-if separately for each participant
+                    // it names. The PhaseChanged event identifies only the team
+                    // representative, so the individual binding must be explicit.
+                    if !trig_def.batched {
+                        if let Some(ref condition) = trig_def.condition {
+                            let phase_participant = matches!(trig_def.mode, TriggerMode::Phase)
+                                .then_some(scoped_player);
+                            if !check_trigger_condition_with_source_for_scoped_player(
+                                state,
+                                condition,
+                                controller,
+                                Some(&source_context),
+                                Some(&trigger_event),
+                                phase_participant,
+                            ) {
+                                continue;
+                            }
+                        }
+                    }
                     let mut pending_ability = ability.clone();
                     // CR 805.4d: Every shared-turn firing owns the appropriate
                     // individual player binding before it becomes a pending
@@ -8668,6 +8677,7 @@ fn resolve_accepted_triggered_mana_body(
         Some(super::stack::TriggeredResolutionScope {
             condition: trigger.condition.as_ref(),
             controller: trigger.controller,
+            scoped_player: trigger.ability.scoped_player,
             trigger_source: trigger.ability.trigger_source.as_ref(),
             trigger_event: trigger.trigger_event.as_ref(),
             subject_match_count: trigger.subject_match_count,
@@ -12847,6 +12857,28 @@ pub(crate) fn check_trigger_condition_with_source(
     source_context: Option<&TriggerSourceContext>,
     trigger_event: Option<&GameEvent>,
 ) -> bool {
+    check_trigger_condition_with_source_for_scoped_player(
+        state,
+        condition,
+        controller,
+        source_context,
+        trigger_event,
+        None,
+    )
+}
+
+/// CR 603.4 + CR 805.4d: Evaluate an intervening-if with an explicit player
+/// bound by a shared-team phase firing. The binding is supplied at collection
+/// and retained on the resolving ability, so both CR 603.4 checks inspect the
+/// same individual player rather than the team's active-player representative.
+pub(crate) fn check_trigger_condition_with_source_for_scoped_player(
+    state: &GameState,
+    condition: &TriggerCondition,
+    controller: PlayerId,
+    source_context: Option<&TriggerSourceContext>,
+    trigger_event: Option<&GameEvent>,
+    scoped_player: Option<PlayerId>,
+) -> bool {
     if trigger_event.is_some_and(|event| !zone_changed_condition_provenance_is_coherent(event)) {
         return false;
     }
@@ -12868,6 +12900,7 @@ pub(crate) fn check_trigger_condition_with_source(
         controller,
         source_context,
         trigger_event,
+        scoped_player,
     ) {
         return false;
     }
@@ -12878,6 +12911,7 @@ pub(crate) fn check_trigger_condition_with_source(
         controller,
         source_context,
         trigger_event,
+        scoped_player,
     )
 }
 
@@ -12903,6 +12937,7 @@ fn trigger_condition_designation_anchors_resolvable(
     controller: PlayerId,
     source_context: Option<&TriggerSourceContext>,
     trigger_event: Option<&GameEvent>,
+    scoped_player: Option<PlayerId>,
 ) -> bool {
     if let Some(scope) = condition.designation_player_anchor() {
         return crate::game::quantity::resolve_player_scope_for_trigger_check(
@@ -12911,6 +12946,7 @@ fn trigger_condition_designation_anchors_resolvable(
             controller,
             source_context,
             trigger_event,
+            scoped_player,
         )
         .is_some();
     }
@@ -12923,6 +12959,7 @@ fn trigger_condition_designation_anchors_resolvable(
                     controller,
                     source_context,
                     trigger_event,
+                    scoped_player,
                 )
             })
         }
@@ -12932,6 +12969,7 @@ fn trigger_condition_designation_anchors_resolvable(
             controller,
             source_context,
             trigger_event,
+            scoped_player,
         ),
         _ => true,
     }
@@ -12946,6 +12984,7 @@ fn evaluate_trigger_condition_with_source(
     controller: PlayerId,
     source_context: Option<&TriggerSourceContext>,
     trigger_event: Option<&GameEvent>,
+    scoped_player: Option<PlayerId>,
 ) -> bool {
     let source_id = source_context.map(|source| source.identity.reference.object_id);
     match condition {
@@ -13689,6 +13728,7 @@ fn evaluate_trigger_condition_with_source(
                 controller,
                 source_context,
                 trigger_event,
+                scoped_player,
             );
             let rhs = crate::game::quantity::resolve_quantity_for_trigger_check(
                 state,
@@ -13696,6 +13736,7 @@ fn evaluate_trigger_condition_with_source(
                 controller,
                 source_context,
                 trigger_event,
+                scoped_player,
             );
             comparator.evaluate(lhs, rhs)
         }
@@ -13765,6 +13806,7 @@ fn evaluate_trigger_condition_with_source(
                 controller,
                 source_context,
                 trigger_event,
+                scoped_player,
             )
             .is_some_and(|pid| eval_is_monarch(state, pid))
         }
@@ -13986,6 +14028,7 @@ fn evaluate_trigger_condition_with_source(
                 controller,
                 source_context,
                 trigger_event,
+                scoped_player,
             )
         }),
         TriggerCondition::Or { conditions } => conditions.iter().any(|c| {
@@ -13995,6 +14038,7 @@ fn evaluate_trigger_condition_with_source(
                 controller,
                 source_context,
                 trigger_event,
+                scoped_player,
             )
         }),
         // CR 603.4 + CR 608.2c: Logical negation — invert the wrapped condition's
@@ -14006,6 +14050,7 @@ fn evaluate_trigger_condition_with_source(
             controller,
             source_context,
             trigger_event,
+            scoped_player,
         ),
         // CR 309.7: True when the controller has completed a dungeon. `specific: None`
         // matches "any dungeon"; `specific: Some(d)` matches dungeon `d`. Negation
@@ -28973,6 +29018,7 @@ pub mod tests {
                 },
                 PlayerId(0),
                 Some(&source_context),
+                None,
                 None,
             ),
             7,

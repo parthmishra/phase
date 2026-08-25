@@ -16467,6 +16467,22 @@ fn phase_trigger_without_participant_reference_stays_single() {
     assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
 }
 
+/// CR 805.4d: A plural object pronoun is not a reference to the players whose
+/// shared end step began. Akal Pakal's "one of them" denotes the two looked-at
+/// cards, so the trigger occurs once for the shared phase rather than once per
+/// active-team player.
+#[test]
+fn phase_trigger_object_pronoun_does_not_create_participant_fanout() {
+    let def = parse_trigger_line(
+        "At the beginning of each player's end step, if an artifact entered the battlefield under your control this turn, look at the top two cards of your library. Put one of them into your hand and the other into your graveyard.",
+        "Akal Pakal, First Among Equals",
+    );
+
+    assert_eq!(def.mode, TriggerMode::Phase);
+    assert_eq!(def.phase, Some(Phase::End));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
+}
+
 /// CR 805.4d: The opponent population is retained separately from the general
 /// player population so a shared turn only instantiates appropriate opponents.
 #[test]
