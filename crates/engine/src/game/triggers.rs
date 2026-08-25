@@ -2427,7 +2427,12 @@ fn collect_matching_triggers_inner(
                     // CR 508.5 + CR 603.4: Attacks triggers with intervening-if
                     // clauses read the defending player from each expanded attack
                     // event — the batch-level event is the wrong context.
-                    let skip_early_condition = matches!(trig_def.mode, TriggerMode::Attacks);
+                    // CR 603.4 + CR 805.4d: Phase triggers that fan out across
+                    // a shared turn must check the condition after binding each
+                    // participant below. The PhaseChanged event carries only
+                    // the team representative and cannot answer for teammates.
+                    let skip_early_condition =
+                        matches!(trig_def.mode, TriggerMode::Attacks | TriggerMode::Phase);
                     if !skip_early_condition
                         && !check_trigger_condition_with_source(
                             state,

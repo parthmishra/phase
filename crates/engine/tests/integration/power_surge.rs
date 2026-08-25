@@ -470,3 +470,42 @@ fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
         "the failed recheck must also prevent the life loss"
     );
 }
+
+/// CR 603.4 + CR 805.4d: A failing condition for the shared turn's team
+/// representative must not suppress a teammate's independently valid firing.
+#[test]
+fn two_headed_giant_phase_intervening_if_does_not_pre_gate_on_representative() {
+    let db = fixture_db();
+    let mut scenario = GameScenario::new_with_format(FormatConfig::two_headed_giant(), 4, 42);
+    scenario.at_phase(Phase::Untap);
+    let asylum_visitor = scenario.add_real_card(P2, ASYLUM_VISITOR, Zone::Battlefield, db);
+    scenario.add_card_to_hand(P0, "P0 held card");
+    let mut runner = scenario.build();
+    engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
+
+    runner.state_mut().active_player = P0;
+    runner.state_mut().priority_player = P0;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P0 };
+    engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), asylum_visitor);
+
+    runner.advance_to_upkeep();
+    let asylum_entries: Vec<_> = runner
+        .state()
+        .stack
+        .iter()
+        .filter(|entry| entry.source_id == asylum_visitor)
+        .collect();
+    assert_eq!(
+        asylum_entries.len(),
+        1,
+        "P0's failed condition must not suppress empty-handed P1's firing"
+    );
+    assert_eq!(
+        asylum_entries[0]
+            .ability()
+            .expect("triggered ability")
+            .scoped_player,
+        Some(P1),
+        "the surviving firing must retain P1 as its bound participant"
+    );
+}
