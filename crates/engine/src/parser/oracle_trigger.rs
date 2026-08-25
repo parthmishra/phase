@@ -54,12 +54,12 @@ use crate::types::ability::{
     CastVariantPaid, CoinFlipResult, Comparator, ControllerRef, CountScope, CounterTriggerFilter,
     DamageAmountScope, DamageAmountThreshold, DamageChannel, DamageKindFilter,
     DestinationConstraint, DieResultFilter, Effect, EffectScope, FilterProp,
-    ManaAbilityProducedFilter, ObjectScope, OriginConstraint, ParsedCondition, PlayerFilter,
-    PlayerRelation, PlayerScope, PtStat, PtValueScope, QuantityExpr, QuantityRef, RenownSubject,
-    SacrificeAggregateStat, SacrificeCost, SacrificeRequirement, SharedQuality, StaticCondition,
-    SubAbilityLink, TapCreaturesRequirement, TapStateChange, TargetFilter, TriggerCondition,
-    TriggerConstraint, TriggerDefinition, TypeFilter, TypedFilter, UnlessPayModifier,
-    ZoneChangeClause,
+    ManaAbilityProducedFilter, ObjectScope, OriginConstraint, ParsedCondition, PhaseTriggerFanout,
+    PlayerFilter, PlayerRelation, PlayerScope, PtStat, PtValueScope, QuantityExpr, QuantityRef,
+    RenownSubject, SacrificeAggregateStat, SacrificeCost, SacrificeRequirement, SharedQuality,
+    StaticCondition, SubAbilityLink, TapCreaturesRequirement, TapStateChange, TargetFilter,
+    TriggerCondition, TriggerConstraint, TriggerDefinition, TypeFilter, TypedFilter,
+    UnlessPayModifier, ZoneChangeClause,
 };
 use crate::types::card_type::{is_land_subtype, CoreType};
 use crate::types::counter::CounterType;
@@ -1972,6 +1972,16 @@ pub(crate) fn lower_trigger_ir(ir: &TriggerIr) -> TriggerDefinition {
         def.batched = execute.as_deref().is_some_and(|ability| {
             !matches!(ability.effect.as_ref(), Effect::Unimplemented { .. })
         });
+    }
+
+    // CR 805.4d: "each player's/opponent's" alone does not multiply a
+    // beginning-of-phase trigger during a shared team turn. It fans out only
+    // when the trigger condition, effect, or intervening-if refers back to that
+    // participant. `try_parse_phase_trigger` preserves the grammatical
+    // population; this lowering seam has the complete effect text and can
+    // distinguish the multiplying class from an ordinary once-per-phase body.
+    if !effect_refers_to_phase_participant(&modifiers.effect_lower) {
+        def.phase_fanout = PhaseTriggerFanout::Single;
     }
 
     def.execute = execute;
@@ -15225,6 +15235,53 @@ fn parse_enchanted_controller_phrase(input: &str) -> OracleResult<'_, ()> {
     Ok((input, ()))
 }
 
+/// Parse the participant named by an "each player's/opponent's" phase phrase.
+/// This is only the grammatical population; lowering below retains it as
+/// fanout only when the effect refers back to that participant.
+fn parse_phase_trigger_fanout(input: &str) -> OracleResult<'_, PhaseTriggerFanout> {
+    alt((
+        value(
+            PhaseTriggerFanout::EachPlayer,
+            alt((
+                tag("each player's "),
+                tag("each player\u{2019}s "),
+                tag("each players "),
+            )),
+        ),
+        value(
+            PhaseTriggerFanout::EachOpponent,
+            alt((
+                tag("each opponent's "),
+                tag("each opponent\u{2019}s "),
+                tag("each opponents "),
+            )),
+        ),
+    ))
+    .parse(input)
+}
+
+/// CR 805.4d: Shared-team phase wording fans out only if the trigger
+/// condition, effect, or intervening-if refers to the individual participant.
+/// The trigger body is already lowercase here. Each referent is recognized at
+/// a word boundary by the shared nom scanner rather than substring dispatch.
+fn effect_refers_to_phase_participant(effect_lower: &str) -> bool {
+    nom_primitives::scan_at_word_boundaries(effect_lower, |input| {
+        value(
+            (),
+            alt((
+                tag("that player"),
+                tag("that opponent"),
+                tag("active player"),
+                tag("they"),
+                tag("them"),
+                tag("their"),
+            )),
+        )
+        .parse(input)
+    })
+    .is_some()
+}
+
 /// Parse phase triggers: "At the beginning of your upkeep/end step/combat/draw step"
 fn try_parse_phase_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefinition)> {
     // CR 511.2: "at end of combat" triggers as the end of combat step begins.
@@ -15260,6 +15317,9 @@ fn try_parse_phase_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefinitio
     let phase = scan_for_phase(phase_text);
     let is_generic_main_phase = phase.is_none() && scan_for_generic_main_phase(phase_text);
     def.phase = phase;
+    def.phase_fanout = parse_phase_trigger_fanout(phase_text)
+        .map(|(_, fanout)| fanout)
+        .unwrap_or_default();
 
     // CR 503.1a / CR 507.1: Parse possessive qualifier and trailing suffix for turn constraint.
     // Uses nom prefix dispatch: opponent possessives checked before bare "your" to avoid

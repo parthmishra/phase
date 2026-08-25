@@ -16416,6 +16416,7 @@ fn phase_trigger_each_players_upkeep_deals_damage_to_them() {
     );
     assert_eq!(def.mode, TriggerMode::Phase);
     assert_eq!(def.phase, Some(Phase::Upkeep));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::EachPlayer);
     match def.execute.as_ref().map(|ability| ability.effect.as_ref()) {
         Some(Effect::DealDamage { target, amount, .. }) => {
             assert_eq!(target, &TargetFilter::ScopedPlayer);
@@ -16435,6 +16436,7 @@ fn power_surge_phase_trigger_uses_scoped_beginning_of_turn_land_snapshot() {
     );
     assert_eq!(def.mode, TriggerMode::Phase);
     assert_eq!(def.phase, Some(Phase::Upkeep));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::EachPlayer);
     match def.execute.as_ref().map(|ability| ability.effect.as_ref()) {
         Some(Effect::DealDamage { target, amount, .. }) => {
             assert_eq!(target, &TargetFilter::ScopedPlayer);
@@ -16449,6 +16451,34 @@ fn power_surge_phase_trigger_uses_scoped_beginning_of_turn_land_snapshot() {
         }
         other => panic!("expected Power Surge DealDamage, got {other:?}"),
     }
+}
+
+/// CR 805.4d: Merely saying "each player's upkeep" does not multiply a
+/// shared-team trigger when the ability never refers to the individual player.
+#[test]
+fn phase_trigger_without_participant_reference_stays_single() {
+    let def = parse_trigger_line(
+        "At the beginning of each player's upkeep, you gain 1 life.",
+        "Test Enchantment",
+    );
+
+    assert_eq!(def.mode, TriggerMode::Phase);
+    assert_eq!(def.phase, Some(Phase::Upkeep));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
+}
+
+/// CR 805.4d: The opponent population is retained separately from the general
+/// player population so a shared turn only instantiates appropriate opponents.
+#[test]
+fn phase_trigger_each_opponents_reference_preserves_opponent_fanout() {
+    let def = parse_trigger_line(
+        "At the beginning of each opponent's upkeep, that opponent loses 1 life.",
+        "Test Enchantment",
+    );
+
+    assert_eq!(def.mode, TriggerMode::Phase);
+    assert_eq!(def.phase, Some(Phase::Upkeep));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::EachOpponent);
 }
 
 /// CR 603.2 + CR 608.2c: Razorkin Needlehead — "Whenever an opponent draws a

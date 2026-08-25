@@ -8,11 +8,11 @@ use crate::types::ability::{
     BounceSelection, CardTypeSetSource, CastManaSpentMetric, ChosenAttribute, CommanderOwnership,
     ControllerRef, CopyRetargetPermission, DamageAmountScope, DamageAmountThreshold,
     DamageKindFilter, DelayedTriggerCondition, DurationEvent, Effect, FilterProp, ModalChoice,
-    ObjectScope, OriginConstraint, PlayerFilter, PlayerScope, PtValue, QuantityExpr, QuantityRef,
-    RenownSubject, ResolvedAbility, SacrificeCost, StaticCondition, TargetFilter, TargetRef,
-    TributeOutcome, TriggerCondition, TriggerConstraint, TriggerDefinition,
-    TriggerDefinitionOccurrenceRef, TriggerDefinitionRef, TriggerEntry, TriggerGrantProducerKey,
-    TypeFilter, TypedFilter,
+    ObjectScope, OriginConstraint, PhaseTriggerFanout, PlayerFilter, PlayerScope, PtValue,
+    QuantityExpr, QuantityRef, RenownSubject, ResolvedAbility, SacrificeCost, StaticCondition,
+    TargetFilter, TargetRef, TributeOutcome, TriggerCondition, TriggerConstraint,
+    TriggerDefinition, TriggerDefinitionOccurrenceRef, TriggerDefinitionRef, TriggerEntry,
+    TriggerGrantProducerKey, TypeFilter, TypedFilter,
 };
 #[cfg(test)]
 use crate::types::ability::{EffectScope, TapStateChange};
@@ -63,6 +63,39 @@ use super::stack;
 
 // Re-export so existing paths stay valid.
 pub use super::trigger_matchers::{build_trigger_registry, trigger_matcher, trigger_registry};
+
+/// CR 805.4d: Expand a shared-team phase trigger into the individual players
+/// its parsed participant scope names. Outside shared-team turns there is only
+/// one active player, so the same typed scope naturally produces zero or one
+/// firing. This is a collection-time cardinality decision; the ordinary
+/// `(source, trigger index)` event dedup remains definition-level.
+fn phase_trigger_scoped_players(
+    state: &GameState,
+    trigger: &TriggerDefinition,
+    controller: PlayerId,
+) -> Vec<PlayerId> {
+    if !matches!(trigger.mode, TriggerMode::Phase) {
+        return vec![state.active_player];
+    }
+
+    match trigger.phase_fanout {
+        PhaseTriggerFanout::Single => vec![state.active_player],
+        PhaseTriggerFanout::EachPlayer | PhaseTriggerFanout::EachOpponent => {
+            let active_participants = if state.format_config.topology().has_shared_team_turns() {
+                super::topology::team_members(state, state.active_player)
+            } else {
+                vec![state.active_player]
+            };
+            active_participants
+                .into_iter()
+                .filter(|participant| {
+                    matches!(trigger.phase_fanout, PhaseTriggerFanout::EachPlayer)
+                        || super::topology::is_opponent(state, controller, *participant)
+                })
+                .collect()
+        }
+    }
+}
 
 /// Function signature for trigger matchers: returns true if event matches the trigger.
 pub type TriggerMatcher = fn(
@@ -2642,6 +2675,7 @@ fn collect_matching_triggers_inner(
             } else {
                 vec![vec![event.clone()]]
             };
+            let scoped_phase_players = phase_trigger_scoped_players(state, trig_def, controller);
             for trigger_events in trigger_event_batches {
                 if batched_zone_change_replay_guard_applies(trig_def, &trigger_events)
                     && batched_zone_change_already_collected(
@@ -2690,69 +2724,77 @@ fn collect_matching_triggers_inner(
                 } else {
                     None
                 };
-                let mut pending_ability = ability.clone();
-                if let GameEvent::CreatureEnlisted {
-                    tapped_snapshot, ..
-                } = &trigger_event
-                {
-                    // CR 608.2h + CR 113.7a: Enlist's linked trigger resolves
-                    // after the tapped creature may have left the battlefield, so
-                    // seed the cost-time LKI snapshot for "that creature's power."
-                    pending_ability
-                        .set_effect_context_object_recursive(tapped_snapshot.as_ref().clone());
-                }
-                pending.push(MatchedTrigger {
-                    trig_idx,
-                    definition_ref: definition_ref.clone(),
-                    pending: PendingTrigger {
-                        source_id: obj_id,
-                        controller,
-                        condition: trig_def
-                            .condition
-                            .as_ref()
-                            .and_then(|condition| stack_condition_for_trigger(trig_def, condition)),
-                        ability: Box::new(pending_ability),
-                        timestamp,
-                        target_constraints: trig_def
-                            .execute
-                            .as_ref()
-                            .map(|execute| execute.target_constraints.clone())
-                            .unwrap_or_default(),
-                        distribute: trig_def
-                            .execute
-                            .as_ref()
-                            .and_then(|execute| execute.distribute.clone()),
-                        trigger_event: Some(trigger_event),
-                        modal: modal.clone(),
-                        mode_abilities: mode_abilities.clone(),
-                        description: trig_def.description.clone(),
-                        may_trigger_origin: match granted_keyword_kind {
-                            Some(kind) => Some(MayTriggerOrigin::Keyword { keyword: kind }),
-                            None => definition_ref.clone().map(|definition_ref| {
-                                MayTriggerOrigin::Definition { definition_ref }
+                for scoped_player in scoped_phase_players.iter().copied() {
+                    let mut pending_ability = ability.clone();
+                    // CR 805.4d: Every shared-turn firing owns the appropriate
+                    // individual player binding before it becomes a pending
+                    // trigger. The effect and all nested quantities therefore
+                    // read that player's row rather than the team representative.
+                    if matches!(trig_def.mode, TriggerMode::Phase) {
+                        pending_ability.set_scoped_player_recursive(scoped_player);
+                    }
+                    if let GameEvent::CreatureEnlisted {
+                        tapped_snapshot, ..
+                    } = &trigger_event
+                    {
+                        // CR 608.2h + CR 113.7a: Enlist's linked trigger resolves
+                        // after the tapped creature may have left the battlefield, so
+                        // seed the cost-time LKI snapshot for "that creature's power."
+                        pending_ability
+                            .set_effect_context_object_recursive(tapped_snapshot.as_ref().clone());
+                    }
+                    pending.push(MatchedTrigger {
+                        trig_idx,
+                        definition_ref: definition_ref.clone(),
+                        pending: PendingTrigger {
+                            source_id: obj_id,
+                            controller,
+                            condition: trig_def.condition.as_ref().and_then(|condition| {
+                                stack_condition_for_trigger(trig_def, condition)
                             }),
+                            ability: Box::new(pending_ability),
+                            timestamp,
+                            target_constraints: trig_def
+                                .execute
+                                .as_ref()
+                                .map(|execute| execute.target_constraints.clone())
+                                .unwrap_or_default(),
+                            distribute: trig_def
+                                .execute
+                                .as_ref()
+                                .and_then(|execute| execute.distribute.clone()),
+                            trigger_event: Some(trigger_event.clone()),
+                            modal: modal.clone(),
+                            mode_abilities: mode_abilities.clone(),
+                            description: trig_def.description.clone(),
+                            may_trigger_origin: match granted_keyword_kind {
+                                Some(kind) => Some(MayTriggerOrigin::Keyword { keyword: kind }),
+                                None => definition_ref.clone().map(|definition_ref| {
+                                    MayTriggerOrigin::Definition { definition_ref }
+                                }),
+                            },
+                            subject_match_count,
+                            die_result: None,
+                            provenance: None,
                         },
-                        subject_match_count,
-                        die_result: None,
-                        provenance: None,
-                    },
-                    trigger_events,
-                    // CR 603.2c + CR 120.4b: must consult the SAME
-                    // firing-granularity authority as the skip above. Note this
-                    // is deliberately NOT `trig_def.batched`, which additionally
-                    // means "count subjects" — see `fires_once_per_batch`.
-                    //
-                    // WIDENING THIS FIELD TOUCHES EIGHT CONSUMERS, not just the
-                    // `batched_this_pass` inserts: those five inserts, the
-                    // `RecordBatchedZoneChanges` gate, the batched zone-change
-                    // replay recorder, and the `debug_assert!(!matched.batched)`
-                    // on the settlement path. The two zone-change consumers are
-                    // additionally gated on `batched_zone_change_batch`, which is
-                    // false for a `DamageDealt` batch, so all eight are safe for
-                    // this axis today — but re-check every one before widening.
-                    batched: fires_once_per_batch(trig_def),
-                    constraint: trig_def.constraint.clone(),
-                });
+                        trigger_events: trigger_events.clone(),
+                        // CR 603.2c + CR 120.4b: must consult the SAME
+                        // firing-granularity authority as the skip above. Note this
+                        // is deliberately NOT `trig_def.batched`, which additionally
+                        // means "count subjects" — see `fires_once_per_batch`.
+                        //
+                        // WIDENING THIS FIELD TOUCHES EIGHT CONSUMERS, not just the
+                        // `batched_this_pass` inserts: those five inserts, the
+                        // `RecordBatchedZoneChanges` gate, the batched zone-change
+                        // replay recorder, and the `debug_assert!(!matched.batched)`
+                        // on the settlement path. The two zone-change consumers are
+                        // additionally gated on `batched_zone_change_batch`, which is
+                        // false for a `DamageDealt` batch, so all eight are safe for
+                        // this axis today — but re-check every one before widening.
+                        batched: fires_once_per_batch(trig_def),
+                        constraint: trig_def.constraint.clone(),
+                    });
+                }
             }
         }
     }
@@ -16217,6 +16259,37 @@ pub mod tests {
     /// Helper to create a minimal TriggerDefinition with typed fields.
     fn make_trigger(mode: TriggerMode) -> TriggerDefinition {
         TriggerDefinition::new(mode)
+    }
+
+    /// CR 805.4d: Collection cardinality is typed independently from ordinary
+    /// phase matching. A single trigger remains single, an each-player trigger
+    /// reaches both active teammates, and each-opponent excludes the source's
+    /// own active team while retaining every player on an opposing active team.
+    #[test]
+    fn phase_trigger_scoped_players_respects_shared_team_fanout() {
+        let mut state = GameState::new(
+            crate::types::format::FormatConfig::two_headed_giant(),
+            4,
+            42,
+        );
+        state.active_player = PlayerId(0);
+        let mut trigger = make_trigger(TriggerMode::Phase);
+
+        assert_eq!(
+            phase_trigger_scoped_players(&state, &trigger, PlayerId(2)),
+            vec![PlayerId(0)]
+        );
+        trigger.phase_fanout = PhaseTriggerFanout::EachPlayer;
+        assert_eq!(
+            phase_trigger_scoped_players(&state, &trigger, PlayerId(2)),
+            vec![PlayerId(0), PlayerId(1)]
+        );
+        trigger.phase_fanout = PhaseTriggerFanout::EachOpponent;
+        assert_eq!(
+            phase_trigger_scoped_players(&state, &trigger, PlayerId(2)),
+            vec![PlayerId(0), PlayerId(1)]
+        );
+        assert!(phase_trigger_scoped_players(&state, &trigger, PlayerId(0)).is_empty());
     }
 
     /// CR 102.3 + CR 805.4a: an opponent-turn trigger constraint must read the

@@ -23701,6 +23701,26 @@ pub enum DieResultFilter {
 }
 
 /// Trigger definition with typed fields. Zero params HashMap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PhaseTriggerFanout {
+    /// One trigger for the phase or step, including ordinary "each upkeep"
+    /// wording that does not refer back to an individual player.
+    #[default]
+    Single,
+    /// CR 805.4d: One trigger for each appropriate player on the active team
+    /// when an "each player's" phase trigger refers back to that player.
+    EachPlayer,
+    /// CR 805.4d: One trigger for each appropriate opponent on the active team
+    /// when an "each opponent's" phase trigger refers back to that opponent.
+    EachOpponent,
+}
+
+impl PhaseTriggerFanout {
+    pub fn is_single(&self) -> bool {
+        matches!(self, Self::Single)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TriggerDefinition {
     pub mode: TriggerMode,
@@ -23740,6 +23760,10 @@ pub struct TriggerDefinition {
     pub trigger_zones: Vec<Zone>,
     #[serde(default)]
     pub phase: Option<Phase>,
+    /// CR 805.4d: Shared-team-turn phase triggers that refer to "that player"
+    /// trigger once for each appropriate player, rather than once for the team.
+    #[serde(default, skip_serializing_if = "PhaseTriggerFanout::is_single")]
+    pub phase_fanout: PhaseTriggerFanout,
     #[serde(default)]
     pub optional: bool,
     /// CR 120.3: Filter for combat vs noncombat damage on damage triggers.
@@ -24399,6 +24423,7 @@ impl TriggerDefinition {
             destination_constraint: DestinationConstraint::Any,
             trigger_zones: vec![],
             phase: None,
+            phase_fanout: PhaseTriggerFanout::Single,
             optional: false,
             damage_kind: DamageKindFilter::Any,
             secondary: false,
@@ -29868,6 +29893,7 @@ mod tests {
             destination_constraint: DestinationConstraint::Any,
             trigger_zones: vec![Zone::Battlefield],
             phase: None,
+            phase_fanout: PhaseTriggerFanout::Single,
             optional: false,
             damage_kind: DamageKindFilter::Any,
             secondary: false,
@@ -29899,6 +29925,29 @@ mod tests {
         let json = serde_json::to_string(&trigger).unwrap();
         let deserialized: TriggerDefinition = serde_json::from_str(&json).unwrap();
         assert_eq!(trigger, deserialized);
+    }
+
+    #[test]
+    fn phase_trigger_fanout_roundtrips_and_defaults_to_single() {
+        let mut trigger = TriggerDefinition::new(TriggerMode::Phase);
+        trigger.phase_fanout = PhaseTriggerFanout::EachPlayer;
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(json["phase_fanout"], "EachPlayer");
+        assert_eq!(
+            serde_json::from_value::<TriggerDefinition>(json)
+                .unwrap()
+                .phase_fanout,
+            PhaseTriggerFanout::EachPlayer
+        );
+
+        let legacy = serde_json::to_value(TriggerDefinition::new(TriggerMode::Phase)).unwrap();
+        assert!(legacy.get("phase_fanout").is_none());
+        assert_eq!(
+            serde_json::from_value::<TriggerDefinition>(legacy)
+                .unwrap()
+                .phase_fanout,
+            PhaseTriggerFanout::Single
+        );
     }
 
     #[test]

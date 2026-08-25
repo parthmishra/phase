@@ -8,16 +8,21 @@ use engine::game::scenario::{GameScenario, P0, P1};
 use engine::game::scenario_db::GameScenarioDbExt;
 use engine::game::{layers, turns};
 use engine::types::ability::{
-    ContinuousModification, PlayerScope, QuantityExpr, QuantityRef, StaticDefinition, TargetFilter,
+    ContinuousModification, Effect, PhaseTriggerFanout, PlayerScope, QuantityExpr, QuantityRef,
+    StaticDefinition, TargetFilter, TargetRef,
 };
 use engine::types::actions::GameAction;
+use engine::types::events::GameEvent;
 use engine::types::game_state::{BeginningOfTurnSnapshot, WaitingFor};
 use engine::types::phase::Phase;
+use engine::types::player::PlayerId;
 use engine::types::zones::Zone;
+use engine::types::FormatConfig;
 
 use crate::support::shared_card_db;
 
 const POWER_SURGE: &str = "Power Surge";
+const P2: PlayerId = PlayerId(2);
 
 fn fixture_db() -> &'static engine::database::card_db::CardDatabase {
     shared_card_db().expect("committed integration card fixture must load")
@@ -68,6 +73,13 @@ fn power_surge_damages_the_upkeep_player_from_the_turn_start_snapshot() {
     runner.state_mut().priority_player = P1;
     runner.state_mut().waiting_for = WaitingFor::Priority { player: P1 };
     engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), power_surge);
+    assert_eq!(
+        runner.state().objects[&power_surge].trigger_definitions[0]
+            .definition()
+            .phase_fanout,
+        PhaseTriggerFanout::EachPlayer,
+        "the production export must preserve the CR 805.4d participant scope"
+    );
     assert_eq!(
         runner.state().objects[&power_surge]
             .trigger_definitions
@@ -243,5 +255,124 @@ fn turn_start_snapshot_replacement_invalidates_dynamic_cda_cache() {
         runner.state().objects[&creature].power,
         Some(2),
         "normal turn advancement must expose the fresh snapshot to a previously clean CDA cache"
+    );
+}
+
+/// CR 805.4d: In a shared team turn, an "each player's upkeep" ability whose
+/// effect refers to that player triggers once for each active-team player. Each
+/// firing keeps its own player binding, so the two Power Surge instances read
+/// distinct beginning-of-turn snapshot rows.
+#[test]
+fn two_headed_giant_power_surge_fans_out_per_active_team_player() {
+    let db = fixture_db();
+    assert_power_surge_runtime_tree_supported(db);
+
+    let mut scenario = GameScenario::new_with_format(FormatConfig::two_headed_giant(), 4, 42);
+    scenario.at_phase(Phase::Untap);
+    let power_surge = scenario.add_real_card(P2, POWER_SURGE, Zone::Battlefield, db);
+    scenario.add_land_from_oracle(P0, "P0 Land", "");
+    scenario.add_land_from_oracle(P1, "P1 Land A", "");
+    scenario.add_land_from_oracle(P1, "P1 Land B", "");
+    scenario.add_land_from_oracle(P1, "P1 Land C", "");
+    let mut runner = scenario.build();
+    engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
+
+    runner.state_mut().active_player = P0;
+    runner.state_mut().priority_player = P0;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P0 };
+    engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), power_surge);
+    assert_eq!(
+        runner.state().objects[&power_surge].trigger_definitions[0]
+            .definition()
+            .phase_fanout,
+        PhaseTriggerFanout::EachPlayer,
+        "the production export must preserve the CR 805.4d participant scope"
+    );
+    let turn_number = runner.state().turn_number;
+    runner.state_mut().beginning_of_turn_snapshot = Some(BeginningOfTurnSnapshot {
+        turn_number,
+        untapped_lands_controlled: HashMap::from([(P0, 1), (P1, 3), (P2, 0)]),
+    });
+    let life_before = runner.life(P0);
+    let team_life_before = engine::game::players::team_life_total(runner.state(), P0);
+
+    runner.advance_to_upkeep();
+    let WaitingFor::OrderTriggers { player, triggers } = runner.state().waiting_for.clone() else {
+        panic!(
+            "the two participant-bound firings must reach CR 603.3b ordering, got {:?}",
+            runner.state().waiting_for
+        );
+    };
+    assert_eq!(player, P2, "Power Surge's controller orders its triggers");
+    assert_eq!(
+        triggers.len(),
+        2,
+        "one shared upkeep must collect one firing per active-team player"
+    );
+    runner
+        .act(GameAction::OrderTriggers { order: vec![0, 1] })
+        .expect("the two Power Surge firings must settle onto the stack");
+
+    let scoped_amounts: HashMap<_, _> = runner
+        .state()
+        .stack
+        .iter()
+        .filter(|entry| entry.source_id == power_surge)
+        .map(|entry| {
+            let ability = entry
+                .ability()
+                .expect("Power Surge stack entry must carry its resolved ability");
+            let player = ability
+                .scoped_player
+                .expect("each firing must own one active-team participant");
+            let Effect::DealDamage { amount, .. } = &ability.effect else {
+                panic!("Power Surge stack entry must deal damage");
+            };
+            (
+                player,
+                engine::game::quantity::resolve_quantity_with_targets(
+                    runner.state(),
+                    amount,
+                    ability,
+                ),
+            )
+        })
+        .collect();
+    assert_eq!(
+        scoped_amounts,
+        HashMap::from([(P0, 1), (P1, 3)]),
+        "one shared upkeep must produce distinct P0/P1 snapshot-bound firings"
+    );
+
+    let mut damage_events = Vec::new();
+    for _ in 0..16 {
+        if runner.state().stack.is_empty() {
+            break;
+        }
+        let result = runner
+            .act(GameAction::PassPriority)
+            .expect("priority passing must resolve both Power Surge firings");
+        damage_events.extend(result.events.into_iter().filter_map(|event| match event {
+            GameEvent::DamageDealt {
+                target: TargetRef::Player(player),
+                amount,
+                ..
+            } => Some((player, amount)),
+            _ => None,
+        }));
+    }
+    assert!(runner.state().stack.is_empty());
+    damage_events.sort_by_key(|(player, _)| player.0);
+    assert_eq!(damage_events, vec![(P0, 1), (P1, 3)]);
+    assert_eq!(runner.life(P0), life_before - 1);
+    assert_eq!(
+        runner.life(P1),
+        life_before - 3,
+        "each Power Surge firing deals damage to its own active-team player"
+    );
+    assert_eq!(
+        engine::game::players::team_life_total(runner.state(), P0),
+        team_life_before - 4,
+        "the two individual damage events reduce the shared 2HG life total by four"
     );
 }

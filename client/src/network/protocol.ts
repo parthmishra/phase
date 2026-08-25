@@ -94,6 +94,8 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  * admitted; see the gate for why.
  *
  * Bumps to date:
+ *  29 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
+ *       cardinality and binding for shared-team turns.
  *  28 — GameState.beginning_of_turn_snapshot and
  *       QuantityRef.UntappedLandsAtTurnStart add the serialized historical
  *       value needed by Power Surge-class look-back effects.
@@ -160,7 +162,7 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  *       sub-phase on WaitingFor::MulliganDecision; the MulliganBottomCards
  *       variant was removed
  */
-export const WIRE_PROTOCOL_VERSION = 28 as const;
+export const WIRE_PROTOCOL_VERSION = 29 as const;
 
 export type P2PMessage = P2PAuthorityWire & (
   // `wireProtocolVersion` is optional on both first-contact guest messages:

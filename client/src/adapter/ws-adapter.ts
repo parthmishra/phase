@@ -203,6 +203,9 @@ export class NativeEngineVersionMismatchError extends Error {
  * `crates/server-core/src/protocol.rs`. Bump in lockstep when either side
  * adds, removes, renames, or changes the type of a protocol variant field.
  *
+ * 38 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
+ *      cardinality and binding for shared-team turns. Older peers deserialize
+ *      the affected trigger as a once-per-team definition.
  * 37 — GameState.beginning_of_turn_snapshot and
  *      QuantityRef.UntappedLandsAtTurnStart add the serialized historical
  *      value needed by Power Surge-class look-back effects. An older full-game
@@ -284,7 +287,7 @@ export class NativeEngineVersionMismatchError extends Error {
  *      into a MulliganDecisionPhase::BottomCards sub-phase on
  *      WaitingFor::MulliganDecision.
  */
-export const PROTOCOL_VERSION = 37;
+export const PROTOCOL_VERSION = 38;
 
 /**
  * Lowest server protocol version this client will accept in the handshake.
