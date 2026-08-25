@@ -10630,6 +10630,7 @@ fn quantity_ref_binding_diverges(qty: &QuantityRef) -> bool {
             object_scope_unbound_at_fire_time(*scope)
         }
         QuantityRef::HandSize { player, .. }
+        | QuantityRef::UntappedLandsAtTurnStart { player }
         | QuantityRef::LifeTotal { player }
         | QuantityRef::GraveyardSize { player, .. }
         | QuantityRef::LifeLostThisTurn { player }
@@ -14802,6 +14803,7 @@ fn quantity_ref_refs_cost_paid_object(qty: &QuantityRef) -> bool {
         // carries a `PlayerFilter`, not a `TargetFilter`, so it cannot embed a
         // `CostPaidObject` object reference.
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting

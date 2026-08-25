@@ -3953,6 +3953,39 @@ fn target_filter_has_per_object_condition_property(filter: &TargetFilter) -> boo
 
 // ── Detector J: Duration_ThisTurn ───────────────────────────────────────
 
+fn parse_beginning_of_this_turn_anchor(input: &str) -> nom::IResult<&str, ()> {
+    value(
+        (),
+        (
+            tag("at "),
+            tag("the beginning"),
+            tag(" of "),
+            tag("this turn"),
+        ),
+    )
+    .parse(input)
+}
+
+/// Count historical "at the beginning of this turn" anchors at word
+/// boundaries. The detector is occurrence-balanced: one typed historical
+/// reference cannot excuse another, genuinely forward-looking duration in the
+/// same audit unit.
+fn count_beginning_of_this_turn_anchors(cleaned: &str) -> usize {
+    let mut count = 0;
+    let mut remaining = cleaned.trim_start();
+    while !remaining.is_empty() {
+        if let Ok((rest, ())) = parse_beginning_of_this_turn_anchor(remaining) {
+            count += 1;
+            remaining = rest.trim_start();
+        } else {
+            remaining = remaining
+                .find(' ')
+                .map_or("", |index| remaining[index + 1..].trim_start());
+        }
+    }
+    count
+}
+
 /// CR 611.2a: "this turn" — temporal scope. Must produce a `Duration`
 /// slot on the parsed ability or a duration-bearing modification.
 fn detect_duration_this_turn(
@@ -3984,6 +4017,20 @@ fn detect_duration_this_turn(
     // occurrence lives on a "To solve" line, the phrase is a turn-history
     // condition, not an effect duration swallowed by the parser.
     let total_this_turn = cleaned.matches(" this turn").count();
+    // CR 608.2i: "at the beginning of this turn" looks backward to a
+    // specified prior game state. It is not CR 611.2a duration text. Suppress
+    // only when every marker is owned by that historical grammar AND the
+    // scoped AST contains its typed quantity carrier; text alone is not proof
+    // that the parser preserved the clause.
+    let beginning_of_turn_anchors = count_beginning_of_this_turn_anchors(cleaned);
+    if total_this_turn > 0
+        && total_this_turn == beginning_of_turn_anchors
+        && evidence.any_quantity_ref(|quantity| {
+            matches!(quantity, QuantityRef::UntappedLandsAtTurnStart { .. })
+        })
+    {
+        return;
+    }
     let case_solve_this_turn: usize = cleaned
         .lines()
         // allow-noncombinator: swallow detector marker scan on classified text
@@ -4671,14 +4718,15 @@ mod tests {
     use crate::parser::swallow_evidence::UnitEvidence;
 
     use super::{
-        any_ability_has_unimplemented, def_tree_has_optional, def_tree_has_unimplemented,
-        trigger_tree_has_optional, twice_is_activation_limit,
+        any_ability_has_unimplemented, count_beginning_of_this_turn_anchors, def_tree_has_optional,
+        def_tree_has_unimplemented, detect_duration_this_turn, trigger_tree_has_optional,
+        twice_is_activation_limit,
     };
     use crate::parser::oracle::parse_oracle_text;
     use crate::parser::oracle_ir::diagnostic::OracleDiagnostic;
     use crate::types::ability::{
         AbilityDefinition, AbilityKind, DamageModification, Effect, OutsideGameSourcePool,
-        QuantityExpr, TargetFilter, TriggerCondition,
+        PlayerScope, QuantityExpr, QuantityRef, TargetFilter, TriggerCondition,
     };
     use crate::types::identifiers::TrackedSetId;
     use crate::types::keywords::Keyword;
@@ -5253,6 +5301,55 @@ mod tests {
         );
 
         assert!(!has_swallowed_detector(&parsed, "Duration_ThisTurn"));
+    }
+
+    /// CR 608.2i: a beginning-of-turn historical quantity owns its "this
+    /// turn" marker. This uses a synthetic source name so the production
+    /// behavior cannot depend on Power Surge's card identity.
+    #[test]
+    fn duration_this_turn_accepts_typed_beginning_of_turn_history_anchor() {
+        let parsed = parse_named(
+            "At the beginning of each player's upkeep, Test Enchantment deals X damage to that player, where X is the number of untapped lands they controlled at the beginning of this turn.",
+            "Test Enchantment",
+            &["Enchantment"],
+        );
+
+        assert!(parsed.triggers.iter().any(|trigger| {
+            trigger.execute.as_deref().is_some_and(|ability| {
+                matches!(
+                    ability.effect.as_ref(),
+                    Effect::DealDamage {
+                        amount: QuantityExpr::Ref {
+                            qty: QuantityRef::UntappedLandsAtTurnStart {
+                                player: PlayerScope::ScopedPlayer,
+                            },
+                        },
+                        ..
+                    }
+                )
+            })
+        }));
+        assert!(!has_swallowed_detector(&parsed, "Duration_ThisTurn"));
+    }
+
+    #[test]
+    fn beginning_of_turn_history_anchor_does_not_excuse_another_duration_marker() {
+        let parsed = parse_named(
+            "At the beginning of each player's upkeep, Test Enchantment deals X damage to that player, where X is the number of untapped lands they controlled at the beginning of this turn.",
+            "Test Enchantment",
+            &["Enchantment"],
+        );
+        let mixed = "untapped lands they controlled at the beginning of this turn; creatures can't block this turn";
+        assert_eq!(count_beginning_of_this_turn_anchors(mixed), 1);
+
+        let evidence = UnitEvidence::of(&parsed);
+        let mut diagnostics = Vec::new();
+        detect_duration_this_turn(mixed, mixed, &evidence, &mut diagnostics);
+        assert!(diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            OracleDiagnostic::SwallowedClause { detector, .. }
+                if detector == "Duration_ThisTurn"
+        )));
     }
 
     /// CR 611.3: equipment and creature statics that fold "as long as" qualifiers

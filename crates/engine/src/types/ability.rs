@@ -6801,6 +6801,10 @@ pub enum QuantityRef {
     /// is the default reading; `Target`, `Opponent { .. }`, and `AllPlayers`
     /// cover targeted-player and cross-player aggregate variants.
     HandSize { player: PlayerScope },
+    /// CR 608.2i: The number of untapped lands `player` controlled at the
+    /// beginning of the current turn. This is a look-back into the committed
+    /// beginning-of-turn snapshot, not a live battlefield count.
+    UntappedLandsAtTurnStart { player: PlayerScope },
     /// CR 119: `player`'s current life total. See `HandSize` for player-axis
     /// semantics.
     LifeTotal { player: PlayerScope },
@@ -7690,6 +7694,7 @@ impl QuantityRef {
     pub(crate) fn player_scope_mut(&mut self) -> Option<&mut PlayerScope> {
         match self {
             QuantityRef::HandSize { player }
+            | QuantityRef::UntappedLandsAtTurnStart { player }
             | QuantityRef::LifeTotal { player }
             | QuantityRef::GraveyardSize { player }
             | QuantityRef::LifeLostThisTurn { player }
@@ -32380,11 +32385,22 @@ mod monarch_subject_axis_tests {
         assert!(player.duration_timing_only());
 
         assert!(PlayerScope::SpecificPlayer { id: PlayerId(3) }.duration_timing_only());
-        // Everything the parser can actually emit must NOT be rejected.
+        // Every value-capable scope must NOT be rejected.
         for ok in [
             PlayerScope::Controller,
             PlayerScope::ScopedPlayer,
+            PlayerScope::Target,
+            PlayerScope::Opponent {
+                aggregate: AggregateFunction::Sum,
+            },
+            PlayerScope::AllPlayers {
+                aggregate: AggregateFunction::Sum,
+                exclude: Some(Box::new(PlayerScope::Controller)),
+            },
+            PlayerScope::RecipientController,
             PlayerScope::DefendingPlayer,
+            PlayerScope::ParentObjectTargetController,
+            PlayerScope::SourceChosenPlayer,
         ] {
             assert!(!ok.duration_timing_only(), "{ok:?} must resolve normally");
         }
@@ -32449,6 +32465,17 @@ mod monarch_subject_axis_tests {
             player: PlayerScope::ScopedPlayer,
         };
         assert!(hand.player_scope_mut().is_some());
+
+        let mut historical_lands = QuantityRef::UntappedLandsAtTurnStart {
+            player: PlayerScope::ScopedPlayer,
+        };
+        *historical_lands.player_scope_mut().unwrap() = PlayerScope::DefendingPlayer;
+        assert_eq!(
+            historical_lands,
+            QuantityRef::UntappedLandsAtTurnStart {
+                player: PlayerScope::DefendingPlayer
+            }
+        );
 
         let mut object_axis = QuantityRef::SelfManaValue;
         assert!(object_axis.player_scope_mut().is_none());

@@ -28459,6 +28459,7 @@ fn rewrite_condition_quantity_expr(expr: &mut QuantityExpr) {
         QuantityExpr::Ref { qty } => match qty {
             QuantityRef::LifeTotal { player }
             | QuantityRef::HandSize { player }
+            | QuantityRef::UntappedLandsAtTurnStart { player }
             | QuantityRef::LifeLostThisTurn { player }
             | QuantityRef::LifeGainedThisTurn { player }
             | QuantityRef::PartySize { player }
@@ -28586,6 +28587,13 @@ fn rewrite_player_scope_refs(def: &mut AbilityDefinition) {
                     player: PlayerScope::Target,
                 } => {
                     *qty = QuantityRef::HandSize {
+                        player: PlayerScope::ScopedPlayer,
+                    }
+                }
+                QuantityRef::UntappedLandsAtTurnStart {
+                    player: PlayerScope::Target,
+                } => {
+                    *qty = QuantityRef::UntappedLandsAtTurnStart {
                         player: PlayerScope::ScopedPlayer,
                     }
                 }
@@ -28768,6 +28776,7 @@ pub(crate) fn rewrite_player_quantity_refs_to_source_chosen(def: &mut AbilityDef
             QuantityExpr::Ref { qty } => match qty {
                 QuantityRef::LifeTotal { player }
                 | QuantityRef::HandSize { player }
+                | QuantityRef::UntappedLandsAtTurnStart { player }
                 | QuantityRef::LifeLostThisTurn { player }
                 | QuantityRef::LifeGainedThisTurn { player }
                 | QuantityRef::PartySize { player }
@@ -28832,6 +28841,7 @@ pub(crate) fn rewrite_event_player_quantity_refs_to_scoped(def: &mut AbilityDefi
             QuantityExpr::Ref { qty } => match qty {
                 QuantityRef::LifeTotal { player }
                 | QuantityRef::HandSize { player }
+                | QuantityRef::UntappedLandsAtTurnStart { player }
                 | QuantityRef::LifeLostThisTurn { player }
                 | QuantityRef::LifeGainedThisTurn { player }
                 | QuantityRef::PartySize { player }
@@ -36832,6 +36842,65 @@ fn extract_effect_verb(effect: &Effect) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod untapped_lands_scope_rewrite_tests {
+    use super::*;
+
+    fn lands(player: PlayerScope) -> QuantityExpr {
+        QuantityExpr::Ref {
+            qty: QuantityRef::UntappedLandsAtTurnStart { player },
+        }
+    }
+
+    fn damage_with(player: PlayerScope) -> AbilityDefinition {
+        AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::DealDamage {
+                amount: lands(player),
+                target: TargetFilter::ScopedPlayer,
+                damage_source: None,
+                excess: None,
+            },
+        )
+    }
+
+    fn amount_scope(def: &AbilityDefinition) -> &PlayerScope {
+        let Effect::DealDamage { amount, .. } = def.effect.as_ref() else {
+            panic!("expected DealDamage");
+        };
+        let QuantityExpr::Ref {
+            qty: QuantityRef::UntappedLandsAtTurnStart { player },
+        } = amount
+        else {
+            panic!("expected historical land quantity");
+        };
+        player
+    }
+
+    #[test]
+    fn historical_land_quantity_uses_all_existing_player_scope_rewrites() {
+        let mut condition = lands(PlayerScope::Controller);
+        rewrite_condition_quantity_expr(&mut condition);
+        assert_eq!(
+            condition,
+            lands(PlayerScope::ScopedPlayer),
+            "condition controller scope must follow the each-player iteration"
+        );
+
+        let mut each_player = damage_with(PlayerScope::Target);
+        rewrite_player_scope_refs(&mut each_player);
+        assert_eq!(amount_scope(&each_player), &PlayerScope::ScopedPlayer);
+
+        let mut chosen = damage_with(PlayerScope::Controller);
+        rewrite_player_quantity_refs_to_source_chosen(&mut chosen);
+        assert_eq!(amount_scope(&chosen), &PlayerScope::SourceChosenPlayer);
+
+        let mut event = damage_with(PlayerScope::Target);
+        rewrite_event_player_quantity_refs_to_scoped(&mut event);
+        assert_eq!(amount_scope(&event), &PlayerScope::ScopedPlayer);
+    }
+}
 
 #[cfg(test)]
 mod gendered_still_type_tests {

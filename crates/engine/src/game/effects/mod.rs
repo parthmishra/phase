@@ -3364,6 +3364,7 @@ fn quantity_ref_counts_population_matching(
         // No `TargetFilter` anywhere: player-scoped totals, per-object scopes,
         // resolution/turn counters, and cost bookkeeping.
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting

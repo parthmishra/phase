@@ -499,6 +499,9 @@ pub(crate) fn quantity_expr_uses_recipient(expr: &QuantityExpr) -> bool {
             QuantityRef::HandSize {
                 player: PlayerScope::RecipientController,
             }
+            | QuantityRef::UntappedLandsAtTurnStart {
+                player: PlayerScope::RecipientController,
+            }
             | QuantityRef::LifeTotal {
                 player: PlayerScope::RecipientController,
             }
@@ -944,6 +947,7 @@ fn quantity_ref_uses_unspent_mana(qty: &QuantityRef) -> bool {
     match qty {
         QuantityRef::UnspentMana { .. } => true,
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
@@ -1284,6 +1288,7 @@ fn quantity_ref_uses_object_count(qty: &QuantityRef) -> bool {
         // Player-level, single-object, history-record, payment, and choice
         // references: unaffected by another object's battlefield entry/exit.
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::UnspentMana { .. }
         | QuantityRef::GraveyardSize { .. }
@@ -1601,6 +1606,7 @@ fn quantity_ref_characteristic_reads(qty: &QuantityRef, depth: u32) -> Character
         // per-game history journals described in the doc comment. Enumerated
         // explicitly (no wildcard).
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
@@ -1852,6 +1858,7 @@ fn entered_object_perturbs_quantity_ref(
         // an object's battlefield entry/exit cannot change their value. Identical
         // enumeration to the `false` arm of `quantity_ref_uses_object_count`.
         QuantityRef::HandSize { .. }
+        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::UnspentMana { .. }
         | QuantityRef::GraveyardSize { .. }
@@ -3278,6 +3285,22 @@ fn resolve_ref(
             }
             resolve_per_player_scalar(state, scope, controller, ctx, targets, ability, |p| {
                 usize_to_i32_saturating(p.hand.len())
+            })
+        }
+        // CR 608.2i: Power Surge-class look-back effects read the committed
+        // beginning-of-turn state. Missing or stale history is unavailable and
+        // therefore resolves to zero rather than falling back to a live count.
+        QuantityRef::UntappedLandsAtTurnStart { player: scope } => {
+            let counts = state
+                .beginning_of_turn_snapshot
+                .as_ref()
+                .filter(|snapshot| snapshot.turn_number == state.turn_number);
+            resolve_per_player_scalar(state, scope, controller, ctx, targets, ability, |player| {
+                counts
+                    .and_then(|snapshot| snapshot.untapped_lands_controlled.get(&player.id))
+                    .copied()
+                    .map(u32_to_i32_saturating)
+                    .unwrap_or(0)
             })
         }
         // CR 119 + CR 810.9a: a single player's life total reads the team's
@@ -7664,21 +7687,189 @@ mod tests {
     use super::*;
     use crate::game::zones::create_object;
     use crate::types::ability::{
-        AggregateFunction, ChoiceValue, ControllerRef, DamageKindFilter, DevotionColors, Effect,
-        FilterProp, KickerVariant, ObjectProperty, SharedQuality, TargetFilter, TargetRef,
-        ThisWayCause, TypeFilter, TypedFilter,
+        AggregateFunction, ChoiceValue, ChosenAttribute, ControllerRef, DamageKindFilter,
+        DevotionColors, Effect, FilterProp, KickerVariant, ObjectProperty, SharedQuality,
+        TargetFilter, TargetRef, ThisWayCause, TypeFilter, TypedFilter,
     };
     use crate::types::card_type::{CoreType, Supertype};
     use crate::types::counter::{CounterMatch, CounterType};
     use crate::types::events::{GameEvent, PlayerActionKind};
+    use crate::types::format::FormatConfig;
     use crate::types::game_state::{
-        DamageRecord, ExileLink, ExileLinkKind, ManaSpentSourceSnapshot, ZoneChangeRecord,
+        BeginningOfTurnSnapshot, DamageRecord, ExileLink, ExileLinkKind, ManaSpentSourceSnapshot,
+        ZoneChangeRecord,
     };
     use crate::types::identifiers::{CardId, ObjectId, TrackedSetId};
     use crate::types::keywords::Keyword;
     use crate::types::mana::{ManaColor, ManaCost, ManaCostShard};
     use crate::types::zones::Zone;
     use crate::types::{LandPlayRecord, SpellCastRecord};
+
+    fn historical_lands(player: PlayerScope) -> QuantityExpr {
+        QuantityExpr::Ref {
+            qty: QuantityRef::UntappedLandsAtTurnStart { player },
+        }
+    }
+
+    #[test]
+    fn untapped_lands_at_turn_start_recipient_classifier_is_scope_sensitive() {
+        assert!(quantity_expr_uses_recipient(&historical_lands(
+            PlayerScope::RecipientController
+        )));
+        assert!(!quantity_expr_uses_recipient(&historical_lands(
+            PlayerScope::Controller
+        )));
+        assert!(!quantity_expr_uses_recipient(&historical_lands(
+            PlayerScope::ScopedPlayer
+        )));
+    }
+
+    #[test]
+    fn untapped_lands_at_turn_start_requires_current_snapshot() {
+        let mut state = GameState::new_two_player(7);
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Source".to_string(),
+            Zone::Battlefield,
+        );
+        state.turn_number = 4;
+        let expr = historical_lands(PlayerScope::Controller);
+
+        assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), source), 0);
+        state.beginning_of_turn_snapshot = Some(BeginningOfTurnSnapshot {
+            turn_number: 3,
+            untapped_lands_controlled: HashMap::from([(PlayerId(0), 9)]),
+        });
+        assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), source), 0);
+
+        state.beginning_of_turn_snapshot = Some(BeginningOfTurnSnapshot {
+            turn_number: 4,
+            untapped_lands_controlled: HashMap::from([(PlayerId(0), 5)]),
+        });
+        assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), source), 5);
+    }
+
+    #[test]
+    fn untapped_lands_at_turn_start_resolves_player_scope_matrix() {
+        let mut state = GameState::new(FormatConfig::commander(), 3, 7);
+        state.turn_number = 8;
+        state.beginning_of_turn_snapshot = Some(BeginningOfTurnSnapshot {
+            turn_number: 8,
+            untapped_lands_controlled: HashMap::from([
+                (PlayerId(0), 1),
+                (PlayerId(1), 4),
+                (PlayerId(2), 7),
+            ]),
+        });
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Source".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .chosen_attributes
+            .push(ChosenAttribute::Player(PlayerId(2)));
+        let recipient = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Recipient".to_string(),
+            Zone::Battlefield,
+        );
+        let resolve =
+            |scope| resolve_quantity(&state, &historical_lands(scope), PlayerId(0), source);
+
+        assert_eq!(resolve(PlayerScope::Controller), 1);
+        assert_eq!(
+            resolve_quantity_scoped(
+                &state,
+                &historical_lands(PlayerScope::ScopedPlayer),
+                source,
+                PlayerId(1),
+            ),
+            4
+        );
+        for (aggregate, expected) in [
+            (AggregateFunction::Max, 7),
+            (AggregateFunction::Min, 4),
+            (AggregateFunction::Sum, 11),
+        ] {
+            assert_eq!(resolve(PlayerScope::Opponent { aggregate }), expected);
+        }
+        for (aggregate, expected) in [
+            (AggregateFunction::Max, 7),
+            (AggregateFunction::Min, 1),
+            (AggregateFunction::Sum, 12),
+        ] {
+            assert_eq!(
+                resolve(PlayerScope::AllPlayers {
+                    aggregate,
+                    exclude: None,
+                }),
+                expected
+            );
+        }
+        assert_eq!(
+            resolve(PlayerScope::AllPlayers {
+                aggregate: AggregateFunction::Sum,
+                exclude: Some(Box::new(PlayerScope::Controller)),
+            }),
+            11
+        );
+        assert_eq!(resolve(PlayerScope::SourceChosenPlayer), 7);
+
+        let target_player = ResolvedAbility::new(
+            Effect::GainLife {
+                amount: historical_lands(PlayerScope::Target),
+                player: TargetFilter::Controller,
+            },
+            vec![TargetRef::Player(PlayerId(2))],
+            source,
+            PlayerId(0),
+        );
+        assert_eq!(
+            resolve_quantity_with_targets(
+                &state,
+                &historical_lands(PlayerScope::Target),
+                &target_player,
+            ),
+            7
+        );
+
+        let parent_object = ResolvedAbility::new(
+            Effect::GainLife {
+                amount: historical_lands(PlayerScope::ParentObjectTargetController),
+                player: TargetFilter::Controller,
+            },
+            vec![TargetRef::Object(recipient)],
+            source,
+            PlayerId(0),
+        );
+        assert_eq!(
+            resolve_quantity_with_targets(
+                &state,
+                &historical_lands(PlayerScope::ParentObjectTargetController),
+                &parent_object,
+            ),
+            4
+        );
+        assert_eq!(
+            resolve_quantity_with_targets_and_recipient(
+                &state,
+                &historical_lands(PlayerScope::RecipientController),
+                &parent_object,
+                recipient,
+            ),
+            4
+        );
+    }
 
     fn add_spent_mana_source_snapshot(
         state: &mut GameState,

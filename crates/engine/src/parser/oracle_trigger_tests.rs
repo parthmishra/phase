@@ -16425,6 +16425,32 @@ fn phase_trigger_each_players_upkeep_deals_damage_to_them() {
     }
 }
 
+/// CR 603.2b + CR 608.2i: Power Surge binds both "that player" and the
+/// beginning-of-turn historical quantity to the player whose upkeep began.
+#[test]
+fn power_surge_phase_trigger_uses_scoped_beginning_of_turn_land_snapshot() {
+    let def = parse_trigger_line(
+        "At the beginning of each player's upkeep, Power Surge deals X damage to that player, where X is the number of untapped lands they controlled at the beginning of this turn.",
+        "Power Surge",
+    );
+    assert_eq!(def.mode, TriggerMode::Phase);
+    assert_eq!(def.phase, Some(Phase::Upkeep));
+    match def.execute.as_ref().map(|ability| ability.effect.as_ref()) {
+        Some(Effect::DealDamage { target, amount, .. }) => {
+            assert_eq!(target, &TargetFilter::ScopedPlayer);
+            assert_eq!(
+                amount,
+                &QuantityExpr::Ref {
+                    qty: QuantityRef::UntappedLandsAtTurnStart {
+                        player: PlayerScope::ScopedPlayer,
+                    },
+                }
+            );
+        }
+        other => panic!("expected Power Surge DealDamage, got {other:?}"),
+    }
+}
+
 /// CR 603.2 + CR 608.2c: Razorkin Needlehead — "Whenever an opponent draws a
 /// card, this creature deals 1 damage to them." The player-actor trigger
 /// subject ("an opponent") makes "them" the triggering player; with no

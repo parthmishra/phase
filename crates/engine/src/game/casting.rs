@@ -18996,6 +18996,7 @@ fn quantity_ref_is_board_state_relative(qty: &QuantityRef) -> bool {
         |p: &PlayerScope| !matches!(p, PlayerScope::Target | PlayerScope::ScopedPlayer);
     match qty {
         QuantityRef::HandSize { player }
+        | QuantityRef::UntappedLandsAtTurnStart { player }
         | QuantityRef::LifeTotal { player }
         | QuantityRef::GraveyardSize { player }
         | QuantityRef::LifeLostThisTurn { player }
