@@ -28,6 +28,7 @@ use super::oracle_ir::doc::OracleItemIr;
 use super::oracle_ir::feature::{
     audit_units, scope_to_unit, AuditUnit, ItemIdTracks, OracleSemanticFeature,
 };
+use super::oracle_nom::primitives::count_at_word_boundaries;
 use super::swallow_evidence::UnitEvidence;
 use crate::types::ability::{
     AbilityCondition, AbilityDefinition, ActivationRestriction, CastingPermission, Comparator,
@@ -3971,19 +3972,7 @@ fn parse_beginning_of_this_turn_anchor(input: &str) -> nom::IResult<&str, ()> {
 /// reference cannot excuse another, genuinely forward-looking duration in the
 /// same audit unit.
 fn count_beginning_of_this_turn_anchors(cleaned: &str) -> usize {
-    let mut count = 0;
-    let mut remaining = cleaned.trim_start();
-    while !remaining.is_empty() {
-        if let Ok((rest, ())) = parse_beginning_of_this_turn_anchor(remaining) {
-            count += 1;
-            remaining = rest.trim_start();
-        } else {
-            remaining = remaining
-                .find(' ')
-                .map_or("", |index| remaining[index + 1..].trim_start());
-        }
-    }
-    count
+    count_at_word_boundaries(cleaned, parse_beginning_of_this_turn_anchor)
 }
 
 /// CR 611.2a: "this turn" — temporal scope. Must produce a `Duration`
@@ -4020,14 +4009,16 @@ fn detect_duration_this_turn(
     // CR 608.2i: "at the beginning of this turn" looks backward to a
     // specified prior game state. It is not CR 611.2a duration text. Suppress
     // only when every marker is owned by that historical grammar AND the
-    // scoped AST contains its typed quantity carrier; text alone is not proof
-    // that the parser preserved the clause.
+    // scoped AST contains one typed quantity carrier per historical anchor;
+    // text or a single tree-global carrier is not proof that every occurrence
+    // survived parsing.
     let beginning_of_turn_anchors = count_beginning_of_this_turn_anchors(cleaned);
+    let beginning_of_turn_carriers = evidence.count_quantity_refs(|quantity| {
+        matches!(quantity, QuantityRef::UntappedLandsAtTurnStart { .. })
+    });
     if total_this_turn > 0
         && total_this_turn == beginning_of_turn_anchors
-        && evidence.any_quantity_ref(|quantity| {
-            matches!(quantity, QuantityRef::UntappedLandsAtTurnStart { .. })
-        })
+        && beginning_of_turn_carriers == beginning_of_turn_anchors
     {
         return;
     }
@@ -5345,6 +5336,39 @@ mod tests {
         let evidence = UnitEvidence::of(&parsed);
         let mut diagnostics = Vec::new();
         detect_duration_this_turn(mixed, mixed, &evidence, &mut diagnostics);
+        assert!(diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            OracleDiagnostic::SwallowedClause { detector, .. }
+                if detector == "Duration_ThisTurn"
+        )));
+    }
+
+    #[test]
+    fn two_beginning_of_turn_anchors_require_two_typed_history_carriers() {
+        let parsed = parse_named(
+            "At the beginning of each player's upkeep, Test Enchantment deals X damage to that player, where X is the number of untapped lands they controlled at the beginning of this turn.",
+            "Test Enchantment",
+            &["Enchantment"],
+        );
+        let doubled_history = "untapped lands they controlled at the beginning of this turn; untapped lands they controlled at the beginning of this turn";
+        assert_eq!(count_beginning_of_this_turn_anchors(doubled_history), 2);
+
+        let evidence = UnitEvidence::of(&parsed);
+        assert_eq!(
+            evidence.count_quantity_refs(|quantity| matches!(
+                quantity,
+                QuantityRef::UntappedLandsAtTurnStart { .. }
+            )),
+            1,
+            "the parsed fixture intentionally carries only one historical quantity"
+        );
+        let mut diagnostics = Vec::new();
+        detect_duration_this_turn(
+            doubled_history,
+            doubled_history,
+            &evidence,
+            &mut diagnostics,
+        );
         assert!(diagnostics.iter().any(|diagnostic| matches!(
             diagnostic,
             OracleDiagnostic::SwallowedClause { detector, .. }

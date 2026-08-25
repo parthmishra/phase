@@ -1105,6 +1105,8 @@ pub(crate) fn capture_beginning_of_turn_snapshot(state: &mut GameState) {
     let mut untapped_lands_controlled: HashMap<PlayerId, u32> =
         state.players.iter().map(|player| (player.id, 0)).collect();
     for object in state.objects.iter().map(|(_, object)| object) {
+        // CR 110.5 + CR 110.5d: tapped/untapped is a permanent's status;
+        // objects outside the battlefield are neither tapped nor untapped.
         if object.zone == Zone::Battlefield
             && !object.is_phased_out()
             && !object.tapped
