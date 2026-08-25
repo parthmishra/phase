@@ -12,9 +12,10 @@ use crate::types::ability::{
     CountScope, DamageAmountScope, DamageAmountThreshold, DamageChannel, DamageModification,
     DamageSource, DelayedTriggerCondition, DiscardSelfScope, Duration, Effect, EffectScope,
     FilterProp, ManaContribution, ManaProduction, ManaSpendPermission, ModalChoice, ObjectScope,
-    PerpetualModification, PlayerFilter, PlayerScope, PtStat, PtValue, PtValueScope, QuantityExpr,
-    QuantityRef, SeatDirection, SharedQuality, SiblingCondition, SubAbilityLink, TapStateChange,
-    TargetFilter, TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter, ZoneRef,
+    PerpetualModification, PlayerChoicePopulation, PlayerFilter, PlayerScope, PtStat, PtValue,
+    PtValueScope, QuantityExpr, QuantityRef, SeatDirection, SharedQuality, SiblingCondition,
+    SubAbilityLink, TapStateChange, TargetFilter, TriggerCondition, TriggerDefinition, TypeFilter,
+    TypedFilter, ZoneRef,
 };
 use crate::types::card_type::Supertype;
 use crate::types::counter::{CounterMatch, CounterType};
@@ -16479,10 +16480,36 @@ fn phase_trigger_active_player_reference_stays_single() {
     assert_eq!(def.mode, TriggerMode::Phase);
     assert_eq!(def.phase, Some(Phase::Upkeep));
     assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
+    let execute = def.execute.as_ref().expect("active-player trigger execute");
     assert!(matches!(
-        def.execute.as_ref().map(|ability| ability.effect.as_ref()),
-        Some(Effect::Mana { .. })
+        execute.effect.as_ref(),
+        Effect::Choose {
+            choice_type: crate::types::ability::ChoiceType::Player {
+                population: PlayerChoicePopulation::ActivePlayers,
+                ..
+            },
+            persist: false,
+            ..
+        }
     ));
+    let mana = execute
+        .sub_ability
+        .as_ref()
+        .expect("active-player choice must continue into the mana effect");
+    let Effect::Mana {
+        target: Some(role), ..
+    } = mana.effect.as_ref()
+    else {
+        panic!(
+            "expected chosen-player Mana continuation, got {:?}",
+            mana.effect
+        );
+    };
+    assert_eq!(
+        role.recipient().and_then(TargetFilter::chosen_player_index),
+        Some(0),
+        "the mana recipient must be the player selected by the CR 805.9 choice"
+    );
 }
 
 /// CR 805.4d: A plural object pronoun is not a reference to the players whose

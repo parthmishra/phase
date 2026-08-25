@@ -43,6 +43,9 @@ pub enum ServerErrorCode {
 /// handshake. When making such changes, plan a deprecation window where
 /// both the old and new variants coexist, then bump and remove the old.
 ///
+/// 39 — `ChoiceType::Player::population` carries the CR 805.9 active-player
+///      choice restriction through `WaitingFor::NamedChoice`. Older full-game
+///      peers default the field to all players and would broaden the choice.
 /// 38 — `TriggerDefinition::phase_fanout` preserves per-player phase-trigger
 ///      cardinality and binding for shared-team turns. Old full-game peers
 ///      deserialize the affected trigger as a once-per-team definition.
@@ -126,7 +129,7 @@ pub enum ServerErrorCode {
 ///      payload; mulligan bottoming folded into a
 ///      `MulliganDecisionPhase::BottomCards` sub-phase on
 ///      `WaitingFor::MulliganDecision`.
-pub const PROTOCOL_VERSION: u32 = 38;
+pub const PROTOCOL_VERSION: u32 = 39;
 
 /// Minimum protocol version accepted by lobby-only brokers at the hello
 /// handshake **from clients that predate [`LOBBY_PROTOCOL_VERSION`]** — the
@@ -534,12 +537,12 @@ mod tests {
 
     #[test]
     fn protocol_version_tracks_full_game_wire_additions() {
-        assert_eq!(PROTOCOL_VERSION, 38);
+        assert_eq!(PROTOCOL_VERSION, 39);
         // Lobby keeps its one-version rollout window; full-game servers stay
         // current-only (`server_core::MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION`),
         // which is what refuses an older full-game peer whose GameState cannot
         // understand a success acknowledgment the submitting client awaits.
-        assert_eq!(MIN_SUPPORTED_PROTOCOL, 37);
+        assert_eq!(MIN_SUPPORTED_PROTOCOL, 38);
     }
 
     #[test]

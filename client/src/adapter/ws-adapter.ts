@@ -203,6 +203,9 @@ export class NativeEngineVersionMismatchError extends Error {
  * `crates/server-core/src/protocol.rs`. Bump in lockstep when either side
  * adds, removes, renames, or changes the type of a protocol variant field.
  *
+ * 39 — ChoiceType.Player.population carries the CR 805.9 active-player choice
+ *      restriction through WaitingFor.NamedChoice. Older full-game peers
+ *      default the field to all players and would broaden the choice.
  * 38 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
  *      cardinality and binding for shared-team turns. Older peers deserialize
  *      the affected trigger as a once-per-team definition.
@@ -287,7 +290,7 @@ export class NativeEngineVersionMismatchError extends Error {
  *      into a MulliganDecisionPhase::BottomCards sub-phase on
  *      WaitingFor::MulliganDecision.
  */
-export const PROTOCOL_VERSION = 38;
+export const PROTOCOL_VERSION = 39;
 
 /**
  * Lowest server protocol version this client will accept in the handshake.

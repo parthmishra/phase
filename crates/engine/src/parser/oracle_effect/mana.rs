@@ -122,16 +122,16 @@ fn try_parse_for_each_color_mana(text: &str, lower: &str) -> Option<Effect> {
     })
 }
 
-/// CR 505.1 + CR 106.4: Recognize a leading player-subject before the mana
+/// CR 106.4: Recognize a leading player-subject before the mana
 /// verb so subject-led mana clauses ("the active player adds {C}{C} …", "that
 /// player adds {G}") reach the mana dispatcher. Returns the recipient
 /// `TargetFilter` and the remainder beginning at the mana symbols, with the
 /// subject's "adds" verb normalized away.
 ///
-/// "the active player" is the active player whose phase began (CR 505.1) — for
-/// the Phase triggers that carry these clauses (Belbe, Corrupted Observer) the
-/// active player is the trigger's scoped player, so the recipient resolves via
-/// `TargetFilter::ScopedPlayer`. "that player" is the same anaphor.
+/// This leaf parser records "the active player" as an intermediate scoped
+/// recipient. Trigger lowering applies CR 805.9 by replacing that recipient
+/// with a controller-made active-player choice in shared-team games. "That
+/// player" remains the phase participant selected by CR 805.4d fanout.
 ///
 /// CR 115.1 + CR 106.4: "target player" is a genuine chosen target (Jetfire,
 /// Ingenious Scientist: "Target player adds that much {C}"), recorded as
@@ -142,7 +142,7 @@ fn strip_mana_subject_prefix(text: &str) -> Option<(TargetFilter, &str)> {
     let lower = text.to_lowercase();
     nom_on_lower(text, &lower, |i| {
         alt((
-            // CR 505.1 + CR 106.4: anaphoric subject — active/that player.
+            // CR 805.9 + CR 805.4d + CR 106.4: anaphoric subject — active/that player.
             value(
                 TargetFilter::ScopedPlayer,
                 (
@@ -4064,7 +4064,7 @@ mod tests {
         .is_none());
     }
 
-    /// CR 505.1 + CR 106.4: a subject-led mana clause ("the active player adds
+    /// CR 805.9 + CR 106.4: a subject-led mana clause ("the active player adds
     /// …") must reach the mana dispatcher rather than falling to Unimplemented.
     #[test]
     fn parse_add_mana_active_player_subject() {

@@ -10569,16 +10569,12 @@ fn resolve_chain_body(
     };
     let ability = ability.as_ref();
 
-    // CR 608.2d (override) + CR 701.9b (analogous) + CR 109.4: A random
-    // `Effect::Choose` ("choose a player at random") or `Effect::ChooseFromZone`
-    // ("choose one of them at random") is resolved here, at the chain resolution
-    // point where a mutable ability is available, so the game-selected value
-    // lands on `chosen_players` / `targets` BEFORE the chain descends to a
-    // dependent sub (Strax's reflexive Fight scoped to the chosen player; River
-    // Song's Diary's `CastFromZone { target: ParentTarget }`). No interactive
-    // `WaitingFor::NamedChoice` / `ChooseFromZoneChoice` is raised. This mirrors
-    // the resolution-point handling of `TargetSelectionMode::Random` for targets.
-    let random_choice_owned;
+    // CR 608.2d (override) + CR 701.9b (analogous) + CR 109.4: Resolve a random
+    // choice, or the sole legal active-player choice (CR 805.9), at this mutable
+    // chain seam. The selected value lands on `chosen_players` / `targets`
+    // BEFORE the chain descends to a dependent sub. Shared turns with multiple
+    // active players still publish `WaitingFor::NamedChoice` below.
+    let inline_choice_owned;
     let random_is_choose = matches!(
         &ability.effect,
         Effect::Choose { selection, .. }
@@ -10588,17 +10584,23 @@ fn resolve_chain_body(
         &ability.effect,
         Effect::ChooseFromZone { selection, .. } if selection.is_random()
     );
-    let (ability, random_choice_resolved) = if random_is_choose || random_is_choose_from_zone {
+    let (ability, inline_choice_resolved) = if random_is_choose || random_is_choose_from_zone {
         let mut owned = ability.clone();
         if random_is_choose {
             choose::resolve_random_in_chain(state, &mut owned, events);
         } else {
             choose_from_zone::resolve_random_in_chain(state, &mut owned, events);
         }
-        random_choice_owned = owned;
-        (&random_choice_owned, true)
+        inline_choice_owned = owned;
+        (&inline_choice_owned, true)
     } else {
-        (ability, false)
+        let mut owned = ability.clone();
+        if choose::resolve_single_active_player_in_chain(state, &mut owned, events) {
+            inline_choice_owned = owned;
+            (&inline_choice_owned, true)
+        } else {
+            (ability, false)
+        }
     };
 
     if effect_depends_on_missing_chosen_player(ability) {
@@ -11628,9 +11630,9 @@ fn resolve_chain_body(
     let events_before = events.len();
     let mut immediate_effect_result = None;
 
-    // Skip no-op unimplemented/runtime-handled effects, and a random
-    // `Effect::Choose` already resolved above by `resolve_random_in_chain`.
-    if !random_choice_resolved
+    // Skip no-op unimplemented/runtime-handled effects, and a named choice
+    // already resolved inline above (random or a sole active player).
+    if !inline_choice_resolved
         && !matches!(
             ability.effect,
             Effect::Unimplemented { .. } | Effect::RuntimeHandled { .. }

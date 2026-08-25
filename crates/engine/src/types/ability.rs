@@ -644,6 +644,19 @@ pub enum PlayerChoiceDistinctness {
     DistinctFromPriorChoices,
 }
 
+/// Which players a resolution-time `ChoiceType::Player` instruction may offer.
+/// Kept as a parameter on the existing player-choice primitive so callers can
+/// narrow the population without introducing one-off choice effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PlayerChoicePopulation {
+    /// CR 102.1: every player still in the game.
+    #[default]
+    All,
+    /// CR 805.9: one of the active players, chosen by the ability's controller
+    /// when the effect is applied.
+    ActivePlayers,
+}
+
 /// What kind of named choice the player must make at resolution time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChoiceType {
@@ -740,11 +753,11 @@ pub enum ChoiceType {
         restriction: Option<Box<PlayerFilter>>,
         distinctness: PlayerChoiceDistinctness,
     },
-    /// "Choose a player" — selects any player in the game. `distinctness`
+    /// "Choose a player" — selects a player from `population`. `distinctness`
     /// (CR 608.2c) governs whether this pick must exclude players already
-    /// chosen by an earlier `Opponent`/`Player` choice in the same
-    /// resolution — see [`PlayerChoiceDistinctness`].
+    /// chosen by an earlier `Opponent`/`Player` choice in the same resolution.
     Player {
+        population: PlayerChoicePopulation,
         distinctness: PlayerChoiceDistinctness,
     },
     /// "Choose two colors" — selects two distinct mana colors.
@@ -875,6 +888,15 @@ impl ChoiceType {
     /// resolution.
     pub fn player() -> Self {
         Self::Player {
+            population: PlayerChoicePopulation::All,
+            distinctness: PlayerChoiceDistinctness::Independent,
+        }
+    }
+
+    /// CR 805.9: choose one specific active player as the effect is applied.
+    pub fn active_player() -> Self {
+        Self::Player {
+            population: PlayerChoicePopulation::ActivePlayers,
             distinctness: PlayerChoiceDistinctness::Independent,
         }
     }
@@ -883,6 +905,7 @@ impl ChoiceType {
     /// must exclude players already chosen earlier in this resolution.
     pub fn player_distinct_from_prior() -> Self {
         Self::Player {
+            population: PlayerChoicePopulation::All,
             distinctness: PlayerChoiceDistinctness::DistinctFromPriorChoices,
         }
     }
@@ -1134,17 +1157,34 @@ impl Serialize for ChoiceType {
                     variant.end()
                 }
             }
-            // Serialize the default-distinctness form as the legacy unit
-            // variant "Player" so existing card-data JSON stays byte-stable;
-            // only emit the struct form when `distinctness` is non-default
-            // (Gluntch, the Bestower's ordinal-cued picks).
-            Self::Player { distinctness } => {
-                if *distinctness == PlayerChoiceDistinctness::Independent {
+            // Serialize the default-population/default-distinctness form as
+            // the legacy unit variant "Player" so existing card-data JSON
+            // stays byte-stable; emit the struct form only for a narrowed
+            // population or ordinal-cued distinctness.
+            Self::Player {
+                population,
+                distinctness,
+            } => {
+                let non_default_population = *population != PlayerChoicePopulation::All;
+                let non_default_distinctness =
+                    *distinctness != PlayerChoiceDistinctness::Independent;
+                if !non_default_population && !non_default_distinctness {
                     serializer.serialize_unit_variant("ChoiceType", 10, "Player")
                 } else {
-                    let mut variant =
-                        serializer.serialize_struct_variant("ChoiceType", 10, "Player", 1)?;
-                    variant.serialize_field("distinctness", distinctness)?;
+                    let field_count =
+                        non_default_population as usize + non_default_distinctness as usize;
+                    let mut variant = serializer.serialize_struct_variant(
+                        "ChoiceType",
+                        10,
+                        "Player",
+                        field_count,
+                    )?;
+                    if non_default_population {
+                        variant.serialize_field("population", population)?;
+                    }
+                    if non_default_distinctness {
+                        variant.serialize_field("distinctness", distinctness)?;
+                    }
                     variant.end()
                 }
             }
@@ -1234,6 +1274,8 @@ impl<'de> Deserialize<'de> for ChoiceType {
             },
             Player {
                 #[serde(default)]
+                population: PlayerChoicePopulation,
+                #[serde(default)]
                 distinctness: PlayerChoiceDistinctness,
             },
             Keyword {
@@ -1309,7 +1351,13 @@ impl<'de> Deserialize<'de> for ChoiceType {
                     restriction,
                     distinctness,
                 }),
-                ChoiceTypeData::Player { distinctness } => Ok(Self::Player { distinctness }),
+                ChoiceTypeData::Player {
+                    population,
+                    distinctness,
+                } => Ok(Self::Player {
+                    population,
+                    distinctness,
+                }),
                 ChoiceTypeData::Keyword { options, count } => Ok(Self::Keyword { options, count }),
                 ChoiceTypeData::CounterKind { options } => Ok(Self::CounterKind { options }),
             },
@@ -29461,6 +29509,19 @@ mod tests {
         assert!(
             json.starts_with(r#"{"Player":"#),
             "non-default distinctness should serialize as a struct variant, got: {json}"
+        );
+
+        let round_tripped: ChoiceType = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn choice_type_active_player_population_serde_round_trips() {
+        let original = ChoiceType::active_player();
+        let json = serde_json::to_string(&original).unwrap();
+        assert_eq!(
+            json, r#"{"Player":{"population":"ActivePlayers"}}"#,
+            "only the non-default population should be emitted"
         );
 
         let round_tripped: ChoiceType = serde_json::from_str(&json).unwrap();

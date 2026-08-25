@@ -36204,6 +36204,7 @@ pub mod tests {
             WaitingFor::NamedChoice {
                 player: PlayerId(0),
                 choice_type: crate::types::ability::ChoiceType::Player {
+                    population: Default::default(),
                     distinctness: Default::default(),
                 },
                 options: vec!["P2".to_string()],

@@ -51,15 +51,15 @@ use crate::types::ability::{
     AbilityCondition, AbilityCost, AbilityDefinition, AbilityKind, AbilityTag,
     AdditionalCostOrigin, AdditionalCostPaymentSource, AggregateFunction, AttachmentKind,
     AttackersDeclaredCountSubject, CardSelectionMode, CastManaObjectScope, CastManaSpentMetric,
-    CastVariantPaid, CoinFlipResult, Comparator, ControllerRef, CountScope, CounterTriggerFilter,
-    DamageAmountScope, DamageAmountThreshold, DamageChannel, DamageKindFilter,
-    DestinationConstraint, DieResultFilter, Effect, EffectScope, FilterProp,
+    CastVariantPaid, ChoiceType, CoinFlipResult, Comparator, ControllerRef, CountScope,
+    CounterTriggerFilter, DamageAmountScope, DamageAmountThreshold, DamageChannel,
+    DamageKindFilter, DestinationConstraint, DieResultFilter, Effect, EffectScope, FilterProp,
     ManaAbilityProducedFilter, ObjectScope, OriginConstraint, ParsedCondition, PhaseTriggerFanout,
     PlayerFilter, PlayerRelation, PlayerScope, PtStat, PtValueScope, QuantityExpr, QuantityRef,
     RenownSubject, SacrificeAggregateStat, SacrificeCost, SacrificeRequirement, SharedQuality,
     StaticCondition, SubAbilityLink, TapCreaturesRequirement, TapStateChange, TargetFilter,
-    TriggerCondition, TriggerConstraint, TriggerDefinition, TypeFilter, TypedFilter,
-    UnlessPayModifier, ZoneChangeClause,
+    TargetSelectionMode, TriggerCondition, TriggerConstraint, TriggerDefinition, TypeFilter,
+    TypedFilter, UnlessPayModifier, ZoneChangeClause,
 };
 use crate::types::card_type::{is_land_subtype, CoreType};
 use crate::types::counter::CounterType;
@@ -297,6 +297,57 @@ fn effect_adds_mana_to_triggering_player(effect_lower: &str) -> bool {
     )
     .parse(effect_lower.trim_start())
     .is_ok()
+}
+
+fn effect_adds_mana_to_active_player(effect_lower: &str) -> bool {
+    value(
+        (),
+        pair(
+            tag::<_, _, OracleError<'_>>("the active player "),
+            alt((tag("adds "), tag("add "))),
+        ),
+    )
+    .parse(effect_lower.trim_start())
+    .is_ok()
+}
+
+/// CR 805.9: An ability that refers to "the active player" refers to one
+/// specific active player chosen by the ability's controller as the effect is
+/// applied. Lower that instruction through the generic resolution-time player
+/// choice, then bind the mana recipient to the selected player.
+fn bind_active_player_mana_choice(ability: &mut AbilityDefinition, effect_lower: &str) {
+    if !effect_adds_mana_to_active_player(effect_lower) {
+        return;
+    }
+
+    let Effect::Mana {
+        target: Some(role), ..
+    } = ability.effect.as_mut()
+    else {
+        return;
+    };
+    if role.recipient() != Some(&TargetFilter::ScopedPlayer) {
+        return;
+    }
+
+    let recipient = TargetFilter::Typed(
+        TypedFilter::default().controller(ControllerRef::ChosenPlayer { index: 0 }),
+    );
+    *role = role.clone().with_recipient(recipient);
+
+    let kind = ability.kind;
+    let mana = std::mem::replace(
+        ability,
+        AbilityDefinition::new(
+            kind,
+            Effect::Choose {
+                choice_type: ChoiceType::active_player(),
+                persist: false,
+                selection: TargetSelectionMode::Chosen,
+            },
+        ),
+    );
+    ability.sub_ability = Some(Box::new(mana));
 }
 
 /// CR 608.2d + CR 603.2: A leading "they may" in a normalized trigger body
@@ -1982,6 +2033,9 @@ pub(crate) fn lower_trigger_ir(ir: &TriggerIr) -> TriggerDefinition {
     // distinguish the multiplying class from an ordinary once-per-phase body.
     if !effect_refers_to_phase_participant(&modifiers.effect_lower) {
         def.phase_fanout = PhaseTriggerFanout::Single;
+    }
+    if let Some(ability) = execute.as_deref_mut() {
+        bind_active_player_mana_choice(ability, &modifiers.effect_lower);
     }
 
     def.execute = execute;

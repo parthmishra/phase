@@ -111,8 +111,8 @@ use crate::types::ability::{
     KeeperConstraint, LibraryPosition, ManaProduction, ManaSpendPermission, ManaTargetRole,
     MultiTargetSpec, NumberDistinctness, ObjectProperty, ObjectScope, OriginConstraint,
     PerPlayerScope, PerpetualModification, PlayPermissionInvalidation, PlayerChoiceDistinctness,
-    PlayerFilter, PlayerRelation, PlayerScope, PreventionAmount, PreventionScope,
-    ProhibitedActivity, PtValue, QuantityExpr, QuantityRef, ReplacementCondition,
+    PlayerChoicePopulation, PlayerFilter, PlayerRelation, PlayerScope, PreventionAmount,
+    PreventionScope, ProhibitedActivity, PtValue, QuantityExpr, QuantityRef, ReplacementCondition,
     ReplacementDefinition, RestrictionExpiry, RestrictionPlayerScope, RevealUntilDisposition,
     RoundingMode, SharedQuality, SharedQualityRelation, SiblingCondition, SkipScope,
     SpellStackToGraveyardReplacement, StaticCondition, StaticDefinition, StepSkipTarget,
@@ -8409,7 +8409,13 @@ fn try_parse_choose_player_to_verb(
         } else {
             PlayerChoiceDistinctness::Independent
         };
-        Ok::<_, nom::Err<OracleError<'_>>>((i, ChoiceType::Player { distinctness }))
+        Ok::<_, nom::Err<OracleError<'_>>>((
+            i,
+            ChoiceType::Player {
+                population: PlayerChoicePopulation::All,
+                distinctness,
+            },
+        ))
     };
     let opponent_arm = value(
         ChoiceType::opponent(),

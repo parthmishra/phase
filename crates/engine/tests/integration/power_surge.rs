@@ -9,8 +9,8 @@ use engine::game::scenario_db::GameScenarioDbExt;
 use engine::game::zone_pipeline::{move_object_for_test, ZoneMoveRequest};
 use engine::game::{layers, turns};
 use engine::types::ability::{
-    ContinuousModification, Effect, PhaseTriggerFanout, PlayerScope, QuantityExpr, QuantityRef,
-    StaticDefinition, TargetFilter, TargetRef,
+    ChoiceType, ContinuousModification, Effect, PhaseTriggerFanout, PlayerChoicePopulation,
+    PlayerScope, QuantityExpr, QuantityRef, StaticDefinition, TargetFilter, TargetRef,
 };
 use engine::types::actions::GameAction;
 use engine::types::events::GameEvent;
@@ -28,6 +28,17 @@ const P2: PlayerId = PlayerId(2);
 
 fn fixture_db() -> &'static engine::database::card_db::CardDatabase {
     shared_card_db().expect("committed integration card fixture must load")
+}
+
+fn mana_pool_total(runner: &engine::game::scenario::GameRunner, player: PlayerId) -> usize {
+    runner
+        .state()
+        .players
+        .iter()
+        .find(|candidate| candidate.id == player)
+        .expect("scenario player")
+        .mana_pool
+        .total()
 }
 
 fn assert_power_surge_runtime_tree_supported(db: &engine::database::card_db::CardDatabase) {
@@ -440,15 +451,6 @@ fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
         "the pending firing must retain the participant whose condition passed"
     );
 
-    let p2_hand_before = runner
-        .state()
-        .players
-        .iter()
-        .find(|player| player.id == P2)
-        .expect("P2")
-        .hand
-        .len();
-    let p2_life_before = engine::game::players::team_life_total(runner.state(), P2);
     let mut zone_events = Vec::new();
     assert!(
         !move_object_for_test(
@@ -463,6 +465,15 @@ fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
         Zone::Hand,
         "the replacement-aware move must put P0's late card into hand"
     );
+    let p0_hand_before = runner
+        .state()
+        .players
+        .iter()
+        .find(|player| player.id == P0)
+        .expect("P0")
+        .hand
+        .len();
+    let p0_life_before = engine::game::players::team_life_total(runner.state(), P0);
 
     for _ in 0..16 {
         if runner.state().stack.is_empty() {
@@ -478,18 +489,103 @@ fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
             .state()
             .players
             .iter()
-            .find(|player| player.id == P2)
-            .expect("P2")
+            .find(|player| player.id == P0)
+            .expect("P0")
             .hand
             .len(),
-        p2_hand_before,
-        "the resolution-time CR 603.4 recheck must prevent P2 from drawing"
+        p0_hand_before,
+        "the resolution-time CR 603.4 recheck must prevent bound participant P0 from drawing"
     );
     assert_eq!(
-        engine::game::players::team_life_total(runner.state(), P2),
-        p2_life_before,
-        "the failed recheck must also prevent the life loss"
+        engine::game::players::team_life_total(runner.state(), P0),
+        p0_life_before,
+        "the failed recheck must also prevent P0's team life loss"
     );
+}
+
+fn assert_shared_turn_active_player_mana_recipient(recipient: PlayerId) {
+    const ORACLE: &str = "At the beginning of each player's upkeep, the active player adds {C}.";
+
+    let mut scenario = GameScenario::new_with_format(FormatConfig::two_headed_giant(), 4, 42);
+    scenario.at_phase(Phase::Untap);
+    let source = scenario
+        .add_enchantment_from_oracle(P2, "Active Player Mana Test", ORACLE)
+        .id();
+    let mut runner = scenario.build();
+
+    runner.state_mut().active_player = P0;
+    runner.state_mut().priority_player = P0;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P0 };
+    engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), source);
+
+    runner.advance_to_upkeep();
+    assert_eq!(
+        runner
+            .state()
+            .stack
+            .iter()
+            .filter(|entry| entry.source_id == source)
+            .count(),
+        1,
+        "CR 805.9 creates one firing, not one firing per active teammate"
+    );
+
+    for _ in 0..16 {
+        match &runner.state().waiting_for {
+            WaitingFor::NamedChoice { .. } => break,
+            WaitingFor::Priority { .. } => {
+                runner
+                    .act(GameAction::PassPriority)
+                    .expect("priority passing must reach the active-player choice");
+            }
+            other => panic!("unexpected window before active-player choice: {other:?}"),
+        }
+    }
+
+    let WaitingFor::NamedChoice {
+        player,
+        choice_type,
+        options,
+        ..
+    } = runner.state().waiting_for.clone()
+    else {
+        panic!("active-player mana trigger must pause for its controller's choice");
+    };
+    assert_eq!(
+        player, P2,
+        "the ability's controller makes the CR 805.9 choice"
+    );
+    assert!(matches!(
+        choice_type,
+        ChoiceType::Player {
+            population: PlayerChoicePopulation::ActivePlayers,
+            ..
+        }
+    ));
+    assert_eq!(
+        options,
+        vec![P0.0.to_string(), P1.0.to_string()],
+        "only the two active teammates may be chosen"
+    );
+
+    runner
+        .act(GameAction::ChooseOption {
+            choice: recipient.0.to_string(),
+        })
+        .expect("either active teammate must be a legal recipient");
+
+    let other = if recipient == P0 { P1 } else { P0 };
+    assert_eq!(mana_pool_total(&runner, recipient), 1);
+    assert_eq!(mana_pool_total(&runner, other), 0);
+}
+
+/// CR 805.9: on a shared team turn, the ability controller chooses one active
+/// player as the effect is applied. The trigger still occurs only once, and
+/// either active teammate can receive the mana.
+#[test]
+fn two_headed_giant_active_player_reference_is_one_controller_made_choice() {
+    assert_shared_turn_active_player_mana_recipient(P0);
+    assert_shared_turn_active_player_mana_recipient(P1);
 }
 
 /// CR 603.4 + CR 805.4d: A failing condition for the shared turn's team
