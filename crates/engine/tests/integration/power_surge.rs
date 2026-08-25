@@ -6,6 +6,7 @@ use engine::game::game_object::PhaseOutCause;
 use engine::game::phasing::phase_out_object;
 use engine::game::scenario::{GameScenario, P0, P1};
 use engine::game::scenario_db::GameScenarioDbExt;
+use engine::game::zone_pipeline::{move_object_for_test, ZoneMoveRequest};
 use engine::game::{layers, turns};
 use engine::types::ability::{
     ContinuousModification, Effect, PhaseTriggerFanout, PlayerScope, QuantityExpr, QuantityRef,
@@ -147,8 +148,8 @@ fn phased_out_power_surge_uses_history_captured_before_it_phases_in() {
     let mut scenario = GameScenario::new();
     scenario.at_phase(Phase::Untap);
     let power_surge = scenario.add_real_card(P1, POWER_SURGE, Zone::Battlefield, db);
-    scenario.add_land_from_oracle(P1, "Land A", "");
-    scenario.add_land_from_oracle(P1, "Land B", "");
+    let first = scenario.add_land_from_oracle(P1, "Land A", "").id();
+    let second = scenario.add_land_from_oracle(P1, "Land B", "").id();
     let mut runner = scenario.build();
     engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
 
@@ -192,6 +193,18 @@ fn phased_out_power_surge_uses_history_captured_before_it_phases_in() {
             .iter()
             .any(|entry| entry.source_id == power_surge),
         "the phased-in Power Surge must trigger at upkeep"
+    );
+    runner.state_mut().objects.get_mut(&first).unwrap().tapped = true;
+    runner.state_mut().objects.get_mut(&second).unwrap().tapped = true;
+    assert_eq!(
+        runner
+            .state()
+            .beginning_of_turn_snapshot
+            .as_ref()
+            .unwrap()
+            .untapped_lands_controlled[&P1],
+        2,
+        "advancing through untap must preserve the committed history row"
     );
     resolve_power_surge_trigger(&mut runner);
 
@@ -436,11 +449,19 @@ fn two_headed_giant_phase_intervening_if_tracks_each_bound_participant() {
         .hand
         .len();
     let p2_life_before = engine::game::players::team_life_total(runner.state(), P2);
-    engine::game::zones::move_to_zone(
-        runner.state_mut(),
-        p0_late_card,
+    let mut zone_events = Vec::new();
+    assert!(
+        !move_object_for_test(
+            runner.state_mut(),
+            ZoneMoveRequest::draw(p0_late_card, Default::default()),
+            &mut zone_events,
+        ),
+        "the late hand move must not pause for a replacement choice"
+    );
+    assert_eq!(
+        runner.state().objects[&p0_late_card].zone,
         Zone::Hand,
-        &mut Vec::new(),
+        "the replacement-aware move must put P0's late card into hand"
     );
 
     for _ in 0..16 {

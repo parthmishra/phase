@@ -2161,8 +2161,10 @@ fn legacy_quantity_ref(x: &QuantityRef) -> bool {
         | QuantityRef::ObjectNameWordCount { scope, .. }
         | QuantityRef::ObjectTypelineComponentCount { scope, .. }
         | QuantityRef::ManaSymbolsInManaCost { scope, .. } => legacy_object_scope(scope),
+        // CR 603.3b: This historical quantity is outside the frozen legacy
+        // tags; `rw_quantity_ref` performs its player-scope ordering analysis.
+        QuantityRef::UntappedLandsAtTurnStart { .. } => false,
         QuantityRef::HandSize { .. }
-        | QuantityRef::UntappedLandsAtTurnStart { .. }
         | QuantityRef::LifeTotal { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
@@ -6160,6 +6162,8 @@ fn rw_quantity_ref(x: &QuantityRef) -> RwProfile {
             p.reads_player_span = player_span_of_scope(player);
             p
         }
+        // CR 603.3b: Sibling-order analysis preserves the historical
+        // quantity's player-scope dependency.
         QuantityRef::UntappedLandsAtTurnStart { player } => rw_player_scope(player),
         QuantityRef::LifeTotal { player: _ } | QuantityRef::LifeAboveStarting => {
             reads_player_of(StateKind::PlayerLife)

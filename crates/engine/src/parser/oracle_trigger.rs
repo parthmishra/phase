@@ -15267,7 +15267,8 @@ fn parse_phase_trigger_fanout(input: &str) -> OracleResult<'_, PhaseTriggerFanou
 /// Bare `them` is deliberately excluded: in "put one of them into your hand"
 /// it refers to cards, not the phase participant. Player-object uses retain a
 /// grammatical marker (`to them`), while subject and possessive uses are
-/// represented by `they` / `their`.
+/// represented by `they` / `their`. CR 805.9: "the active player" denotes one
+/// active player chosen as the effect is applied, not every phase participant.
 fn effect_refers_to_phase_participant(effect_lower: &str) -> bool {
     nom_primitives::scan_at_word_boundaries(effect_lower, |input| {
         value(
@@ -15275,7 +15276,6 @@ fn effect_refers_to_phase_participant(effect_lower: &str) -> bool {
             alt((
                 tag("that player"),
                 tag("that opponent"),
-                tag("active player"),
                 tag("they"),
                 tag("their"),
                 tag("to them"),

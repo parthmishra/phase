@@ -16467,6 +16467,24 @@ fn phase_trigger_without_participant_reference_stays_single() {
     assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
 }
 
+/// CR 805.9: "the active player" denotes one player chosen as the effect is
+/// applied; it is not a back-reference to every player named by the phase.
+#[test]
+fn phase_trigger_active_player_reference_stays_single() {
+    let def = parse_trigger_line(
+        "At the beginning of each player's upkeep, the active player adds {C}.",
+        "Test Enchantment",
+    );
+
+    assert_eq!(def.mode, TriggerMode::Phase);
+    assert_eq!(def.phase, Some(Phase::Upkeep));
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
+    assert!(matches!(
+        def.execute.as_ref().map(|ability| ability.effect.as_ref()),
+        Some(Effect::Mana { .. })
+    ));
+}
+
 /// CR 805.4d: A plural object pronoun is not a reference to the players whose
 /// shared end step began. Akal Pakal's "one of them" denotes the two looked-at
 /// cards, so the trigger occurs once for the shared phase rather than once per
