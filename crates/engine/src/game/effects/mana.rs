@@ -188,10 +188,12 @@ pub fn resolve(
     // "first player target" quantity resolution cannot read the recipient.
     let count_ability = count_scoped_ability(state, ability, mana_role.as_ref());
     let count_ability = &count_ability;
-    let is_triggered_mana_inline = crate::game::mana_abilities::is_triggered_mana_ability(
-        ability,
-        state.current_trigger_event.as_ref(),
-    );
+    // CR 605.4a: read back the acceptance decision for the occurrence that is
+    // actually executing rather than re-answering CR 605.1b from a clone the
+    // resolver may already have bound a context referent onto. With no accepted
+    // occurrence live this is byte-for-byte the baseline raw classifier call.
+    let is_triggered_mana_inline =
+        crate::game::mana_abilities::is_resolving_triggered_mana(state, ability);
     let mana_choice = (!is_triggered_mana_inline)
         .then(|| {
             crate::game::mana_abilities::mana_choice_prompt(
@@ -199,6 +201,7 @@ pub fn resolve(
                 state,
                 ability.source_id,
                 Some(ability),
+                Some(count_ability),
             )
         })
         .flatten();
@@ -270,7 +273,8 @@ pub fn resolve(
             .current_trigger_event
             .as_ref()
             .and_then(|event| match event {
-                GameEvent::TappedForMana { player_id, .. } => Some(*player_id),
+                GameEvent::TappedForMana { player_id, .. }
+                | GameEvent::ManaAbilityProduced { player_id, .. } => Some(*player_id),
                 _ => None,
             })
             .unwrap_or(ability.controller),
@@ -549,6 +553,9 @@ pub(crate) fn resolve_restrictions(
             ManaSpendRestriction::SpellFromZone(zs) => {
                 Some(ManaRestriction::OnlyForSpellFromZone(*zs))
             }
+            ManaSpendRestriction::CannotCastSpellFromZone(zone) => {
+                Some(ManaRestriction::CannotCastSpellFromZone(*zone))
+            }
             // CR 106.6 + CR 116.2m + CR 709.5e: Lower the door-unlock special-action
             // leaf into the runtime gate checked by `allows_special_action` when a
             // Room's unlock cost is paid through `PaymentContext::SpecialAction`.
@@ -707,6 +714,23 @@ fn resolve_mana_types_impl(
                 (None, None) => Vec::new(),
             }
         }
+        // CR 106.1b + CR 106.5: Jeweled Amulet — "Add one mana of this
+        // artifact's last noted type." Unlike `ChosenColor` (a
+        // player-prompted `ManaColor`), the noted value is engine-set
+        // (`Effect::NoteManaSpent`) and `ManaType`-valued (colorless is a
+        // real noted type per the card's ruling). A card in this class always
+        // notes exactly one type — its cost's own generic mana is spent as a
+        // single unit-worth of one type — so, mirroring `AnyOneColor`'s
+        // repeat-by-count idiom, the first noted type repeats `count` times.
+        // No noted type (never activated the noting ability, or a fresh
+        // incarnation after a zone change) produces no mana.
+        ManaProduction::NotedType { count } => {
+            let amount = resolve_count(count, state, ability, controller, source_id);
+            match noted_mana_type_for(state, source_id) {
+                Some(mana_type) => vec![mana_type; amount],
+                None => Vec::new(),
+            }
+        }
         // CR 106.7: Produce mana of any color that a land an opponent controls could produce.
         // Delegates to mana_sources::opponent_land_color_options for the shared computation.
         ManaProduction::OpponentLandColors { count } => {
@@ -850,7 +874,10 @@ fn resolve_mana_types_impl(
         ManaProduction::TriggerEventManaType => {
             use crate::types::events::GameEvent;
             match &state.current_trigger_event {
-                Some(GameEvent::TappedForMana { produced, .. }) => {
+                Some(
+                    GameEvent::TappedForMana { produced, .. }
+                    | GameEvent::ManaAbilityProduced { produced, .. },
+                ) => {
                     let distinct: std::collections::HashSet<_> = produced.iter().copied().collect();
                     distinct.into_iter().collect()
                 }
@@ -996,6 +1023,21 @@ pub(crate) fn chosen_color_for_mana(
                     _ => None,
                 })
         })
+}
+
+/// CR 106.1b: The first mana type noted by a past `Effect::NoteManaSpent`
+/// resolution on `source_id` ("this artifact's last noted type" — Jeweled
+/// Amulet). Unlike `chosen_color_for_mana`, this is never player-prompted —
+/// engine-set state only, with no `last_named_choice` fallback.
+pub(crate) fn noted_mana_type_for(
+    state: &GameState,
+    source_id: crate::types::identifiers::ObjectId,
+) -> Option<ManaType> {
+    state
+        .objects
+        .get(&source_id)
+        .and_then(|obj| obj.noted_mana_spent())
+        .and_then(|types| types.first().copied())
 }
 
 /// Convert a ManaColor to the runtime ManaType.
@@ -2534,7 +2576,9 @@ mod tests {
                     contribution: ManaContribution::Base,
                 },
                 restrictions: vec![],
-                grants: vec![ManaSpellGrant::CantBeCountered],
+                grants: vec![ManaSpellGrant::CantBeCountered {
+                    filter: TargetFilter::Any,
+                }],
                 expiry: None,
                 target: None,
             },
@@ -2546,7 +2590,12 @@ mod tests {
         resolve(&mut state, &ability, &mut events).unwrap();
 
         let unit = &state.players[0].mana_pool.mana[0];
-        assert_eq!(unit.grants, vec![ManaSpellGrant::CantBeCountered]);
+        assert_eq!(
+            unit.grants,
+            vec![ManaSpellGrant::CantBeCountered {
+                filter: TargetFilter::Any,
+            }]
+        );
     }
 
     /// CR 106.7 + CR 106.1b: Reflecting Pool — produces one mana of any type

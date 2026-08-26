@@ -59,8 +59,17 @@ pub(crate) struct ParseContext {
     #[allow(dead_code)] // Retained for future nom combinator consumers (D-02).
     pub quantity_ref: Option<QuantityRef>,
     /// Whether we are inside a trigger effect (enables event context refs).
-    #[allow(dead_code)] // Retained for future nom combinator consumers (D-02).
+    ///
+    /// Consumed by `oracle_replacement::parse_oneshot_target_source_prevent`
+    /// (the Awe Strike one-shot target-source prevention branch): inside a
+    /// trigger body "that creature" is an event-context anaphor resolved by
+    /// the trigger machinery, not a target-source capture, so the branch must
+    /// not claim trigger-body text (Ria Ivor keeps its fall-through shapes).
     pub in_trigger: bool,
+    /// Contextual source for the exact bare aggregate surface "those cards".
+    /// Set per effect-chain chunk from the nearest typed producer, or from a
+    /// proven trigger subject batch when no compatible chain producer wins.
+    pub bare_card_aggregate_source: Option<crate::types::ability::TrackedAnaphorSource>,
     /// Whether we are inside a replacement effect.
     #[allow(dead_code)] // Retained for future nom combinator consumers (D-02).
     pub in_replacement: bool,
@@ -73,6 +82,16 @@ pub(crate) struct ParseContext {
     /// set this to `TriggeringSource` so "Whenever you cast a spell, put it ..."
     /// moves the spell on the stack, not the trigger source or a parent target.
     pub object_pronoun_ref: Option<TargetFilter>,
+    /// CR 608.2c (rules of English — number agreement) + CR 608.2k + CR 406.6:
+    /// Antecedent for bare PLURAL object pronouns ("them"/"themselves") in the
+    /// current trigger body, introduced by a plural noun phrase in the trigger's
+    /// intervening-if ("if there are cards exiled with ~, put THEM …" → the
+    /// linked-exile pool). Deliberately separate from the singular
+    /// `object_pronoun_ref`: a plural antecedent must never capture a singular
+    /// "it", whose antecedent is the nearer chained object (River Song's Diary:
+    /// "choose one of them at random. You may cast IT" — "it" is the chosen card,
+    /// not the pool).
+    pub plural_object_pronoun_ref: Option<TargetFilter>,
     /// Accumulated diagnostics for the current card parse (Phase 52, D-07).
     /// Replaces thread-local oracle_warnings accumulator.
     pub diagnostics: Vec<OracleDiagnostic>,
@@ -256,6 +275,15 @@ pub(crate) struct ParseContext {
     /// `ExileFromTopUntil` referent (Territorial Bruntar) that
     /// `parent_target_available` would otherwise include.
     pub parent_target_is_chosen: bool,
+    /// CR 608.2c + CR 601.2a: the chain's prior chosen-target FILTER — the
+    /// `Effect::TargetOnly { target }` filter that `parent_target_is_chosen`
+    /// reports the presence of (Emry's / Conduit of Worlds' "Choose target …
+    /// card in your graveyard"). It binds a downstream "you may cast that card"
+    /// anaphor to the chosen object; timing comes independently from the
+    /// instruction plus its duration, never from this target's zone. Seeded
+    /// alongside `parent_target_is_chosen` in the chunk loop; `None` on every
+    /// standalone and non-chosen parse.
+    pub chain_prior_chosen_target: Option<TargetFilter>,
     /// CR 608.2c + CR 400.7: Source zone of the tracked set that a downstream
     /// "put those cards / put them onto the battlefield" anaphor (a
     /// `TargetFilter::TrackedSet`) must scan. Set by a producer clause that

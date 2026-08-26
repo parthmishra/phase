@@ -96026,6 +96026,11 @@ scryfall_oracle_id = "f2f09757-1931-47c0-a5f0-39280445489d"
 scryfall_id = "eb08b642-aff6-4c37-a952-f8ddcfc4767e"
 
 [[token.source_card_refs]]
+card_name = "Academy Manufactor"
+scryfall_oracle_id = "f36d1d8b-8303-44a9-ab56-531931641ea2"
+scryfall_id = "545f6d3a-5101-407c-acde-168c5097d866"
+
+[[token.source_card_refs]]
 card_name = "Tireless Provisioner"
 scryfall_oracle_id = "ab8d5f5c-1976-4f77-8ed2-8d28ee666741"
 scryfall_id = "7a832060-ecc6-406a-ab06-b371aa952e13"
@@ -96054,6 +96059,11 @@ scryfall_id = "c88eb33d-efba-4ad9-878f-f051079c9bce"
 card_name = "Witch's Oven"
 scryfall_oracle_id = "8fa0fe02-2452-4386-8e0c-165757b0f0a3"
 scryfall_id = "1546013b-89d7-46b8-bfcb-9d150a50499f"
+
+[[token.source_card_refs]]
+card_name = "Food Coma"
+scryfall_oracle_id = "aab3774c-4ec3-4946-a09b-af0fab7cacb7"
+scryfall_id = "5ac60ed5-5f28-4e8b-9417-7b2ba52b5880"
 
 [[token.source_card_refs]]
 card_name = "Applejack"
@@ -98149,8 +98159,10 @@ source_card_names = [
     "Baeloth Barrityl, Entertainer",
     "Battle Angels of Tyr",
     "Beamtown Beatstick",
+    "Bejeweled Warg",
     "Beza, the Bounding Spring",
     "Big Score",
+    "Bilbo's Gambit",
     "Bilbo, Retired Burglar",
     "Bill Ferny, Bree Swindler",
     "Black Market Connections",
@@ -98204,6 +98216,8 @@ source_card_names = [
     "Discerning Financier",
     "Dockside Extortionist",
     "Don Andres, the Renegade",
+    "Dori, Bearer of Friends",
+    "Dragon-Cursed Halls",
     "Dungeoneer's Pack",
     "Edward Kenway",
     "Elemental Masterpiece",
@@ -98232,6 +98246,7 @@ source_card_names = [
     "Gilded Pinions",
     "Gimli of the Glittering Caves",
     "Gleaming Barrier",
+    "Gleaming Splendor",
     "Glittermonger",
     "Gluntch, the Bestower",
     "Glóin, Dwarf Emissary",
@@ -98289,6 +98304,7 @@ source_card_names = [
     "Life Insurance",
     "Lobelia Sackville-Baggins",
     "Locke, Treasure Hunter",
+    "Long-Bodied Grey Dog",
     "Loot Dispute",
     "Lotho, Corrupt Shirriff",
     "Luck Bobblehead",
@@ -98327,6 +98343,7 @@ source_card_names = [
     "Old Gnawbone",
     "Old Rutstein",
     "Olivia, Opulent Outlaw",
+    "Orcrist, Goblin-cleaver",
     "Orochi Soul-Reaver",
     "Pain Distributor",
     "Patient Naturalist",
@@ -98390,6 +98407,9 @@ source_card_names = [
     "Sidequest: Hunt the Mark // Yiazmat, Ultimate Mark",
     "Skullport Merchant",
     "Smashing Success",
+    "Smaug the Impenetrable",
+    "Smaug the Magnificent",
+    "Smaug, Wicked Worm",
     "Smoke Spirits' Aid",
     "Smothering Tithe",
     "Smuggler's Share",
@@ -98420,11 +98440,15 @@ source_card_names = [
     "The Gold Saucer",
     "The Golden City of Orazca",
     "The Matrix of Time",
+    "The Misty Mountains Cold",
     "The Reaver Cleaver",
+    "The Sackville-Bagginses",
     "The Third Doctor",
     "The Western Cloud",
     "There and Back Again",
     "Thieves' Tools",
+    "Thorin, Company's Leader",
+    "Thorin, King of Durin's Folk",
     "Ticket Tortoise",
     "Tireless Provisioner",
     "Tivit, Seller of Secrets",
@@ -149776,6 +149800,11 @@ scryfall_oracle_id = "d46c3fb6-f1c7-4a96-ae42-5bce17fc7c1d"
 scryfall_id = "68cce7e2-8c4b-4c76-a38b-0fee85da3151"
 
 [[token.source_card_refs]]
+card_name = "Big Score"
+scryfall_oracle_id = "a5cbd257-c836-493e-bb1a-76242619dea2"
+scryfall_id = "f5db8199-22d8-4721-b62b-245ec5e2907a"
+
+[[token.source_card_refs]]
 card_name = "Reckoner Bankbuster // Reckoner Bankbuster"
 face_name = "Reckoner Bankbuster"
 scryfall_oracle_id = "b6be94dc-7162-4887-b959-3bda709724eb"
@@ -149815,6 +149844,11 @@ scryfall_id = "b2b1ab21-fee9-42c4-abae-4e0883d34801"
 card_name = "Big Score"
 scryfall_oracle_id = "a5cbd257-c836-493e-bb1a-76242619dea2"
 scryfall_id = "c09bb44b-af66-4183-826d-867299dc1b3e"
+
+[[token.source_card_refs]]
+card_name = "Academy Manufactor"
+scryfall_oracle_id = "f36d1d8b-8303-44a9-ab56-531931641ea2"
+scryfall_id = "545f6d3a-5101-407c-acde-168c5097d866"
 
 [[token.source_card_refs]]
 card_name = "Tireless Provisioner"
@@ -170532,8 +170566,10 @@ source_card_names = [
     "Baeloth Barrityl, Entertainer",
     "Battle Angels of Tyr",
     "Beamtown Beatstick",
+    "Bejeweled Warg",
     "Beza, the Bounding Spring",
     "Big Score",
+    "Bilbo's Gambit",
     "Bilbo, Retired Burglar",
     "Bill Ferny, Bree Swindler",
     "Black Market Connections",
@@ -170587,6 +170623,8 @@ source_card_names = [
     "Discerning Financier",
     "Dockside Extortionist",
     "Don Andres, the Renegade",
+    "Dori, Bearer of Friends",
+    "Dragon-Cursed Halls",
     "Dungeoneer's Pack",
     "Edward Kenway",
     "Elemental Masterpiece",
@@ -170615,6 +170653,7 @@ source_card_names = [
     "Gilded Pinions",
     "Gimli of the Glittering Caves",
     "Gleaming Barrier",
+    "Gleaming Splendor",
     "Glittermonger",
     "Gluntch, the Bestower",
     "Glóin, Dwarf Emissary",
@@ -170672,6 +170711,7 @@ source_card_names = [
     "Life Insurance",
     "Lobelia Sackville-Baggins",
     "Locke, Treasure Hunter",
+    "Long-Bodied Grey Dog",
     "Loot Dispute",
     "Lotho, Corrupt Shirriff",
     "Luck Bobblehead",
@@ -170710,6 +170750,7 @@ source_card_names = [
     "Old Gnawbone",
     "Old Rutstein",
     "Olivia, Opulent Outlaw",
+    "Orcrist, Goblin-cleaver",
     "Orochi Soul-Reaver",
     "Pain Distributor",
     "Patient Naturalist",
@@ -170773,6 +170814,9 @@ source_card_names = [
     "Sidequest: Hunt the Mark // Yiazmat, Ultimate Mark",
     "Skullport Merchant",
     "Smashing Success",
+    "Smaug the Impenetrable",
+    "Smaug the Magnificent",
+    "Smaug, Wicked Worm",
     "Smoke Spirits' Aid",
     "Smothering Tithe",
     "Smuggler's Share",
@@ -170803,11 +170847,15 @@ source_card_names = [
     "The Gold Saucer",
     "The Golden City of Orazca",
     "The Matrix of Time",
+    "The Misty Mountains Cold",
     "The Reaver Cleaver",
+    "The Sackville-Bagginses",
     "The Third Doctor",
     "The Western Cloud",
     "There and Back Again",
     "Thieves' Tools",
+    "Thorin, Company's Leader",
+    "Thorin, King of Durin's Folk",
     "Ticket Tortoise",
     "Tireless Provisioner",
     "Tivit, Seller of Secrets",
@@ -190363,6 +190411,11 @@ scryfall_oracle_id = "e71ac446-02a4-4468-8d29-f28b21617665"
 scryfall_id = "83a86763-c3fe-4cff-8b65-22cb329d112c"
 
 [[token.source_card_refs]]
+card_name = "Academy Manufactor"
+scryfall_oracle_id = "f36d1d8b-8303-44a9-ab56-531931641ea2"
+scryfall_id = "545f6d3a-5101-407c-acde-168c5097d866"
+
+[[token.source_card_refs]]
 card_name = "Wernog, Rider's Chaplain"
 scryfall_oracle_id = "6cd03270-54cc-43e1-9b86-70c76960c841"
 scryfall_id = "25a4af68-6e5e-4b44-9c1c-25ecdbd555b5"
@@ -190700,6 +190753,11 @@ subtypes = ["Bird"]
 supertypes = []
 colors = ["Blue"]
 keywords = ["Flying"]
+
+[[token.source_card_refs]]
+card_name = "Swan Song"
+scryfall_oracle_id = "8ddfc283-c9b4-41a5-af88-cf0068e986cc"
+scryfall_id = "70d504b8-1e59-4cea-8e83-06bd4bc9ab68"
 
 [[token.source_card_refs]]
 card_name = "Swan Song"
@@ -193310,8 +193368,10 @@ source_card_names = [
     "Baeloth Barrityl, Entertainer",
     "Battle Angels of Tyr",
     "Beamtown Beatstick",
+    "Bejeweled Warg",
     "Beza, the Bounding Spring",
     "Big Score",
+    "Bilbo's Gambit",
     "Bilbo, Retired Burglar",
     "Bill Ferny, Bree Swindler",
     "Black Market Connections",
@@ -193365,6 +193425,8 @@ source_card_names = [
     "Discerning Financier",
     "Dockside Extortionist",
     "Don Andres, the Renegade",
+    "Dori, Bearer of Friends",
+    "Dragon-Cursed Halls",
     "Dungeoneer's Pack",
     "Edward Kenway",
     "Elemental Masterpiece",
@@ -193393,6 +193455,7 @@ source_card_names = [
     "Gilded Pinions",
     "Gimli of the Glittering Caves",
     "Gleaming Barrier",
+    "Gleaming Splendor",
     "Glittermonger",
     "Gluntch, the Bestower",
     "Glóin, Dwarf Emissary",
@@ -193450,6 +193513,7 @@ source_card_names = [
     "Life Insurance",
     "Lobelia Sackville-Baggins",
     "Locke, Treasure Hunter",
+    "Long-Bodied Grey Dog",
     "Loot Dispute",
     "Lotho, Corrupt Shirriff",
     "Luck Bobblehead",
@@ -193488,6 +193552,7 @@ source_card_names = [
     "Old Gnawbone",
     "Old Rutstein",
     "Olivia, Opulent Outlaw",
+    "Orcrist, Goblin-cleaver",
     "Orochi Soul-Reaver",
     "Pain Distributor",
     "Patient Naturalist",
@@ -193551,6 +193616,9 @@ source_card_names = [
     "Sidequest: Hunt the Mark // Yiazmat, Ultimate Mark",
     "Skullport Merchant",
     "Smashing Success",
+    "Smaug the Impenetrable",
+    "Smaug the Magnificent",
+    "Smaug, Wicked Worm",
     "Smoke Spirits' Aid",
     "Smothering Tithe",
     "Smuggler's Share",
@@ -193581,11 +193649,15 @@ source_card_names = [
     "The Gold Saucer",
     "The Golden City of Orazca",
     "The Matrix of Time",
+    "The Misty Mountains Cold",
     "The Reaver Cleaver",
+    "The Sackville-Bagginses",
     "The Third Doctor",
     "The Western Cloud",
     "There and Back Again",
     "Thieves' Tools",
+    "Thorin, Company's Leader",
+    "Thorin, King of Durin's Folk",
     "Ticket Tortoise",
     "Tireless Provisioner",
     "Tivit, Seller of Secrets",
@@ -200423,8 +200495,10 @@ source_card_names = [
     "Baeloth Barrityl, Entertainer",
     "Battle Angels of Tyr",
     "Beamtown Beatstick",
+    "Bejeweled Warg",
     "Beza, the Bounding Spring",
     "Big Score",
+    "Bilbo's Gambit",
     "Bilbo, Retired Burglar",
     "Bill Ferny, Bree Swindler",
     "Black Market Connections",
@@ -200478,6 +200552,8 @@ source_card_names = [
     "Discerning Financier",
     "Dockside Extortionist",
     "Don Andres, the Renegade",
+    "Dori, Bearer of Friends",
+    "Dragon-Cursed Halls",
     "Dungeoneer's Pack",
     "Edward Kenway",
     "Elemental Masterpiece",
@@ -200506,6 +200582,7 @@ source_card_names = [
     "Gilded Pinions",
     "Gimli of the Glittering Caves",
     "Gleaming Barrier",
+    "Gleaming Splendor",
     "Glittermonger",
     "Gluntch, the Bestower",
     "Glóin, Dwarf Emissary",
@@ -200563,6 +200640,7 @@ source_card_names = [
     "Life Insurance",
     "Lobelia Sackville-Baggins",
     "Locke, Treasure Hunter",
+    "Long-Bodied Grey Dog",
     "Loot Dispute",
     "Lotho, Corrupt Shirriff",
     "Luck Bobblehead",
@@ -200601,6 +200679,7 @@ source_card_names = [
     "Old Gnawbone",
     "Old Rutstein",
     "Olivia, Opulent Outlaw",
+    "Orcrist, Goblin-cleaver",
     "Orochi Soul-Reaver",
     "Pain Distributor",
     "Patient Naturalist",
@@ -200664,6 +200743,9 @@ source_card_names = [
     "Sidequest: Hunt the Mark // Yiazmat, Ultimate Mark",
     "Skullport Merchant",
     "Smashing Success",
+    "Smaug the Impenetrable",
+    "Smaug the Magnificent",
+    "Smaug, Wicked Worm",
     "Smoke Spirits' Aid",
     "Smothering Tithe",
     "Smuggler's Share",
@@ -200694,11 +200776,15 @@ source_card_names = [
     "The Gold Saucer",
     "The Golden City of Orazca",
     "The Matrix of Time",
+    "The Misty Mountains Cold",
     "The Reaver Cleaver",
+    "The Sackville-Bagginses",
     "The Third Doctor",
     "The Western Cloud",
     "There and Back Again",
     "Thieves' Tools",
+    "Thorin, Company's Leader",
+    "Thorin, King of Durin's Folk",
     "Ticket Tortoise",
     "Tireless Provisioner",
     "Tivit, Seller of Secrets",

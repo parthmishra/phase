@@ -153,6 +153,8 @@ pub fn apply_card_face_to_object(obj: &mut GameObject, card_face: &CardFace) {
     obj.color = color.clone();
     obj.base_power = power;
     obj.base_toughness = toughness;
+    obj.layer_base_power = power;
+    obj.layer_base_toughness = toughness;
     obj.base_name = card_face.name.clone();
     obj.base_loyalty = loyalty;
     obj.base_printed_loyalty = printed_loyalty;
@@ -184,6 +186,10 @@ pub fn apply_card_face_to_object(obj: &mut GameObject, card_face: &CardFace) {
     obj.base_printed_ref = obj.printed_ref.clone();
     obj.source_related_token_ids = card_face.metadata.related_token_ids.clone();
     obj.spellbook = card_face.metadata.spellbook.clone();
+    // Evidence that this face's printed text did not parse cleanly. Carried onto
+    // the object so a consumer can tell "this card has no such ability" apart from
+    // "the parser could not read that clause".
+    obj.parse_warnings = card_face.parse_warnings.clone();
     obj.modal = card_face.modal.clone();
     obj.additional_cost = card_face.additional_cost.clone();
     obj.strive_cost = card_face.strive_cost.clone();
@@ -292,6 +298,9 @@ pub fn apply_card_face_to_back_face(back_face: &mut BackFaceData, card_face: &Ca
     back_face.strive_cost = card_face.strive_cost.clone();
     back_face.casting_restrictions = card_face.casting_restrictions.clone();
     back_face.casting_options = card_face.casting_options.clone();
+    // Same copy, same reason, as `apply_card_face_to_object`: evidence that THIS
+    // face's printed text did not parse cleanly travels with the face.
+    back_face.parse_warnings = card_face.parse_warnings.clone();
 }
 
 pub fn apply_back_face_to_object(obj: &mut GameObject, back_face: BackFaceData) {
@@ -310,6 +319,8 @@ pub fn apply_back_face_to_object(obj: &mut GameObject, back_face: BackFaceData) 
     obj.color = back_face.color.clone();
     obj.base_power = back_face.power;
     obj.base_toughness = back_face.toughness;
+    obj.layer_base_power = back_face.power;
+    obj.layer_base_toughness = back_face.toughness;
     obj.base_name = back_face.name.clone();
     obj.base_loyalty = back_face.loyalty;
     obj.base_printed_loyalty = back_face.printed_loyalty;
@@ -341,6 +352,10 @@ pub fn apply_back_face_to_object(obj: &mut GameObject, back_face: BackFaceData) 
     obj.strive_cost = back_face.strive_cost;
     obj.casting_restrictions = back_face.casting_restrictions;
     obj.casting_options = back_face.casting_options;
+    // The displayed face's diagnostics replace the outgoing face's. Both
+    // directions matter and both are this one line: a back face the parser could
+    // not fully read starts gating here, and transforming back off it stops.
+    obj.parse_warnings = back_face.parse_warnings;
 }
 
 /// CR 306.5b + CR 310.4b + CR 614.1c: Seed the intrinsic "enters with N
@@ -508,6 +523,19 @@ pub fn intrinsic_copiable_values(obj: &GameObject) -> CopiableValues {
         trigger_definitions: Arc::clone(&obj.base_trigger_definitions),
         replacement_definitions: copiable_replacement_definitions(obj),
         static_definitions: Arc::clone(&obj.base_static_definitions),
+        // CR 709.5 + CR 709.5b: a Room's per-half identities are copiable —
+        // the door-stamped defs above carry both halves' TEXT, this carries
+        // both halves' names and costs. `None` for every non-Room source
+        // (the base types are this snapshot's own Room gate).
+        room_halves: obj
+            .base_card_types
+            .subtypes
+            .iter()
+            .any(|s| s == "Room")
+            .then(|| crate::game::room::own_room_halves(obj)),
+        // CR 707.9b exceptions are folded in by `compute_current_copiable_values`,
+        // never by the printed form.
+        name_origin: Default::default(),
     }
 }
 
@@ -617,6 +645,9 @@ pub(crate) fn copiable_values_from_face(result_face: &CardFace) -> CopiableValue
         abilities: Arc::new(result_face.abilities.clone()),
         trigger_definitions: Arc::new(result_face.triggers.clone()),
         replacement_definitions: Arc::new(result_face.replacements.clone()),
+        // A format-pool face is never a Room half pair.
+        room_halves: None,
+        name_origin: Default::default(),
         static_definitions: Arc::new(result_face.static_abilities.clone()),
     }
 }
@@ -656,6 +687,10 @@ pub fn apply_copiable_values(
     obj.card_types = values.card_types.clone();
     obj.power = values.power;
     obj.toughness = values.toughness;
+    // CR 613.1a + CR 613.4b: a copy replaces the copiable baseline seen by
+    // subsequent layer-7b/base-power reads until the next layer reset.
+    obj.layer_base_power = values.power;
+    obj.layer_base_toughness = values.toughness;
     obj.loyalty = values.loyalty;
     obj.printed_loyalty = values.printed_loyalty;
     obj.keywords = values.keywords.clone();
@@ -678,6 +713,14 @@ pub fn apply_copiable_values(
         .collect();
     obj.replacement_definitions = Arc::clone(&values.replacement_definitions).into();
     obj.static_definitions = Arc::clone(&values.static_definitions).into();
+    // CR 709.5b + CR 707.2: carry the copied Room half data. Layer-derived —
+    // the Step-1 seed clears it, so it expires with this copy effect.
+    obj.copied_room_halves = values.room_halves.clone();
+    // CR 707.9b + CR 707.3 + CR 613.1a: EVERY applied copy assigns the name
+    // origin — a later ordinary copy therefore resets an earlier exception,
+    // and a chained copy of an exception-named copy keeps the folded
+    // exception as its final name.
+    obj.layer1_name_origin = Some(values.name_origin);
 }
 
 /// Materialize copiable values onto a newly constructed object (for example a
@@ -704,6 +747,8 @@ pub fn install_copiable_values_as_base(obj: &mut GameObject, values: &CopiableVa
     obj.base_card_types = values.card_types.clone();
     obj.base_power = values.power;
     obj.base_toughness = values.toughness;
+    obj.layer_base_power = values.power;
+    obj.layer_base_toughness = values.toughness;
     obj.base_loyalty = values.loyalty;
     obj.base_printed_loyalty = values.printed_loyalty;
     obj.base_keywords = values.keywords.clone();
@@ -712,6 +757,40 @@ pub fn install_copiable_values_as_base(obj: &mut GameObject, values: &CopiableVa
     obj.base_static_definitions = Arc::clone(&values.static_definitions);
     obj.install_trigger_base_definitions(Arc::clone(&values.trigger_definitions))
         .expect("trigger base-set generation must not overflow");
+    // CR 709.5b: a materialized duplicate of a Room keeps both printed halves.
+    // The base slots hold the LEFT half and a synthesized back face the right
+    // one — identity only (name and door cost): the halves' TEXT rides in the
+    // door-stamped definition sets installed above, and `own_room_halves`
+    // re-derives printed order from this exact shape (`modal_back_face` false).
+    if let Some(halves) = &values.room_halves {
+        // CR 707.9b: an exception-named copy ("except its name is X") keeps X
+        // as its copiable name even when materialized (reachable via
+        // Impossible Man copying a Room + Snowborn Simulacra / Vona de Iedo
+        // conjuring a duplicate of that permanent). The half identities still
+        // provide door existence and unlock costs. Which HALF name such an
+        // object would show per door is undefined by the CR; keeping X
+        // wholesale is the conservative reading.
+        if values.name_origin != crate::types::ability::CopiedNameOrigin::Exception {
+            obj.name = halves.left.name.clone();
+            obj.base_name = halves.left.name.clone();
+        }
+        obj.mana_cost = halves.left.mana_cost.clone();
+        obj.base_mana_cost = halves.left.mana_cost.clone();
+        obj.modal_back_face = false;
+        obj.back_face = halves
+            .right
+            .as_ref()
+            .map(|right| crate::game::game_object::BackFaceData {
+                name: right.name.clone(),
+                mana_cost: right.mana_cost.clone(),
+                ..Default::default()
+            });
+    }
+    // CR 707.9b: a folded name EXCEPTION is part of the materialized base —
+    // the Step-1 seed restores the runtime marker from this every pass.
+    obj.base_name_origin = (values.name_origin
+        == crate::types::ability::CopiedNameOrigin::Exception)
+        .then_some(crate::types::ability::CopiedNameOrigin::Exception);
     obj.base_characteristics_initialized = true;
 }
 
@@ -743,6 +822,9 @@ pub fn snapshot_object_face(obj: &GameObject) -> BackFaceData {
         strive_cost: obj.strive_cost.clone(),
         casting_restrictions: obj.casting_restrictions.clone(),
         casting_options: obj.casting_options.clone(),
+        // The outgoing face's diagnostics ride out with it, so the return trip
+        // restores them rather than inheriting whatever the other face had.
+        parse_warnings: obj.parse_warnings.clone(),
         layout_kind: None,
     }
 }
@@ -788,6 +870,10 @@ pub fn snapshot_object_base_face(obj: &GameObject) -> BackFaceData {
         strive_cost: obj.strive_cost.clone(),
         casting_restrictions: obj.casting_restrictions.clone(),
         casting_options: obj.casting_options.clone(),
+        // Face-derived, with no base/live split to choose between: nothing writes
+        // `parse_warnings` except a face install, so the live field IS the printed
+        // face's diagnostics and the layer system never touches it.
+        parse_warnings: obj.parse_warnings.clone(),
         layout_kind: None,
     }
 }
@@ -972,17 +1058,20 @@ pub(crate) fn build_conjure_registry(
     (registry, all_collected)
 }
 
-/// CR 712 / CR 715 / CR 722: Attach the other printed face to `obj.back_face`
-/// when absent. Required for transformed zone changes (Fable of the
-/// Mirror-Breaker chapter III, Ajani flip triggers), adventurer casts, MDFC
-/// casts, and prepare spell access. Without this, `deliver_replaced_zone_change`
-/// silently skips transform when `back_face` is `None` and saga ETB lore-counter
-/// replacements fire on the front face.
-pub fn populate_back_face_if_dfc(obj: &mut GameObject, db: &CardDatabase, card_face: &CardFace) {
-    if obj.back_face.is_some() {
-        return;
-    }
+/// CR 712 / CR 715 / CR 722: Build the other printed face for a face-complete
+/// card source. This is shared by normal database hydration and debug card
+/// batches so a paused batch can retain DFC/Adventure/Omen/Meld/Prepare data
+/// without consulting the card database again on resume.
+pub fn back_face_for_card_face(db: &CardDatabase, card_face: &CardFace) -> Option<BackFaceData> {
+    let printed_ref = printed_ref_from_face(card_face);
+    back_face_for_card_face_with_printed_ref(db, card_face, printed_ref.as_ref())
+}
 
+fn back_face_for_card_face_with_printed_ref(
+    db: &CardDatabase,
+    card_face: &CardFace,
+    printed_ref: Option<&PrintedCardRef>,
+) -> Option<BackFaceData> {
     let second_face = db
         .get_by_name(&card_face.name)
         .and_then(|card_rules| match &card_rules.layout {
@@ -1010,14 +1099,11 @@ pub fn populate_back_face_if_dfc(obj: &mut GameObject, db: &CardDatabase, card_f
                 .as_deref()
                 .and_then(|id| db.get_layout_kind(id))
                 .unwrap_or(LayoutKind::Single);
-            obj.printed_ref
-                .as_ref()
+            printed_ref
                 .and_then(|printed_ref| db.get_other_face_by_printed_ref(printed_ref))
                 .map(|face| (layout_kind, face))
         });
-    let Some((layout_kind, face)) = second_face else {
-        return;
-    };
+    let (layout_kind, face) = second_face?;
 
     let mut back = BackFaceData {
         name: String::new(),
@@ -1040,13 +1126,28 @@ pub fn populate_back_face_if_dfc(obj: &mut GameObject, db: &CardDatabase, card_f
         strive_cost: None,
         casting_restrictions: Vec::new(),
         casting_options: Vec::new(),
+        // Empty seed; `apply_card_face_to_back_face` below fills it from the face.
+        parse_warnings: Vec::new(),
         layout_kind: None,
     };
     apply_card_face_to_back_face(&mut back, face);
     if layout_kind != LayoutKind::Single {
         back.layout_kind = Some(layout_kind);
     }
-    obj.back_face = Some(back);
+    Some(back)
+}
+
+/// CR 712 / CR 715 / CR 722: Attach the other printed face to `obj.back_face`
+/// when absent. Required for transformed zone changes (Fable of the
+/// Mirror-Breaker chapter III, Ajani flip triggers), adventurer casts, MDFC
+/// casts, and prepare spell access. Without this, `deliver_replaced_zone_change`
+/// silently skips transform when `back_face` is `None` and saga ETB lore-counter
+/// replacements fire on the front face.
+pub fn populate_back_face_if_dfc(obj: &mut GameObject, db: &CardDatabase, card_face: &CardFace) {
+    if obj.back_face.is_none() {
+        obj.back_face =
+            back_face_for_card_face_with_printed_ref(db, card_face, obj.printed_ref.as_ref());
+    }
 }
 
 pub fn rehydrate_game_from_card_db(state: &mut GameState, db: &CardDatabase) {
@@ -1889,6 +1990,7 @@ mod tests {
             casting_restrictions: vec![],
             casting_options: vec![],
             layout_kind: None,
+            parse_warnings: vec![],
         });
 
         rehydrate_game_from_card_db(&mut state, &db);

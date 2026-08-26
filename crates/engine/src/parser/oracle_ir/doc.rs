@@ -1475,7 +1475,7 @@ fn stamp_effect_printed_slot(effect: &mut Effect, slot: usize, kind: PrintedItem
         Effect::Investigate => {}
         Effect::Tribute { .. } => {}
         Effect::TimeTravel => {}
-        Effect::BecomeMonarch => {}
+        Effect::BecomeMonarch { .. } => {}
         Effect::NoOp => {}
         Effect::Proliferate => {}
         Effect::ProliferateTarget { .. } => {}
@@ -1507,6 +1507,8 @@ fn stamp_effect_printed_slot(effect: &mut Effect, slot: usize, kind: PrintedItem
         Effect::DoublePT { .. } => {}
         Effect::DoublePTAll { .. } => {}
         Effect::MoveCounters { .. } => {}
+        // CR 122.1: leaf counter effect — no printed-slot self-reference.
+        Effect::ReproduceEventCounters { .. } => {}
         Effect::Animate { .. } => {}
         Effect::RegisterBending { .. } => {}
         Effect::Cleanup { .. } => {}
@@ -1526,6 +1528,7 @@ fn stamp_effect_printed_slot(effect: &mut Effect, slot: usize, kind: PrintedItem
         Effect::Choose { .. } => {}
         Effect::OpponentGuess { .. } => {}
         Effect::SwapChosenLabels { .. } => {}
+        Effect::RevealChosenNumbers { .. } => {}
         Effect::ChooseDamageSource { .. } => {}
         Effect::Suspect { .. } => {}
         Effect::Unsuspect { .. } => {}
@@ -1596,6 +1599,7 @@ fn stamp_effect_printed_slot(effect: &mut Effect, slot: usize, kind: PrintedItem
         Effect::ProcessRadCounters => {}
         Effect::ChooseFromZone { .. } => {}
         Effect::RememberCard { .. } => {}
+        Effect::NoteManaSpent => {}
         Effect::ForEachCategory { .. } => {}
         Effect::ChooseObjectsIntoTrackedSet { .. } => {}
         Effect::ChooseAndSacrificeRest { .. } => {}
@@ -1643,6 +1647,7 @@ fn stamp_effect_printed_slot(effect: &mut Effect, slot: usize, kind: PrintedItem
         Effect::Adapt { .. } => {}
         Effect::Learn => {}
         Effect::Forage => {}
+        Effect::CompletePlayerAction { .. } => {}
         Effect::Harness => {}
         Effect::CollectEvidence { .. } => {}
         Effect::Endure { .. } => {}

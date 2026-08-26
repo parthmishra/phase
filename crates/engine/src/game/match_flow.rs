@@ -61,7 +61,7 @@ fn entries_to_count_map(entries: &[DeckEntry]) -> HashMap<String, u32> {
 /// `current_main`/`current_sideboard` and only the revealed companion copy is
 /// returned (CR 400.11a).
 fn restore_revealed_sideboard_companions(state: &mut GameState) {
-    if state.format_config.format.uses_commander() {
+    if state.format_config.uses_commander {
         return;
     }
 
@@ -354,7 +354,7 @@ pub(crate) fn sideboard_submission_bounds(
     // CR 100.4a: the sideboard cap is per-format. `Forbidden` formats (the
     // Commander family) have no sideboard at all, which bounds it at zero and
     // therefore pins the whole pool in the main deck.
-    let max_sideboard_size = match state.format_config.format.sideboard_policy() {
+    let max_sideboard_size = match state.format_config.sideboard_policy {
         SideboardPolicy::Forbidden => Some(0),
         SideboardPolicy::Limited(max) => Some(max),
         SideboardPolicy::Unlimited => None,
@@ -1422,5 +1422,61 @@ mod tests {
                 "no slot bound for {owner:?}, who is acting in game 2"
             );
         }
+    }
+
+    #[test]
+    fn choose_play_draw_logs_new_game_context_not_the_previous_game() {
+        use crate::types::game_state::PlayerDeckPool;
+        use crate::types::phase::Phase;
+
+        let mut state = GameState::new_two_player(21);
+        state.match_config.match_type = MatchType::Bo3;
+        state.match_phase = MatchPhase::BetweenGames;
+        state.game_number = 2;
+        state.next_game_chooser = Some(PlayerId(0));
+        // This is the action boundary snapshot consumed by the log resolver.
+        // A restart must not stamp its GameStarted or TurnStarted entries with it.
+        state.turn_number = 73;
+        state.phase = Phase::End;
+        state.deck_pools = vec![
+            PlayerDeckPool {
+                player: PlayerId(0),
+                current_main: std::sync::Arc::new(vec![entry("P0", 40)]),
+                ..Default::default()
+            },
+            PlayerDeckPool {
+                player: PlayerId(1),
+                current_main: std::sync::Arc::new(vec![entry("P1", 40)]),
+                ..Default::default()
+            },
+        ];
+        state.waiting_for = WaitingFor::BetweenGamesChoosePlayDraw {
+            player: PlayerId(0),
+            game_number: 2,
+            score: state.match_score,
+        };
+
+        let result = apply_as_current(&mut state, GameAction::ChoosePlayDraw { play_first: true })
+            .expect("between-games choose play/draw must start game two");
+
+        assert!(matches!(
+            result.events.as_slice(),
+            [
+                GameEvent::GameStarted,
+                GameEvent::TurnStarted {
+                    player_id: PlayerId(0),
+                    turn_number: 1,
+                },
+                ..
+            ]
+        ));
+        assert_eq!(result.log_entries[0].turn, 0);
+        assert_eq!(result.log_entries[0].phase, Phase::Untap);
+        assert_eq!(result.log_entries[1].turn, 1);
+        assert_eq!(result.log_entries[1].phase, Phase::Untap);
+        assert!(
+            result.log_entries.iter().all(|entry| entry.turn <= 1),
+            "a fresh game must not inherit the previous game's turn 73 context"
+        );
     }
 }

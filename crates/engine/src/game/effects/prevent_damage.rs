@@ -1,3 +1,4 @@
+use crate::game::effects::add_target_replacement::ReplacementDurationExpiry;
 use crate::game::effects::choose_damage_source;
 use crate::game::quantity::resolve_quantity;
 use crate::types::ability::{
@@ -184,12 +185,18 @@ fn untargeted_damage_filter(
         // object-only `valid_card` slot would silently drop the player ("you")
         // leg, so it must yield `Some` here (and `typed_recipient_valid_card_filter`
         // returns `None` for it) — the shield's controller is the recipient player.
-        TargetFilter::ControllerAndControlledPermanents { permanent_type } => {
-            Some(DamageTargetFilter::PlayerOrPermanentsControlledBy {
-                player: DamageTargetPlayerScope::Controller,
-                permanent_type: *permanent_type,
-            })
-        }
+        //
+        // CR 109.1: the "other" article is carried straight through (The
+        // Wanderer's "you and OTHER permanents you control" must not prevent
+        // damage dealt to The Wanderer itself).
+        TargetFilter::ControllerAndControlledPermanents {
+            permanent_type,
+            source_scope,
+        } => Some(DamageTargetFilter::PlayerOrPermanentsControlledBy {
+            player: DamageTargetPlayerScope::Controller,
+            permanent_type: *permanent_type,
+            source_scope: *source_scope,
+        }),
         // CR 608.2c + CR 611.2c + CR 615.11 (issue #6682): a tracked-set
         // recipient ("those permanents"/"those creatures" — Mutational
         // Advantage's clause-derived population, Energy Arc's target-derived
@@ -201,6 +208,16 @@ fn untargeted_damage_filter(
         // matching is `typed_recipient_valid_card_filter`'s job, so this
         // arm must be checked BEFORE the generic `is_context_ref()` catch-all.
         TargetFilter::TrackedSet { .. } | TargetFilter::TrackedSetFiltered { .. } => None,
+        // CR 615 + CR 201.5: the printed-name self-reference ("prevent all
+        // damage that would be dealt to HIM this turn" — Gideon Jura, Gideon of
+        // the Trials) names the source OBJECT, not a player. `SelfRef` is in
+        // `is_context_ref()`, so without this arm the catch-all below would
+        // lower it to a PLAYER shield on the source's controller — preventing
+        // all damage to the player instead of to the Gideon. Object matching is
+        // `typed_recipient_valid_card_filter`'s job, so this arm must precede
+        // the generic `is_context_ref()` catch-all (same ordering contract as
+        // the `TrackedSet` carve-out above).
+        TargetFilter::SelfRef => None,
         filter if filter.is_context_ref() => Some(player_damage_filter(
             super::resolve_player_for_context_ref(state, ability, filter),
         )),
@@ -229,6 +246,14 @@ fn typed_recipient_valid_card_filter(target: &TargetFilter) -> Option<TargetFilt
         filter @ (TargetFilter::TrackedSet { .. } | TargetFilter::TrackedSetFiltered { .. }) => {
             Some(filter.clone())
         }
+        // CR 615 + CR 201.5: the printed-name self-reference IS an object
+        // recipient — the shield rides on the source permanent (the untargeted
+        // branch of `resolve`) and `valid_card: SelfRef` scopes it to damage
+        // dealt to that host. Checked before the generic `is_context_ref()`
+        // exclusion below, which would otherwise reject it; mirrors the
+        // `TrackedSet` carve-out and pairs with `untargeted_damage_filter`'s
+        // matching `SelfRef => None` arm.
+        filter @ TargetFilter::SelfRef => Some(filter.clone()),
         filter if filter.is_context_ref() => None,
         filter => Some(filter.clone()),
     }
@@ -347,17 +372,75 @@ pub fn resolve(
         .prevention_shield(amount)
         .description("Prevent damage".to_string());
 
-    // CR 511.2 + CR 615: Apply the parsed prevention window as the shield's
-    // expiry. "this combat" -> `RestrictionExpiry::EndOfCombat`, pruned at the
-    // EndCombat phase (turns.rs) so a Suppressor Skyguard shield from combat 1
-    // does not bleed into a second combat the same turn. A `None` duration
-    // leaves `expiry` unset -> the legacy end-of-turn `is_shield` prune still
-    // applies, so existing fixed/All prevention behavior is unchanged.
-    if let Some(expiry) = crate::game::effects::add_target_replacement::expiry_from_duration(
+    // CR 615.1a + CR 615.3 + CR 614.1a: A one-shot "the next time [target
+    // creature] would deal damage this turn, prevent that damage" shield (Awe
+    // Strike) is recognized by its EXACT source-filter shape — the shared
+    // `is_oneshot_target_source_prevent_shape` predicate (the single authority,
+    // also consumed by the parser-side bare-rider gate in assembly.rs). Only
+    // this shape is one-shot: Dromoka's Command's source-scoped shield
+    // (`Typed(instant|sorcery)` leaf) is a duration-bound continuous
+    // `Prevention { All }` that must keep re-firing, so it does NOT match here.
+    //
+    // NOTE: `target: Any` on the parsed effect is deliberately not consulted on
+    // the `source_scoped_prevent` path below — the target slot is carried by
+    // the `damage_source_filter`'s `And`, and `Any` simply means "no recipient
+    // scope" (CR 115.1: the target slot is hosted by the source-filter `And`).
+    let oneshot_source_shape = effect_source_filter
+        .as_ref()
+        .is_some_and(crate::types::ability::is_oneshot_target_source_prevent_shape);
+    if oneshot_source_shape {
+        // CR 615.3: the single opportunity is bounded by the "the next time"
+        // qualifier — consumed on apply; CR 514.2: expires at cleanup.
+        shield.consume_on_apply = true;
+        // Builder, not a direct field write, so the one-shot path picks up the
+        // builder's CR 514.2 `EndOfTurn` stamp and there is one construction
+        // authority for the kind and its window.
+        shield = shield.prevention_oneshot_shield();
+    }
+
+    // CR 611.2a + CR 608.2: "a continuous effect generated by the resolution of a
+    // spell or ability lasts as long as stated by the SPELL OR ABILITY creating
+    // it." That sentence names two carriers, and this engine stores them
+    // separately: the effect grammar's own window (`prevention_duration` — "this
+    // combat" -> EndOfCombat) and the resolving ability's window
+    // (`ability.duration` — "Until your next turn" -> UntilPlayerNextTurn). Read
+    // the effect-level carrier first, then fall back to the ability-level one.
+    //
+    // CR 511.2 + CR 615: "this combat" -> `RestrictionExpiry::EndOfCombat`, pruned
+    // at the EndCombat phase (turns.rs) so a Suppressor Skyguard shield from
+    // combat 1 does not bleed into a second combat the same turn. Skyguard's
+    // window rides on `ability.duration`, so it is the `.or_else` arm — not the
+    // first one — that makes that statement true. (Its shield is object-hosted
+    // and is destroyed by the next layer flush before the corrected window can be
+    // observed; that is a separate, pre-existing defect.)
+    //
+    // Engine default, LAST: see `ReplacementDefinition::with_resolution_shield_expiry`
+    // — an end-of-turn fallback that compensates for the parser dropping a printed
+    // "this turn", NOT a CR rule (CR 611.2a's no-duration case is "until the end
+    // of the game"). Without it, `turns::execute_cleanup` — which reads `expiry`
+    // alone — would leave every duration-less resolution shield immortal.
+    let expiry = match crate::game::effects::add_target_replacement::expiry_from_duration(
         prevention_duration.as_ref(),
         ability.controller,
     ) {
-        shield = shield.expiry(expiry);
+        ReplacementDurationExpiry::Unstated => {
+            crate::game::effects::add_target_replacement::expiry_from_duration(
+                ability.duration.as_ref(),
+                ability.controller,
+            )
+        }
+        expiry => expiry,
+    };
+    match expiry {
+        ReplacementDurationExpiry::Explicit(expiry) => shield = shield.expiry(expiry),
+        ReplacementDurationExpiry::Unstated => {
+            shield = shield.with_resolution_shield_expiry();
+        }
+        ReplacementDurationExpiry::GateControlled | ReplacementDurationExpiry::Unsupported => {
+            // CR 611.2a: neither a condition-bound nor an unsupported stated
+            // duration may be rewritten as an end-of-turn shield.
+            return Ok(());
+        }
     }
 
     // CR 609.7 + CR 609.7a: "prevent that damage" from "a <color/type> source of
@@ -445,6 +528,23 @@ pub fn resolve(
     // sub is an independent instruction (CR 700.2d — a separate chosen mode of a
     // modal spell, e.g. Dromoka's Command mode 3), NOT a rider; it is resolved
     // on its own by the chain walker and must not become the shield rider.
+    //
+    // CR 615.5: AWE STRIKE — "You gain life equal to the damage prevented this
+    // way" is a bare prevented-this-way rider (no when/whenever/if prelude). It
+    // reaches this resolver as a `ContinuationStep` only for the one-shot
+    // shape: the assembly gate (assembly.rs) forces `ContinuationStep` for the
+    // bare rider only when the chain root's prevention carries the
+    // `And{[ParentTargetSlot, Typed(creature)]}` source filter; for every other
+    // chain root (e.g. Reverse Damage's `ChosenDamageSource` shape) the bare
+    // rider stays a `SequentialSibling` and must NOT install here.
+    //
+    // The rider is installed via the SAME `runtime_execute` slot as every other
+    // prevention rider — the resolution-time `ResolvedAbility` payload. The
+    // applier resolves `EventContextAmount` in the rider against
+    // `last_effect_count` (stamped with the prevented amount at apply time), so
+    // no parse-time template reconstruction is needed; the whole sub-ability is
+    // cloned verbatim, preserving every field the canonical
+    // `build_resolved_from_def` converter round-trips.
     if let Some(sub_ability) = &ability.sub_ability {
         if sub_ability.sub_link == SubAbilityLink::ContinuationStep {
             shield = shield.runtime_execute(sub_ability.as_ref().clone());
@@ -607,8 +707,13 @@ mod tests {
     /// `UntilEndOfCombat` ("this combat" — Suppressor Skyguard) must stamp the
     /// built shield with `RestrictionExpiry::EndOfCombat` so the EndCombat prune
     /// removes it and it does not bleed into a later combat the same turn.
-    /// `UntilEndOfTurn` maps to `EndOfTurn`; `None` leaves `expiry` unset (legacy
-    /// end-of-turn `is_shield` prune preserved — no regression).
+    /// `UntilEndOfTurn` maps to `EndOfTurn`; `None` on BOTH carriers
+    /// (`prevention_duration` here, and `ability.duration`, which
+    /// `ResolvedAbility::new` leaves unset) falls to the engine's turn default in
+    /// `ReplacementDefinition::with_resolution_shield_expiry` — an engine
+    /// fallback, NOT a CR rule, since CR 611.2a's own no-duration case is "until
+    /// the end of the game". That default is load-bearing: `turns::execute_cleanup`
+    /// reads `expiry` alone, so a `None` here would make the shield immortal.
     #[test]
     fn prevention_duration_sets_shield_expiry() {
         use crate::types::ability::{Duration, RestrictionExpiry};
@@ -622,7 +727,7 @@ mod tests {
                 Some(Duration::UntilEndOfTurn),
                 Some(RestrictionExpiry::EndOfTurn),
             ),
-            (None, None),
+            (None, Some(RestrictionExpiry::EndOfTurn)),
         ];
         for (duration, expected_expiry) in cases {
             let mut state = GameState::new_two_player(42);
@@ -1305,6 +1410,134 @@ mod tests {
             deal_damage::DamageResult::Applied(0)
         ));
         assert_eq!(state.players[0].life, 20);
+    }
+
+    /// CR 615 + CR 201.5: a `SelfRef` recipient ("prevent all damage that would
+    /// be dealt to HIM this turn" — Gideon Jura, Gideon of the Trials) scopes the
+    /// shield to the SOURCE OBJECT.
+    ///
+    /// Two revert-failing halves, because the bug had two independent ways to
+    /// manifest:
+    ///   * `untargeted_damage_filter` must NOT lower `SelfRef` (a context ref) to
+    ///     a PLAYER shield on the source's controller — that would prevent damage
+    ///     to the Gideon's controller instead of to the Gideon.
+    ///   * the shield must carry `valid_card: SelfRef` so it fires only on damage
+    ///     to its host. With the pre-fix `TargetFilter::Any` recipient the shield
+    ///     carried NO constraint at all and Fogged every damage event that turn —
+    ///     which the negative half below catches.
+    #[test]
+    fn self_ref_recipient_prevention_scopes_the_shield_to_its_host() {
+        let mut state = GameState::new_two_player(42);
+        let gideon = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Gideon Jura".to_string(),
+            Zone::Battlefield,
+        );
+        let damage_source = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Attacker".to_string(),
+            Zone::Battlefield,
+        );
+        let bystander = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Bystander".to_string(),
+            Zone::Battlefield,
+        );
+        for id in [gideon, bystander] {
+            let obj = state.objects.get_mut(&id).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.power = Some(6);
+            obj.toughness = Some(6);
+        }
+
+        let ability = ResolvedAbility::new(
+            Effect::PreventDamage {
+                amount: PreventionAmount::All,
+                amount_dynamic: None,
+                target: TargetFilter::SelfRef,
+                scope: PreventionScope::AllDamage,
+                damage_source_filter: None,
+                prevention_duration: None,
+            },
+            vec![],
+            gideon,
+            PlayerId(0),
+        );
+        let mut events = Vec::new();
+        resolve(&mut state, &ability, &mut events).unwrap();
+
+        // The shield rides on the source permanent, object-scoped — never in the
+        // global pending registry, which is the un-constrained Fog placement.
+        assert!(
+            state.pending_damage_replacements.is_empty(),
+            "a SelfRef recipient is object-scoped, not a global Fog: {:?}",
+            state.pending_damage_replacements
+        );
+        let shield = state
+            .objects
+            .get(&gideon)
+            .unwrap()
+            .replacement_definitions
+            .last()
+            .expect("the shield hosts on the source");
+        assert_eq!(shield.valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(
+            shield.damage_target_filter, None,
+            "SelfRef is an OBJECT recipient — lowering it to a player shield \
+             would protect the controller instead of the Gideon"
+        );
+
+        let ctx = deal_damage::DamageContext::from_source(&state, damage_source).unwrap();
+        // Damage to the host is prevented.
+        let to_host = deal_damage::apply_damage_to_target(
+            &mut state,
+            &ctx,
+            TargetRef::Object(gideon),
+            3,
+            false,
+            &mut events,
+        )
+        .unwrap();
+        assert!(
+            matches!(to_host, deal_damage::DamageResult::Applied(0)),
+            "damage to the shield's host is prevented"
+        );
+
+        // Negative half: everything else still takes damage. This is what fails
+        // on the pre-fix `Any` recipient, which prevented all damage in the game.
+        let to_bystander = deal_damage::apply_damage_to_target(
+            &mut state,
+            &ctx,
+            TargetRef::Object(bystander),
+            3,
+            false,
+            &mut events,
+        )
+        .unwrap();
+        assert!(
+            matches!(to_bystander, deal_damage::DamageResult::Applied(3)),
+            "another permanent is untouched by a host-scoped shield"
+        );
+        let to_controller = deal_damage::apply_damage_to_target(
+            &mut state,
+            &ctx,
+            TargetRef::Player(PlayerId(0)),
+            3,
+            false,
+            &mut events,
+        )
+        .unwrap();
+        assert!(
+            matches!(to_controller, deal_damage::DamageResult::Applied(3)),
+            "the source's CONTROLLER is not the recipient"
+        );
+        assert_eq!(state.players[0].life, 17);
     }
 
     #[test]

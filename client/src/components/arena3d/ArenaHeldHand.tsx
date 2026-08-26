@@ -8,13 +8,11 @@ import type {
   PlayerId,
 } from "../../adapter/types.ts";
 import { useCardImage } from "../../hooks/useCardImage.ts";
-import { usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
 import { cardImageLookup } from "../../services/cardImageLookup.ts";
 import { CARD_BACK_URL } from "../../services/scryfall.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import { commandZoneLeaders } from "../../viewmodel/commanderColumn.ts";
-import { isPrivatelyLookedAtByViewer } from "../../viewmodel/gameStateView.ts";
 import {
   ARENA_CARD_DEPTH,
   ARENA_MAX_VISIBLE_HELD_CARDS,
@@ -68,7 +66,6 @@ export function ArenaHeldHand({
 }: ArenaHeldHandProps) {
   const gameState = useGameStore((state) => state.gameState);
   const inspectObject = useUiStore((state) => state.inspectObject);
-  const perspectivePlayerId = usePerspectivePlayerId();
   const player = gameState?.players[playerId];
   const backTexture = useArenaImageTexture(
     arenaComposableArtSource(CARD_BACK_URL),
@@ -103,14 +100,10 @@ export function ArenaHeldHand({
       {player.hand
         .slice(0, ARENA_MAX_VISIBLE_HELD_CARDS)
         .map((objectId, index) => {
+          // Visibility is projected by the engine per viewer; the Three.js
+          // hand reads the same authority as every DOM card surface.
           const isRevealed =
-            gameState?.revealed_cards?.includes(objectId) === true
-            || gameState?.public_revealed_cards?.includes(objectId) === true
-            || isPrivatelyLookedAtByViewer(
-              gameState,
-              objectId,
-              perspectivePlayerId,
-            );
+            gameState?.objects[objectId]?.display_visible_to_viewer ?? false;
           const transform = transforms[index];
           return transform ? (
             <HeldCard

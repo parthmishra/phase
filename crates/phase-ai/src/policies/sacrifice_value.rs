@@ -673,6 +673,7 @@ mod tests {
         state.push_optional_effect_frame(engine::types::OptionalEffectFrame {
             ability: Box::new(sacrifice),
             trigger_event: None,
+            trigger_events: Vec::new(),
             trigger_match_count: None,
         });
         state.waiting_for = WaitingFor::OptionalEffectChoice {
@@ -680,6 +681,7 @@ mod tests {
             source_id: source,
             description: Some("You may sacrifice a creature. If you do, draw a card.".to_string()),
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
         (state, source)
     }

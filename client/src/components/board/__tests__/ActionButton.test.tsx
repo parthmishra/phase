@@ -162,6 +162,27 @@ describe("ActionButton", () => {
     });
   });
 
+  it("keeps priority actions available when end-of-turn auto-pass pauses for an opponent's stack object", () => {
+    useGameStore.setState({
+      gameMode: "online",
+      gameState: {
+        ...createGameState(priorityPrompt()),
+        phase: "PostCombatMain",
+        active_player: 0,
+        stack: [spellStackEntry(1)],
+      },
+      waitingFor: priorityPrompt(),
+      legalActions: [],
+    });
+    useMultiplayerStore.setState({ activePlayerId: 0, actionPending: false });
+
+    render(<ActionButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+    expect(vi.mocked(dispatchAction)).toHaveBeenCalledWith({ type: "PassPriority" });
+    expect(screen.getByRole("button", { name: "Auto-Passing to End Step..." })).toBeInTheDocument();
+  });
+
   it("disables resolve controls while Resolve All is draining", () => {
     useGameStore.setState({
       gameMode: "online",
@@ -296,7 +317,7 @@ describe("ActionButton", () => {
         valid_attacker_ids: [100],
         valid_attack_targets: [target],
         valid_attack_targets_by_attacker: { "100": [target] },
-        attacker_constraints: { "100": { kind: "MustAttack", players: [] } },
+        attacker_constraints: { "100": { kind: "MustAttack", defenders: [] } },
       },
     };
     useGameStore.setState({

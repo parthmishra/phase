@@ -10,7 +10,7 @@
 //!   1. the logical zone-change owner — `change_zone::resolve` /
 //!      `zone_pipeline::move_objects_simultaneously_then` →
 //!      `triggers::complete_logical_zone_trigger_collection`;
-//!   2. `engine_resolution_choices::park_search_observer_triggers`, which
+//!   2. `engine_resolution_choices::collect_search_observer_triggers`, which
 //!      re-scanned the raw action slice and collected again with no filter but
 //!      `PhaseChanged`.
 //!
@@ -23,13 +23,11 @@
 //! occurrences." Row `two_land_search_delivery_fires_landfall_twice` pins the
 //! second sentence so the fix is not over-applied into a blanket suppression.
 //!
-//! HARNESS NOTE — every park-path row here passes priority before asserting.
-//! `park_search_observer_triggers` deliberately defers its observers to the NEXT
-//! priority checkpoint (issue #5336): the parked action returns
-//! `ResolutionChoiceOutcome::WaitingForWithParkedObservers`, which sets
-//! `skip_deferred_trigger_drain`, and both `drive_resolution` and
-//! `advance_until_stack_empty` break immediately on an empty stack. Asserting at
-//! the end of the parked action therefore measures nothing at all.
+//! HARNESS NOTE — after a search choice settles, its observer triggers must be
+//! dispatched before either player receives priority (CR 603.3). H1, H2, H5,
+//! H6, N2, and N5 inspect that immediate post-choice state; H3, H4, and N3
+//! reach the same result through other zone-change paths. N1 and N4 assert the
+//! corresponding no-trigger cases.
 
 use engine::ai_support::validated_candidate_actions_for_semantic_owner;
 use engine::game::scenario::{GameRunner, GameScenario, P0};
@@ -88,39 +86,29 @@ fn misty_ability_index(state: &GameState, misty: ObjectId) -> usize {
         .expect("Misty Rainforest's printed activated ability must be a validated root candidate")
 }
 
-/// The positive reach-guard every park-path row shares: the action really did
-/// settle back to `Priority` with an EMPTY stack, which is what proves the
-/// observers were parked (issue #5336) rather than dispatched inline. Without
-/// this, a row that never reached the deferred drain would look identical to a
-/// row that reached it and found one trigger.
-fn assert_observers_were_parked(runner: &GameRunner) {
+/// CR 603.3: search-delivery observers must be dispatched before priority.
+fn assert_observers_were_dispatched(runner: &GameRunner) {
     assert!(
-        matches!(runner.state().waiting_for, WaitingFor::Priority { .. }),
-        "the parked action must settle back to Priority, got {:?}",
+        matches!(
+            runner.state().waiting_for,
+            WaitingFor::Priority { .. } | WaitingFor::OrderTriggers { .. }
+        ),
+        "the search choice must settle into trigger dispatch, got {:?}",
         runner.state().waiting_for
     );
     assert!(
-        runner.state().stack.is_empty(),
-        "issue #5336: park defers observers to the NEXT priority checkpoint, \
-         so nothing may be on the stack yet"
+        runner.state().deferred_triggers.is_empty(),
+        "all search-delivery observers must leave the deferred queue before priority"
     );
     assert!(
-        !runner.state().deferred_triggers.is_empty(),
-        "the delivery's observers must actually be sitting in the parked queue"
+        !runner.state().stack.is_empty()
+            || matches!(runner.state().waiting_for, WaitingFor::OrderTriggers { .. }),
+        "the delivery's observers must be on the stack or awaiting their mandatory order"
     );
-}
-
-/// Reach the priority checkpoint park exists to defer to. The parked action set
-/// `skip_deferred_trigger_drain`; the NEXT action runs the post-action pipeline
-/// without it and hits the deferred drain.
-fn pass_priority_to_reach_the_drain(runner: &mut GameRunner) {
-    runner
-        .act(GameAction::PassPriority)
-        .expect("a priority pass must reach the deferred-trigger drain");
 }
 
 // ---------------------------------------------------------------------------
-// H1 — reported symptom 1: landfall fires ONCE on a cracked fetch (park site A)
+// H1 — reported symptom 1: landfall fires ONCE on a cracked fetch
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -131,7 +119,7 @@ fn fetchland_crack_fires_landfall_observer_once() {
     let misty = scenario.add_real_card(P0, "Misty Rainforest", Zone::Battlefield, db);
     let mammoth = scenario.add_real_card(P0, "Kazandu Mammoth", Zone::Battlefield, db);
     // A basic Forest is the ONLY card Misty's filter can find, and it has no ETB
-    // trigger — so exactly ONE observer is parked and no `OrderTriggers` or
+    // trigger — so exactly ONE observer is dispatched and no `OrderTriggers` or
     // surveil prompt entangles the assertion.
     let forest = scenario.add_real_card(P0, "Forest", Zone::Library, db);
 
@@ -145,19 +133,19 @@ fn fetchland_crack_fires_landfall_observer_once() {
         "Kazandu Mammoth's printed body is 3/3 before any landfall"
     );
 
+    runner.activate(misty, ability_index).resolve();
     runner
-        .activate(misty, ability_index)
-        .search_first_legal()
-        .resolve();
+        .act(GameAction::SelectCards {
+            cards: vec![forest],
+        })
+        .expect("selecting the searched Forest must succeed");
 
     assert_eq!(
         runner.state().objects[&forest].zone,
         Zone::Battlefield,
         "the fetch must actually have delivered the Forest"
     );
-    assert_observers_were_parked(&runner);
-
-    pass_priority_to_reach_the_drain(&mut runner);
+    assert_observers_were_dispatched(&runner);
     runner.advance_until_stack_empty();
 
     // 3/3 base, +2/+2 exactly once. 7/7 is the double collection.
@@ -169,7 +157,7 @@ fn fetchland_crack_fires_landfall_observer_once() {
 }
 
 // ---------------------------------------------------------------------------
-// H2 — reported symptom 2: the fetched land's own ETB fires ONCE (park site A)
+// H2 — reported symptom 2: the fetched land's own ETB fires ONCE
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -179,32 +167,32 @@ fn fetchland_fetched_land_etb_trigger_fires_once() {
     scenario.at_phase(Phase::PreCombatMain);
     let misty = scenario.add_real_card(P0, "Misty Rainforest", Zone::Battlefield, db);
     // No Kazandu Mammoth here: Undercity Sewers' own "When this land enters,
-    // surveil 1" is the single observer, so the drain parks exactly one trigger.
+    // surveil 1" is the single observer, so exactly one trigger is dispatched.
     let sewers = scenario.add_real_card(P0, "Undercity Sewers", Zone::Library, db);
 
     let mut runner = scenario.build();
     engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
     let ability_index = misty_ability_index(runner.state(), misty);
 
+    runner.activate(misty, ability_index).resolve();
     runner
-        .activate(misty, ability_index)
-        .search_first_legal()
-        .resolve();
+        .act(GameAction::SelectCards {
+            cards: vec![sewers],
+        })
+        .expect("selecting the searched land must succeed");
 
     assert_eq!(
         runner.state().objects[&sewers].zone,
         Zone::Battlefield,
         "the fetch must actually have delivered Undercity Sewers"
     );
-    assert_observers_were_parked(&runner);
+    assert_observers_were_dispatched(&runner);
 
-    pass_priority_to_reach_the_drain(&mut runner);
-
-    // Count STACK OBJECTS, not prompts, and stop here — deliberately before the
-    // surveil prompt, which `advance_until_stack_empty` does not model.
+    // Count stack objects directly after the choice, before the surveil trigger
+    // resolves into its prompt.
     assert!(
         !runner.state().stack.is_empty(),
-        "the priority pass must have run the deferred drain"
+        "the search choice must have dispatched the fetched land's ETB"
     );
     let surveil_copies = runner
         .state()
@@ -335,7 +323,7 @@ fn fetch_pauses_on_optional_replacement_then_fires_landfall_once() {
 }
 
 // ---------------------------------------------------------------------------
-// H5 — park site B: the single-basic partition fast path
+// H5 — the single-basic partition fast path
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -353,27 +341,30 @@ fn cultivate_fast_path_fires_landfall_once() {
     engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
     add_mana(&mut runner, 1, 0, 2);
 
-    runner.cast(cultivate).search_first_legal().resolve();
+    runner.cast(cultivate).resolve();
+    runner
+        .act(GameAction::SelectCards {
+            cards: vec![forest],
+        })
+        .expect("selecting Cultivate's battlefield basic must succeed");
 
     assert_eq!(
         runner.state().objects[&forest].zone,
         Zone::Battlefield,
         "the fast path must have delivered the single basic"
     );
-    assert_observers_were_parked(&runner);
-
-    pass_priority_to_reach_the_drain(&mut runner);
+    assert_observers_were_dispatched(&runner);
     runner.advance_until_stack_empty();
 
     assert_eq!(
         power_toughness(&runner, mammoth),
         (5, 5),
-        "park site B must fire the landfall observer exactly once"
+        "the single-basic partition path must fire landfall exactly once"
     );
 }
 
 // ---------------------------------------------------------------------------
-// H6 — park site C: the explicit `SearchPartitionChoice` route
+// H6 — the explicit `SearchPartitionChoice` route
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -398,7 +389,7 @@ fn cultivate_partition_fires_landfall_once() {
             runner.state().waiting_for,
             WaitingFor::SearchPartitionChoice { .. }
         ),
-        "two findable basics must park a SearchPartitionChoice, got {:?}",
+        "two findable basics must reach a SearchPartitionChoice, got {:?}",
         runner.state().waiting_for
     );
     runner
@@ -417,15 +408,13 @@ fn cultivate_partition_fires_landfall_once() {
         Zone::Hand,
         "the rest basic must reach the hand — exactly ONE land entered"
     );
-    assert_observers_were_parked(&runner);
-
-    pass_priority_to_reach_the_drain(&mut runner);
+    assert_observers_were_dispatched(&runner);
     runner.advance_until_stack_empty();
 
     assert_eq!(
         power_toughness(&runner, mammoth),
         (5, 5),
-        "park site C must fire the landfall observer exactly once"
+        "the explicit partition path must fire landfall exactly once"
     );
 }
 
@@ -449,11 +438,12 @@ fn search_to_hand_delivers_and_fires_no_landfall() {
 
     // Journey of Discovery is modal + entwine; mode 0 is the
     // `ChangeZone { Library -> Hand }` half.
+    runner.cast(journey).modes(&[0]).resolve();
     runner
-        .cast(journey)
-        .modes(&[0])
-        .search_first_legal()
-        .resolve();
+        .act(GameAction::SelectCards {
+            cards: vec![forest, mountain],
+        })
+        .expect("selecting Journey of Discovery's basics must succeed");
 
     // The positive reach-guard: the search really delivered. Without it the
     // (3,3) assertion below could pass on a fail-to-find.
@@ -467,11 +457,6 @@ fn search_to_hand_delivers_and_fires_no_landfall() {
         Zone::Hand,
         "mode 0 must put the found basics into HAND"
     );
-
-    // The priority pass is mandatory here: without it (3,3) would be satisfied
-    // by mere deferral rather than by there being no landfall at all.
-    pass_priority_to_reach_the_drain(&mut runner);
-    runner.advance_until_stack_empty();
 
     assert_eq!(
         power_toughness(&runner, mammoth),
@@ -500,11 +485,12 @@ fn two_land_search_delivery_fires_landfall_twice() {
     engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
     add_mana(&mut runner, 1, 0, 2);
 
+    runner.cast(harrow).sacrifice_with(&[spare]).resolve();
     runner
-        .cast(harrow)
-        .sacrifice_with(&[spare])
-        .search_first_legal()
-        .resolve();
+        .act(GameAction::SelectCards {
+            cards: vec![forest, island],
+        })
+        .expect("selecting Harrow's basics must succeed");
 
     assert_eq!(
         runner.state().objects[&forest].zone,
@@ -516,11 +502,9 @@ fn two_land_search_delivery_fires_landfall_twice() {
         Zone::Battlefield,
         "both basics must have been delivered"
     );
-    assert_observers_were_parked(&runner);
-
-    pass_priority_to_reach_the_drain(&mut runner);
+    assert_observers_were_dispatched(&runner);
     // `advance_until_stack_empty` drains the CR 603.3b `OrderTriggers` prompt
-    // internally; both parked triggers are pumps with no further prompt.
+    // internally; both dispatched triggers are pumps with no further prompt.
     runner.advance_until_stack_empty();
 
     assert_eq!(
@@ -587,7 +571,7 @@ fn aura_exiled_via_targeted_change_zone_fires_delayed_sacrifice() {
 }
 
 // ---------------------------------------------------------------------------
-// N4 — fail-to-find: an empty park slice still short-circuits cleanly
+// N4 — fail-to-find: an empty delivery slice still short-circuits cleanly
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -627,11 +611,172 @@ fn fetch_with_no_legal_target_parks_nothing() {
 
     assert!(
         runner.state().deferred_triggers.is_empty(),
-        "a fail-to-find delivers nothing, so nothing may be parked"
+        "a fail-to-find delivers nothing, so no trigger may be deferred"
     );
     assert_eq!(
         power_toughness(&runner, mammoth),
         (3, 3),
         "no land entered, so landfall must not fire"
     );
+}
+
+// ---------------------------------------------------------------------------
+// N5 — CR 400.7 + CR 603.2c: the two occurrences dispatched by ONE search delivery
+//      carry DISTINCT `turn_zone_change_index` values, each agreeing with the
+//      ledger row `restrictions::record_zone_change` wrote for it.
+//
+//      SCOPE — this row is a SENTINEL ON ONE EMIT PATH, NOT A CENSUS.
+//      Its Harrow fixture traverses:
+//        change_zone::resolve -> execute_zone_move_with_applied_terminal
+//        -> deliver_replaced_zone_change -> zones::move_to_zone (ordinary arm)
+//        -> resolve_and_apply_zone_change (zones.rs:826)
+//        -> zones.rs:1199 -> emit at zones.rs:1362.
+//      A regression at the other three production emit sites — zones.rs:1430
+//      (`from: None` entries), the `from != Library` path in
+//      `move_to_library_at_index`, or merge.rs:689 (CR 730.3c split) — is NEVER
+//      EXECUTED by this fixture and will NOT turn it red. Only the same-library
+//      reorder path is not an emit site: it creates neither a `ZoneChanged` event
+//      nor a ledger row, as covered by `within_library_reposition_does_not_create_a_zone_change`
+//      in game/zones.rs.
+//
+//      WHY IT IS NONETHELESS LOAD-BEARING: the `TurnRecordIndexMismatch` guard
+//      at zones.rs:946-953 validates the COMMAND's `turn_zone_change_index`
+//      field against the allocator, never the RECORD's copy — and the record's
+//      copy is what becomes the event (zones.rs:1199 -> :1362). So the emitted
+//      index has no production guard on any path.
+//      `GameObject::snapshot_for_zone_change` seeds `turn_zone_change_index: 0`
+//      (game_object.rs:1983), so "an emit site forgot to stamp it" is the
+//      natural failure mode this row detects, not a contrived one.
+//
+//      It deliberately does NOT pin the equality link: raw field reads bypass
+//      `PartialEq`. That link is pinned at the authority layer by
+//      `occurrence_exact_witness_consumes_the_occurrence_its_witness_names`.
+//
+//      NO PRIORITY PASS — DELIBERATE. This row reads the trigger events after
+//      the mandatory CR 603.3 dispatch but before the triggered abilities
+//      resolve, so each event's occurrence index remains observable on its
+//      stack entry.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dispatched_delivery_records_carry_distinct_occurrence_indices() {
+    let db = shared_card_db().expect("integration card fixture must load");
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+    scenario.add_real_card(P0, "Kazandu Mammoth", Zone::Battlefield, db);
+    // Harrow is an Instant with "sacrifice a land" as an additional cost.
+    let harrow = scenario.add_real_card(P0, "Harrow", Zone::Hand, db);
+    let spare = scenario.add_real_card(P0, "Mountain", Zone::Battlefield, db);
+    let forest = scenario.add_real_card(P0, "Forest", Zone::Library, db);
+    let island = scenario.add_real_card(P0, "Island", Zone::Library, db);
+
+    let mut runner = scenario.build();
+    engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
+    add_mana(&mut runner, 1, 0, 2);
+
+    runner.cast(harrow).sacrifice_with(&[spare]).resolve();
+    runner
+        .act(GameAction::SelectCards {
+            cards: vec![forest, island],
+        })
+        .expect("selecting Harrow's basics must succeed");
+
+    // Reach-guards: the delivery really happened and its observers have been
+    // dispatched before priority.
+    assert_eq!(
+        runner.state().objects[&forest].zone,
+        Zone::Battlefield,
+        "both basics must have been delivered"
+    );
+    assert_eq!(
+        runner.state().objects[&island].zone,
+        Zone::Battlefield,
+        "both basics must have been delivered"
+    );
+    assert_observers_were_dispatched(&runner);
+
+    // CR 603.3b requires the controller to order the two simultaneous landfall
+    // triggers before either is put on the stack. This is not a priority pass
+    // and does not resolve either trigger, so their event contexts remain
+    // observable below.
+    if let WaitingFor::OrderTriggers { triggers, .. } = runner.state().waiting_for.clone() {
+        let order = (0..triggers.len()).collect();
+        runner
+            .act(GameAction::OrderTriggers { order })
+            .expect("ordering the simultaneous landfall triggers must succeed");
+    }
+
+    // Every `ZoneChanged` carried by the dispatched trigger stack entries,
+    // paired with the occurrence index its record was stamped with.
+    let dispatched: Vec<(ObjectId, usize)> = runner
+        .state()
+        .stack
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            engine::types::game_state::StackEntryKind::TriggeredAbility {
+                trigger_event:
+                    Some(engine::types::events::GameEvent::ZoneChanged {
+                        object_id, record, ..
+                    }),
+                ..
+            } => Some((*object_id, record.turn_zone_change_index)),
+            _ => None,
+        })
+        .collect();
+
+    let indices_for = |land: ObjectId| -> Vec<usize> {
+        dispatched
+            .iter()
+            .filter(|(id, _)| *id == land)
+            .map(|(_, index)| *index)
+            .collect()
+    };
+    let forest_indices = indices_for(forest);
+    let island_indices = indices_for(island);
+
+    // Third reach-guard: a record was located for EACH land, so the assertions
+    // below cannot pass vacuously on an empty iterator.
+    assert!(
+        !forest_indices.is_empty(),
+        "the dispatched trigger must carry a ZoneChanged for the delivered Forest"
+    );
+    assert!(
+        !island_indices.is_empty(),
+        "the dispatched trigger must carry a ZoneChanged for the delivered Island"
+    );
+    assert!(
+        forest_indices
+            .iter()
+            .all(|index| *index == forest_indices[0])
+            && island_indices
+                .iter()
+                .all(|index| *index == island_indices[0]),
+        "N observers of ONE occurrence contribute N copies of the SAME value, so \
+         every copy for one object must carry the same occurrence index"
+    );
+
+    // CR 603.2c sentence 2: two lands entering is TWO occurrences, and
+    // `restrictions::record_zone_change` allocates a distinct index for each.
+    assert_ne!(
+        forest_indices[0], island_indices[0],
+        "CR 400.7 + CR 603.2c: two distinct occurrences in ONE delivery must \
+         carry DISTINCT turn_zone_change_index values, or the trigger-context \
+         witness could cross-consume them"
+    );
+
+    // Each emitted event's index must agree with the ledger row the allocator
+    // wrote for it — the two-storage contract. An emit site that ships the `0`
+    // placeholder instead of the allocator's value breaks this.
+    for (land, index) in [(forest, forest_indices[0]), (island, island_indices[0])] {
+        let record = runner
+            .state()
+            .zone_changes_this_turn
+            .get(index)
+            .unwrap_or_else(|| panic!("the emitted index {index} must address a real ledger row"));
+        assert_eq!(
+            record.object_id, land,
+            "the index carried by the emitted event must address THAT object's \
+             own ledger row (zone_changes_this_turn[{index}])"
+        );
+    }
 }

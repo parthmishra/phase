@@ -1,11 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { useMultiplayerDraftStore as MultiplayerDraftStore } from "../../stores/multiplayerDraftStore";
 
 const mocks = vi.hoisted(() => ({
-  registerPwaServiceWorker: vi.fn(),
-  updateSW: vi.fn(async () => {}),
+  registerSW: vi.fn(),
   isBundledTauriOrigin: vi.fn(() => false),
-  isMultiplayerGameLive: vi.fn(() => false),
-  whenMultiplayerGameEnds: vi.fn(),
   claimServiceWorkerReload: vi.fn(() => true),
   markPendingAutoUpdate: vi.fn(),
   claimUpdateStatus: vi.fn(() => true),
@@ -18,16 +17,8 @@ const mocks = vi.hoisted(() => ({
   clearUpdateError: vi.fn(),
 }));
 
-vi.mock("../serviceWorkerRegistrar", () => ({
-  registerPwaServiceWorker: mocks.registerPwaServiceWorker,
-}));
-vi.mock("../../services/platform", () => ({
-  isBundledTauriOrigin: mocks.isBundledTauriOrigin,
-}));
-vi.mock("../multiplayerGuard", () => ({
-  isMultiplayerGameLive: mocks.isMultiplayerGameLive,
-  whenMultiplayerGameEnds: mocks.whenMultiplayerGameEnds,
-}));
+vi.mock("\0virtual:pwa-register-stub", () => ({ registerSW: mocks.registerSW }));
+vi.mock("../../services/platform", () => ({ isBundledTauriOrigin: mocks.isBundledTauriOrigin }));
 vi.mock("../updateMarker", () => ({
   claimServiceWorkerReload: mocks.claimServiceWorkerReload,
   markPendingAutoUpdate: mocks.markPendingAutoUpdate,
@@ -43,42 +34,72 @@ vi.mock("../updateStatus", () => ({
   clearUpdateError: mocks.clearUpdateError,
 }));
 
-describe("registerServiceWorker update reload coordination", () => {
-  beforeEach(() => {
+type ServiceWorkerOptions = {
+  onNeedRefresh(): void;
+};
+
+describe("registerServiceWorker draft-pod protection", () => {
+  let controllerChange: (() => void) | null;
+  let updateSW: ReturnType<typeof vi.fn>;
+  let reload: ReturnType<typeof vi.fn>;
+  let draftStore: typeof MultiplayerDraftStore;
+
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.stubEnv("DEV", false);
-    mocks.registerPwaServiceWorker.mockReturnValue(mocks.updateSW);
+    ({ useMultiplayerDraftStore: draftStore } = await import("../../stores/multiplayerDraftStore"));
+    controllerChange = null;
+    updateSW = vi.fn().mockResolvedValue(undefined);
+    mocks.registerSW.mockReturnValue(updateSW);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
-      value: {},
+      value: {
+        controller: {},
+        addEventListener: vi.fn((event: string, listener: () => void) => {
+          if (event === "controllerchange") controllerChange = listener;
+        }),
+      },
     });
+    reload = vi.fn();
+    Object.defineProperty(window.location, "reload", { configurable: true, value: reload });
+    draftStore.setState({ role: "host", phase: "deckbuilding" });
   });
 
-  it("uses one guarded reload owner for an automatically applied update", async () => {
-    const reload = vi.fn();
-    Object.defineProperty(window.location, "reload", {
-      configurable: true,
-      value: reload,
-    });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    draftStore.setState({ role: null, phase: "idle" });
+  });
 
+  async function register(): Promise<ServiceWorkerOptions> {
     const { registerServiceWorker } = await import("../registerServiceWorker");
     registerServiceWorker();
+    return mocks.registerSW.mock.calls[0][0] as ServiceWorkerOptions;
+  }
 
-    expect(mocks.registerPwaServiceWorker).toHaveBeenCalledTimes(1);
-    const options = mocks.registerPwaServiceWorker.mock.calls[0]?.[0] as {
-      onNeedRefresh?: () => void;
-      onNeedReload?: () => void;
-    };
+  it("defers onNeedRefresh through live deckbuilding and applies it once the pod ends", async () => {
+    const options = await register();
 
-    options.onNeedRefresh?.();
-    expect(mocks.markPendingAutoUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.updateSW).toHaveBeenCalledWith(true);
+    options.onNeedRefresh();
 
-    options.onNeedReload?.();
-    options.onNeedReload?.();
+    expect(updateSW).not.toHaveBeenCalled();
+    draftStore.setState({ phase: "complete" });
 
-    expect(mocks.claimServiceWorkerReload).toHaveBeenCalledTimes(1);
+    expect(updateSW).toHaveBeenCalledTimes(1);
+    expect(updateSW).toHaveBeenCalledWith(true);
+  });
+
+  it("defers controllerchange during a live pod and reloads exactly once after release", async () => {
+    await register();
+    expect(controllerChange).not.toBeNull();
+
+    controllerChange?.();
+
+    expect(reload).not.toHaveBeenCalled();
+    draftStore.setState({ phase: "complete" });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    controllerChange?.();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });

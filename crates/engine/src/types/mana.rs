@@ -2,7 +2,11 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::ability::{AbilityTag, Comparator, TargetFilter, TriggerDefinitionOccurrenceRef};
+use super::ability::{
+    AbilityTag, Comparator, FilterProp, QuantityExpr, TargetFilter, TriggerDefinitionOccurrenceRef,
+    TypedFilter,
+};
+use super::counter::CounterType;
 use super::events::GameEvent;
 use super::game_state::ProductionOverride;
 use super::identifiers::{ObjectId, ObjectIncarnationRef};
@@ -610,6 +614,10 @@ pub enum ManaRestriction {
     /// accepts the legacy bare-`Zone` form (`{"OnlyForSpellFromZone":"Graveyard"}`)
     /// for backward compatibility, mapping it to the inclusion reading.
     OnlyForSpellFromZone(ZoneSpend),
+    /// CR 106.6 + CR 601.2g-h: This mana cannot pay for a spell cast from the
+    /// named zone. It remains unrestricted for every non-cast payment context.
+    /// A spell whose origin is unknown is rejected conservatively.
+    CannotCastSpellFromZone(Zone),
     /// CR 106.6 + CR 708.4: "Spend this mana only to cast face-down spells"
     /// (Tin Street Gossip). Gates spending on whether the spell is being CAST
     /// face down (morph/disguise/cloak), consulting `SpellMeta.is_face_down`.
@@ -869,11 +877,12 @@ fn cmp_mana_restriction(left: &ManaRestriction, right: &ManaRestriction) -> std:
             ManaRestriction::OnlyForSpellWithColorCount { .. } => 11,
             ManaRestriction::OnlyForSpellColor(_) => 12,
             ManaRestriction::OnlyForSpellFromZone(_) => 13,
-            ManaRestriction::OnlyForFaceDownSpell => 14,
-            ManaRestriction::OnlyForAny(_) => 15,
-            ManaRestriction::OnlyForSpecialAction(_) => 16,
-            ManaRestriction::Impossible => 17,
-            ManaRestriction::ConvokePayment => 18,
+            ManaRestriction::CannotCastSpellFromZone(_) => 14,
+            ManaRestriction::OnlyForFaceDownSpell => 15,
+            ManaRestriction::OnlyForAny(_) => 16,
+            ManaRestriction::OnlyForSpecialAction(_) => 17,
+            ManaRestriction::Impossible => 18,
+            ManaRestriction::ConvokePayment => 19,
         }
     }
     rank(left).cmp(&rank(right)).then_with(|| match (left, right) {
@@ -951,6 +960,10 @@ fn cmp_mana_restriction(left: &ManaRestriction, right: &ManaRestriction) -> std:
         ) => a.zone.cmp(&b.zone).then_with(|| {
             zone_spend_polarity_rank(a.polarity).cmp(&zone_spend_polarity_rank(b.polarity))
         }),
+        (
+            ManaRestriction::CannotCastSpellFromZone(a),
+            ManaRestriction::CannotCastSpellFromZone(b),
+        ) => a.cmp(b),
         (ManaRestriction::OnlyForAny(a), ManaRestriction::OnlyForAny(b)) => {
             cmp_mana_restriction_slices(a, b)
         }
@@ -1165,6 +1178,9 @@ impl ManaRestriction {
                     .cast_from_zone
                     .is_some_and(|cast_from| cast_from != zs.zone),
             },
+            ManaRestriction::CannotCastSpellFromZone(zone) => meta
+                .cast_from_zone
+                .is_some_and(|cast_from| cast_from != *zone),
             // CR 708.4: Face-down-spell-gated spend. The eligibility predicate is
             // `meta.is_face_down` — a spell qualifies only when it is being CAST
             // face down (morph/disguise/cloak); normal face-up casts are
@@ -1217,6 +1233,7 @@ impl ManaRestriction {
             // CR 116.2: Special-action-only mana never pays for ability activation.
             | ManaRestriction::OnlyForSpecialAction(_)
             | ManaRestriction::Impossible => false,
+            ManaRestriction::CannotCastSpellFromZone(_) => true,
             // CR 106.6: The ability-activation half of the OR. `OfSpellType`
             // restricts to abilities of permanents whose type matches the
             // restriction ("Elemental sources" includes creature type Elemental —
@@ -1261,23 +1278,28 @@ impl ManaRestriction {
                 ability_tag,
                 mana_color_constraint: _,
             } => self.allows_activation(source_types, source_subtypes, *ability_tag),
-            PaymentContext::Effect => false,
-            // CR 116.2: A special-action payment is permitted only by mana that
-            // is restricted to that exact special-action class, or by a
-            // disjunction that contains such a branch. Spell/activation/generic
-            // effect restrictions all reject it.
+            PaymentContext::Effect => match self {
+                ManaRestriction::CannotCastSpellFromZone(_) => true,
+                ManaRestriction::OnlyForAny(subs) => subs.iter().any(|r| r.allows(ctx)),
+                _ => false,
+            },
+            // CR 116.2: Positive "only for" restrictions must authorize this
+            // exact special-action class (directly or through a disjunction).
+            // A negative restriction naming only one spell-cast class does not
+            // restrict special-action payments.
             PaymentContext::SpecialAction(action) => self.allows_special_action(*action),
         }
     }
 
     /// CR 106.6 + CR 116.2: Returns `true` if this restriction permits spending
-    /// mana on the given special action (e.g. a Room door unlock). Only
-    /// [`ManaRestriction::OnlyForSpecialAction`] with a matching action — or a
-    /// disjunction containing one — qualifies; every spell/activation/effect
-    /// restriction rejects special actions.
+    /// mana on the given special action (e.g. a Room door unlock). An exact
+    /// [`ManaRestriction::OnlyForSpecialAction`] or a matching disjunction may
+    /// authorize one; a restriction that prohibits only a spell-cast class does
+    /// not restrict special actions at all.
     pub fn allows_special_action(&self, action: SpecialAction) -> bool {
         match self {
             ManaRestriction::OnlyForSpecialAction(allowed) => *allowed == action,
+            ManaRestriction::CannotCastSpellFromZone(_) => true,
             ManaRestriction::OnlyForAny(subs) => {
                 subs.iter().any(|r| r.allows_special_action(action))
             }
@@ -1308,10 +1330,19 @@ fn default_mana_keyword_grant_duration() -> Box<crate::types::ability::Duration>
     Box::new(crate::types::ability::Duration::UntilEndOfTurn)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ManaSpellGrant {
-    /// The spell cast with this mana can't be countered.
-    CantBeCountered,
+    /// CR 106.6: A spell matching `filter` and cast with this mana can't be
+    /// countered. `TargetFilter::Any` represents the unqualified wording.
+    CantBeCountered { filter: TargetFilter },
+    /// CR 106.6a + CR 614.1c: A permanent spell matching `filter` and cast
+    /// with this mana enters with `count` `counter_type` counters. Each mana
+    /// unit carries a separate replacement effect.
+    EntersWithCounters {
+        filter: TargetFilter,
+        counter_type: CounterType,
+        count: QuantityExpr,
+    },
     /// CR 106.6 + CR 702.10: If the spell this mana is spent on satisfies
     /// `restriction`, grant it `keyword` for `duration` (subtype lands use
     /// `UntilEndOfTurn`; Hall of the Bandit Lord uses `Permanent`).
@@ -1349,6 +1380,146 @@ pub enum ManaSpellGrant {
         filter: TargetFilter,
         ability: Box<crate::types::ability::AbilityDefinition>,
     },
+}
+
+/// Current wire representation for [`ManaSpellGrant`].
+///
+/// `CantBeCountered` used to be a unit variant and therefore serialized as the
+/// bare string `"CantBeCountered"`. The scoped representation preserves that
+/// legacy data as an unqualified (`TargetFilter::Any`) grant.
+#[derive(Deserialize)]
+enum ManaSpellGrantRepr {
+    CantBeCountered {
+        filter: TargetFilter,
+    },
+    EntersWithCounters {
+        filter: TargetFilter,
+        counter_type: CounterType,
+        count: QuantityExpr,
+    },
+    AddKeywordUntilEndOfTurn {
+        keyword: Keyword,
+        #[serde(default)]
+        restriction: Option<ManaRestriction>,
+        #[serde(default = "default_mana_keyword_grant_duration")]
+        duration: Box<crate::types::ability::Duration>,
+    },
+    TriggerOnSpend {
+        filter: TargetFilter,
+        ability: Box<crate::types::ability::AbilityDefinition>,
+    },
+}
+
+/// Wire form written before spend-trigger predicates moved from the CR 106.6
+/// mana-restriction axis to the CR 603.3 event-filter axis.
+#[derive(Deserialize)]
+enum LegacyManaSpellGrantRepr {
+    TriggerOnSpend {
+        #[serde(default)]
+        restriction: Option<LegacyManaSpendTriggerRestriction>,
+        ability: Box<crate::types::ability::AbilityDefinition>,
+    },
+}
+
+#[derive(Deserialize)]
+enum LegacyManaSpendTriggerRestriction {
+    OnlyForSpellWithManaValue { comparator: Comparator, value: u32 },
+    OnlyForCreatureType(String),
+    SharesCreatureTypeWithCommander,
+}
+
+impl LegacyManaSpendTriggerRestriction {
+    /// CR 603.3: A historical mana-spend trigger's old restriction selected the
+    /// spell event that makes the trigger fire, so preserve it as that event's
+    /// object filter rather than as a current CR 106.6 spend restriction.
+    fn try_into_event_filter(self) -> Result<TargetFilter, String> {
+        Ok(match self {
+            Self::OnlyForSpellWithManaValue { comparator, value } => {
+                TargetFilter::Typed(TypedFilter::default().properties(vec![FilterProp::Cmc {
+                    comparator,
+                    value: QuantityExpr::Fixed {
+                        value: i32::try_from(value).map_err(|_| {
+                            "legacy mana spend trigger value exceeds i32 range".to_string()
+                        })?,
+                    },
+                }]))
+            }
+            Self::OnlyForCreatureType(subtype) => {
+                TargetFilter::Typed(TypedFilter::creature().subtype(subtype))
+            }
+            Self::SharesCreatureTypeWithCommander => TargetFilter::Typed(
+                TypedFilter::creature()
+                    .properties(vec![FilterProp::SharesCreatureTypeWithCommander]),
+            ),
+        })
+    }
+}
+
+impl TryFrom<LegacyManaSpellGrantRepr> for ManaSpellGrant {
+    type Error = String;
+
+    fn try_from(value: LegacyManaSpellGrantRepr) -> Result<Self, Self::Error> {
+        match value {
+            LegacyManaSpellGrantRepr::TriggerOnSpend {
+                restriction,
+                ability,
+            } => Ok(Self::TriggerOnSpend {
+                filter: restriction
+                    .map_or(Ok(TargetFilter::Any), |value| value.try_into_event_filter())?,
+                ability,
+            }),
+        }
+    }
+}
+
+impl From<ManaSpellGrantRepr> for ManaSpellGrant {
+    fn from(value: ManaSpellGrantRepr) -> Self {
+        match value {
+            ManaSpellGrantRepr::CantBeCountered { filter } => Self::CantBeCountered { filter },
+            ManaSpellGrantRepr::EntersWithCounters {
+                filter,
+                counter_type,
+                count,
+            } => Self::EntersWithCounters {
+                filter,
+                counter_type,
+                count,
+            },
+            ManaSpellGrantRepr::AddKeywordUntilEndOfTurn {
+                keyword,
+                restriction,
+                duration,
+            } => Self::AddKeywordUntilEndOfTurn {
+                keyword,
+                restriction,
+                duration,
+            },
+            ManaSpellGrantRepr::TriggerOnSpend { filter, ability } => {
+                Self::TriggerOnSpend { filter, ability }
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ManaSpellGrant {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value == serde_json::Value::String("CantBeCountered".to_string()) {
+            return Ok(Self::CantBeCountered {
+                filter: TargetFilter::Any,
+            });
+        }
+
+        match serde_json::from_value::<ManaSpellGrantRepr>(value.clone()) {
+            Ok(value) => Ok(value.into()),
+            Err(current_error) => serde_json::from_value::<LegacyManaSpellGrantRepr>(value)
+                .map_err(|_| serde::de::Error::custom(current_error))
+                .and_then(|value| value.try_into().map_err(serde::de::Error::custom)),
+        }
+    }
 }
 
 /// When mana expires — controls lifecycle beyond the normal CR 106.4 step/phase drain.
@@ -2316,6 +2487,98 @@ pub fn apply_empty_mana_pool_decisions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ability::{AbilityDefinition, AbilityKind, Effect};
+
+    #[test]
+    fn mana_spell_grant_accepts_legacy_unqualified_counter_protection() {
+        let grant: ManaSpellGrant = serde_json::from_str(r#""CantBeCountered""#)
+            .expect("legacy unqualified mana grant deserializes");
+        assert_eq!(
+            grant,
+            ManaSpellGrant::CantBeCountered {
+                filter: TargetFilter::Any,
+            }
+        );
+
+        let serialized = serde_json::to_string(&grant).expect("current grant serializes");
+        let round_tripped: ManaSpellGrant =
+            serde_json::from_str(&serialized).expect("current grant deserializes");
+        assert_eq!(round_tripped, grant);
+    }
+
+    #[test]
+    fn mana_spell_grant_migrates_legacy_spend_trigger_restrictions() {
+        let ability = AbilityDefinition::new(AbilityKind::Activated, Effect::NoOp);
+        let cases = [
+            (
+                serde_json::json!("SharesCreatureTypeWithCommander"),
+                TargetFilter::Typed(
+                    TypedFilter::creature()
+                        .properties(vec![FilterProp::SharesCreatureTypeWithCommander]),
+                ),
+            ),
+            (
+                serde_json::json!({"OnlyForCreatureType": "Dragon"}),
+                TargetFilter::Typed(TypedFilter::creature().subtype("Dragon".to_string())),
+            ),
+            (
+                serde_json::json!({"OnlyForSpellWithManaValue": {"comparator": "GE", "value": 4}}),
+                TargetFilter::Typed(TypedFilter::default().properties(vec![FilterProp::Cmc {
+                    comparator: Comparator::GE,
+                    value: QuantityExpr::Fixed { value: 4 },
+                }])),
+            ),
+        ];
+
+        for (restriction, filter) in cases {
+            let legacy = serde_json::json!({
+                "TriggerOnSpend": {
+                    "restriction": restriction,
+                    "ability": ability.clone(),
+                }
+            });
+            let grant: ManaSpellGrant =
+                serde_json::from_value(legacy).expect("legacy grant deserializes");
+            assert_eq!(
+                grant,
+                ManaSpellGrant::TriggerOnSpend {
+                    filter,
+                    ability: Box::new(ability.clone()),
+                }
+            );
+        }
+
+        let without_restriction = serde_json::json!({
+            "TriggerOnSpend": {
+                "ability": ability.clone(),
+            }
+        });
+        let grant: ManaSpellGrant = serde_json::from_value(without_restriction)
+            .expect("unrestricted legacy grant deserializes");
+        assert_eq!(
+            grant,
+            ManaSpellGrant::TriggerOnSpend {
+                filter: TargetFilter::Any,
+                ability: Box::new(ability.clone()),
+            }
+        );
+
+        let out_of_range = serde_json::json!({
+            "TriggerOnSpend": {
+                "restriction": {
+                    "OnlyForSpellWithManaValue": {
+                        "comparator": "GE",
+                        "value": 2_147_483_648u64,
+                    }
+                },
+                "ability": ability,
+            }
+        });
+        assert!(
+            serde_json::from_value::<ManaSpellGrant>(out_of_range).is_err(),
+            "an out-of-range legacy threshold must not wrap into a negative value"
+        );
+    }
 
     /// CR 702.143: `reduced_generic_by` reduces only the generic component,
     /// preserving colored pips and flooring at 0.
@@ -3889,6 +4152,26 @@ mod tests {
                 polarity: ZoneSpendPolarity::From,
             })
         );
+    }
+
+    #[test]
+    fn cannot_cast_from_zone_restriction_serde_round_trips() {
+        let restriction = ManaRestriction::CannotCastSpellFromZone(Zone::Hand);
+        let json = serde_json::to_string(&restriction).unwrap();
+        assert_eq!(json, r#"{"CannotCastSpellFromZone":"Hand"}"#);
+        assert_eq!(
+            serde_json::from_str::<ManaRestriction>(&json).unwrap(),
+            restriction
+        );
+
+        // ManaUnit is embedded in GameState and resolved-command journals, so
+        // this proves the new externally tagged leaf survives the actual wire
+        // carrier rather than only a standalone enum round trip.
+        let unit = ManaUnit::new(ManaType::Green, ObjectId(7), false, vec![restriction]);
+        let unit_json = serde_json::to_string(&unit).unwrap();
+        let decoded: ManaUnit = serde_json::from_str(&unit_json).unwrap();
+        assert_eq!(decoded, unit);
+        assert!(unit_json.contains(r#""CannotCastSpellFromZone":"Hand""#));
     }
 
     #[test]

@@ -8,8 +8,8 @@ use nom::Parser;
 
 use crate::types::ability::{
     ChosenCounterCountCondition, Comparator, CounterMoveSelection, CounterTransferMode,
-    DoublePTMode, DoubleTarget, Effect, MultiTargetSpec, ObjectScope, QuantityExpr, QuantityRef,
-    TargetFilter,
+    DoublePTMode, DoubleTarget, Effect, EventCounterReproductionCount, MultiTargetSpec,
+    ObjectScope, QuantityExpr, QuantityRef, TargetFilter,
 };
 use crate::types::counter::{parse_counter_type, CounterType};
 use crate::types::mana::ManaColor;
@@ -43,24 +43,27 @@ fn is_self_ref(text: &str) -> bool {
 /// through the same resolver so ETB-self triggers like "put X counters on
 /// him" bind to `SelfRef` when the trigger subject is the source permanent.
 fn is_it_pronoun(text: &str) -> bool {
-    matches!(text, "it" | "him" | "her" | "them")
-        || nom_on_lower(text, text, |i| {
-            value(
-                (),
-                alt((
-                    tag("itself"),
-                    tag("himself"),
-                    tag("herself"),
-                    tag("themselves"),
-                    tag("it "),
-                    tag("him "),
-                    tag("her "),
-                    tag("them "),
-                )),
-            )
-            .parse(i)
-        })
-        .is_some()
+    nom_on_lower(text, text, |i| {
+        value(
+            (),
+            alt((
+                // Bare object pronoun as the whole token or immediately followed
+                // by a space, routed through the shared recipient-pronoun
+                // combinator (single authority for the it/them/him/her set).
+                terminated(
+                    nom_primitives::parse_object_recipient_pronoun,
+                    alt((eof, peek(tag(" ")))),
+                ),
+                // Reflexive "*self" forms — a distinct set, matched here directly.
+                tag("itself"),
+                tag("himself"),
+                tag("herself"),
+                tag("themselves"),
+            )),
+        )
+        .parse(i)
+    })
+    .is_some()
 }
 
 /// CR 608.2c + CR 111.10 + CR 122.1: a same-chain counter anaphor placed AFTER a
@@ -83,12 +86,39 @@ fn is_it_pronoun(text: &str) -> bool {
 /// form so this helper reproduces the legacy ungated bare-"it" binding exactly,
 /// making the it-branch refactor provably behavior-preserving. `None` ⇒ the
 /// caller applies its own default (source / parent / typed target).
-pub(super) fn counter_anaphor_created_token_binding(
+/// The demonstrative/definite half of the chain-created anaphor, WITHOUT the
+/// bare object pronoun.
+///
+/// "That creature" / "that token" / "the permanent" name the thing the previous
+/// instruction produced and nothing else. Bare "it" does not: it is the general
+/// anaphor, and every consumer already resolves it through its own subject-aware
+/// authority (`resolve_it_pronoun`, `attach_neuter_recipient_resolves_via_subject`).
+/// A consumer that wants the chain-created referent for a demonstrative must not
+/// get bare "it" smuggled in with it, which is why this is a separate entry point
+/// rather than a flag on [`counter_anaphor_created_token_binding`].
+pub(super) fn chain_created_demonstrative_binding(
     anaphor_lower: &str,
     ctx: &ParseContext,
 ) -> Option<TargetFilter> {
-    let it_pronoun = is_it_pronoun(anaphor_lower);
-    let demonstrative = nom_on_lower(anaphor_lower, anaphor_lower, |i| {
+    if !anaphor_is_chain_created_demonstrative(anaphor_lower) {
+        return None;
+    }
+    // Same gate the composed entry point applies to the demonstrative form: a
+    // non-self trigger subject re-anchors the reference to the triggering object
+    // (Pip-Boy 3000), and only a chain that actually produced something can be
+    // named at all.
+    let subject_allows_token = matches!(
+        ctx.subject,
+        None | Some(TargetFilter::SelfRef) | Some(TargetFilter::Any)
+    );
+    (ctx.token_created_in_chain && subject_allows_token).then_some(TargetFilter::LastCreated)
+}
+
+/// CR 608.2c: the demonstrative and definite back-reference forms.
+/// `the creature` is deliberately EXCLUDED — it legitimately binds a chosen
+/// target slot (Longstalk Brawl) and is genuinely ambiguous.
+fn anaphor_is_chain_created_demonstrative(anaphor_lower: &str) -> bool {
+    nom_on_lower(anaphor_lower, anaphor_lower, |i| {
         value(
             (),
             alt((
@@ -101,7 +131,15 @@ pub(super) fn counter_anaphor_created_token_binding(
         )
         .parse(i)
     })
-    .is_some();
+    .is_some()
+}
+
+pub(super) fn counter_anaphor_created_token_binding(
+    anaphor_lower: &str,
+    ctx: &ParseContext,
+) -> Option<TargetFilter> {
+    let it_pronoun = is_it_pronoun(anaphor_lower);
+    let demonstrative = anaphor_is_chain_created_demonstrative(anaphor_lower);
     if !it_pronoun && !demonstrative {
         return None;
     }
@@ -628,6 +666,48 @@ pub(super) fn try_parse_put_counter<'a>(
                 count_expr
             },
             target,
+        },
+        remainder,
+        multi_target,
+    ))
+}
+
+/// CR 122.1 + CR 603.2c: Parse the counter-reproduction effect body — "put the
+/// same number and kind of counters on <target>" (Captain Marvel, Apex Avenger;
+/// Bold Plagiarist) or "put one of each of those kinds of counters on <target>"
+/// (Aragorn, Company Leader). Each axis (per-kind magnitude, target) is its own
+/// combinator; no verbatim full-line match. Reuses `resolve_counter_placement_target`
+/// so `~`→`SelfRef` and "up to one other target creature" are handled exactly as
+/// for `PutCounter`.
+pub(super) fn try_parse_reproduce_event_counters<'a>(
+    lower: &str,
+    text: &'a str,
+    ctx: &mut ParseContext,
+) -> Option<(Effect, &'a str, Option<MultiTargetSpec>)> {
+    fn reproduce_counter_phrase(input: &str) -> OracleResult<'_, EventCounterReproductionCount> {
+        let (rest, _) = tag("put ").parse(input)?;
+        let (rest, per_kind) = alt((
+            value(
+                EventCounterReproductionCount::SameNumber,
+                tag("the same number and kind of counters"),
+            ),
+            value(
+                EventCounterReproductionCount::PerKind(1),
+                tag("one of each of those kinds of counters"),
+            ),
+        ))
+        .parse(rest)?;
+        let (rest, _) = tag(" on ").parse(rest)?;
+        Ok((rest, per_kind))
+    }
+
+    let (on_rest, per_kind_count) = reproduce_counter_phrase(lower).ok()?;
+    let (target, remainder, multi_target) =
+        resolve_counter_placement_target(on_rest, lower, text, ctx);
+    Some((
+        Effect::ReproduceEventCounters {
+            target,
+            per_kind_count,
         },
         remainder,
         multi_target,

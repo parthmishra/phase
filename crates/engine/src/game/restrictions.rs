@@ -213,6 +213,30 @@ pub fn record_spell_cast(
     );
 }
 
+/// CR 708.4: Project a spell-cast record for a LIVE per-spell filter seam, which
+/// has no announced cast variant to record.
+///
+/// The ledger writes the variant its caller announced (`record_spell_cast_from_zone`).
+/// The live seams — cost modifiers (CR 601.2f) and per-turn cast limits — filter a
+/// spell mid-cast and can only state what the object itself evidences, so they
+/// asked for `CastingVariant::Normal` and `FilterProp::FaceDown` had nothing to
+/// read. A face-down cast is the one variant the object does evidence before it
+/// is filtered: `apply_face_down_entry_profile` has already blanked it
+/// (CR 708.2), which is what [`GameObject::spell_is_cast_face_down`] reads. Every
+/// other variant stays `Normal` here — this states a fact, it does not guess one.
+pub(crate) fn live_spell_cast_record_for(
+    obj: &GameObject,
+    from_zone: Zone,
+    fused_hint: bool,
+) -> SpellCastRecord {
+    let cast_variant = if obj.spell_is_cast_face_down() {
+        crate::types::game_state::CastingVariant::FaceDown
+    } else {
+        crate::types::game_state::CastingVariant::Normal
+    };
+    spell_cast_record_for(obj, from_zone, cast_variant, fused_hint)
+}
+
 /// The single fuse-aware authority for spell-cast record projection. `fused_hint` is the caller's
 /// pre-payment determination that the projected spell is a fused split spell
 /// (CR 702.102b), for seams that know the `CastingVariant::Fuse` intent before the
@@ -240,6 +264,11 @@ pub(crate) fn spell_cast_record_for(
         // trigger-filter evaluation (e.g. "your first spell with {X} in its
         // mana cost each turn") does not need to re-examine the spell object.
         has_x_in_cost: crate::game::casting_costs::cost_has_x(&obj.mana_cost),
+        // CR 715.2a: Capture whether the cast-time object has Adventure
+        // characteristics; this is distinct from casting the Adventure face.
+        has_adventure: obj.back_face.as_ref().is_some_and(|face| {
+            face.layout_kind == Some(crate::types::card::LayoutKind::Adventure)
+        }),
         from_zone,
         // CR 702.185c: Capture the alternative-cast variant so per-turn
         // spell-history conditions ("a spell was warped this turn") can
@@ -605,13 +634,14 @@ pub(crate) fn ledger_filter_is_evaluable(filter: &TargetFilter) -> bool {
 /// Returns the per-turn zone-change index assigned to this record.
 pub fn record_zone_change(
     state: &mut crate::types::game_state::GameState,
-    mut record: crate::types::game_state::ZoneChangeRecord,
+    record: &mut crate::types::game_state::ZoneChangeRecord,
 ) -> usize {
     let object_id = record.object_id;
     let to_zone = record.to_zone;
     let turn_zone_change_index = state.zone_changes_this_turn.len();
+    record.recorded_turn_number = state.turn_number;
     record.turn_zone_change_index = turn_zone_change_index;
-    state.zone_changes_this_turn.push_back(record);
+    state.zone_changes_this_turn.push_back(record.clone());
 
     if to_zone == Zone::Battlefield {
         record_battlefield_entry(state, object_id);
@@ -1628,6 +1658,7 @@ pub(crate) fn evaluate_condition(
                     trigger_source: None,
                     recipient: None,
                     scoped_player: None,
+                    damage_source: None,
                 },
             ) as usize
                 >= *minimum
@@ -1635,6 +1666,40 @@ pub(crate) fn evaluate_condition(
         // CR 702.131c: The city's blessing is a player designation that effects
         // and restrictions may identify.
         ParsedCondition::HasCityBlessing => state.city_blessing.contains(&player),
+        // CR 702.195b: The enduring story is a player designation effects and
+        // restrictions may identify.
+        ParsedCondition::HasEnduringStory => state.enduring_story.contains(&player),
+        // CR 702.178a + the "Max Speed" glossary entry, sense 2: the keyword
+        // grants its ability "only if that permanent's controller (or that
+        // card's owner, if it isn't on the battlefield) has a speed of 4".
+        //
+        // SOURCE-relative, not activator-relative — the one place this leaf
+        // differs from its designation siblings above. `player` here is whoever
+        // is activating, and CR 602.2's "unless the object specifically says
+        // otherwise" lets an `activator_filter` of `PlayerFilter::All` ("Any
+        // player may activate this ability", 42 cards in the pool) make the
+        // activator someone other than the controller.
+        // `HasCityBlessing` reading `player` is right because its cards print
+        // "only if YOU have the city's blessing", addressed to the activator;
+        // CR 702.178a's "your" is addressed to the source instead.
+        //
+        // CR 702.178b keeps a max speed ability functioning in whatever zone the
+        // granted ability names, which is what makes the off-battlefield branch
+        // reachable: five Aetherdrift Surveyors activate theirs from a graveyard.
+        //
+        // Delegates to the single `game::speed` authority — the same helper
+        // `layers.rs` uses for `StaticCondition::HasMaxSpeed` — so CR 702.179e
+        // ("a player has max speed if their speed is 4") and the CR 101.1
+        // card-over-rule override that lets a static raise that cap (Gomif) read
+        // identically whether a card gates a static ability or an activation.
+        ParsedCondition::HasMaxSpeed => state.objects.get(&source_id).is_some_and(|object| {
+            let whose_speed = if object.zone == Zone::Battlefield {
+                object.controller
+            } else {
+                object.owner
+            };
+            super::speed::has_max_speed(state, whose_speed)
+        }),
         // CR 903.3 / CR 903.3d: owner-scoped ("your commander") vs any-owner ("a
         // commander") control. Delegates to the single `game::commander` authority —
         // the same helpers `layers.rs` uses for `StaticCondition::ControlsCommander` —
@@ -2440,6 +2505,18 @@ mod tests {
 
         assert!(!evaluate_condition(&state, player, source_id, &condition));
         state.city_blessing.insert(player);
+        assert!(evaluate_condition(&state, player, source_id, &condition));
+    }
+
+    #[test]
+    fn enduring_story_restriction_checks_player_designation() {
+        let mut state = crate::types::game_state::GameState::new_two_player(42);
+        let player = PlayerId(0);
+        let source_id = ObjectId(10);
+        let condition = ParsedCondition::HasEnduringStory;
+
+        assert!(!evaluate_condition(&state, player, source_id, &condition));
+        state.enduring_story.insert(player);
         assert!(evaluate_condition(&state, player, source_id, &condition));
     }
 
@@ -3735,6 +3812,7 @@ mod tests {
                 colors: Vec::new(),
                 mana_value: 1,
                 has_x_in_cost: false,
+                has_adventure: false,
                 from_zone: Zone::Hand,
                 cast_variant: crate::types::game_state::CastingVariant::Normal,
                 was_kicked: false,
@@ -3771,6 +3849,7 @@ mod tests {
                     colors: Vec::new(),
                     mana_value: 1,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -3785,6 +3864,7 @@ mod tests {
                     colors: Vec::new(),
                     mana_value: 2,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -3799,6 +3879,7 @@ mod tests {
                     colors: Vec::new(),
                     mana_value: 3,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,

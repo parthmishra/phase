@@ -5,11 +5,22 @@
     "close": "Cerrar",
     "closeNamed": "Cerrar {{name}}"
   },
+  "quantityRef": {
+    "highestNumber": "el número más alto",
+    "lowestNumber": "el número más bajo",
+    "chosenNumber": "el número elegido"
+  },
+  "scryOutcome": {
+    "title": "Adivinación completada",
+    "you": "Tú",
+    "result": "{{player}} — {{top}} arriba · {{bottom}} abajo"
+  },
   "modal": {
     "defaultEyebrow": "Herramienta del espacio de trabajo"
   },
   "pausedBanner": {
-    "message": "Partida en pausa — {{reason}}"
+    "message": "Partida en pausa — {{reason}}",
+    "resume": "Reanudar"
   },
   "fullscreen": {
     "enter": "Activar pantalla completa",
@@ -74,6 +85,11 @@
     "boardLayoutLegacy": "Legacy",
     "switchToSplitView": "Cambiar a vista de mesa dividida",
     "switchToLegacyView": "Cambiar a vista legacy enfocada",
+    "multiplayerSplitLayoutNudge": {
+      "message": "Ve a todos los oponentes a la vez con la vista de mesa dividida.",
+      "trySplit": "Probar vista dividida",
+      "dismiss": "Ahora no"
+    },
     "helpShortcuts": "Ayuda y atajos",
     "showAiHand": "Mostrar la mano de la IA",
     "hideAiHand": "Ocultar la mano de la IA",
@@ -86,6 +102,7 @@
     "cardDataTitle": "Datos de cartas: {{date}}"
   },
   "volume": {
+    "deviceBlocked": "Audio no disponible — el servidor de audio del sistema no responde. Reinicia la aplicación para reintentar.",
     "mute": "Silenciar",
     "unmute": "Activar sonido",
     "volume": "Volumen"

@@ -18,8 +18,9 @@ import type {
   MatchConfig,
   ObjectId,
   SerializedAbilityCost,
+  AiDecisionDiagnosticReceipt,
 } from "../adapter/types";
-import { supportsMatchConcede } from "../adapter/types";
+import { supportsAiDecisionDiagnostics, supportsMatchConcede } from "../adapter/types";
 import type {
   InteractionManaRestriction,
   InteractionPresentationSurface,
@@ -40,6 +41,7 @@ import { RevealOverlay } from "../components/animation/RevealOverlay.tsx";
 import { TurnBanner } from "../components/animation/TurnBanner.tsx";
 import { DiceRollOverlay } from "../components/animation/DiceRollOverlay.tsx";
 import { CommanderCutInHost } from "../components/animation/CommanderCutIn.tsx";
+import { ScryOutcomeOverlay } from "../components/animation/ScryOutcomeOverlay.tsx";
 import { flashStartingPlayerContest } from "../game/diceContest.ts";
 import { loopDetectionModeFromQuery } from "../game/loopDetectionMode.ts";
 import { BattlefieldBackground } from "../components/board/BattlefieldBackground.tsx";
@@ -102,6 +104,7 @@ import {
   RespondToPrecastCopyShortcutModal,
 } from "../components/modal/PrecastCopyShortcutModal.tsx";
 import { ReplacementModal } from "../components/modal/ReplacementModal.tsx";
+import { ResolveAllConsentModal } from "../components/modal/ResolveAllConsentModal.tsx";
 import { TriggerOrderModal } from "../components/modal/TriggerOrderModal.tsx";
 import { PeekTab } from "../components/modal/DialogShell.tsx";
 import { PeekRestoreTab } from "../components/modal/DialogHost.tsx";
@@ -113,6 +116,7 @@ import { ZoneOpponentChooserModal } from "../components/modal/ZoneOpponentChoose
 import { PileOpponentModal } from "../components/modal/PileOpponentModal.tsx";
 import { AnnouncingOpponentModal } from "../components/modal/AnnouncingOpponentModal.tsx";
 import { GiftRecipientModal } from "../components/modal/GiftRecipientModal.tsx";
+import { EntryControllerModal } from "../components/modal/EntryControllerModal.tsx";
 import { TributeModal } from "../components/modal/TributeModal.tsx";
 import { CombatTaxModal } from "../components/modal/CombatTaxModal.tsx";
 import { TopOrBottomChoiceModalContent } from "../components/modal/TopOrBottomChoiceModal.tsx";
@@ -131,6 +135,7 @@ import {
   type SettingsTabId,
 } from "../components/settings/PreferencesModal.tsx";
 import { DebugPanel } from "../components/chrome/DebugPanel.tsx";
+import { AiDecisionOverlay } from "../components/chrome/AiDecisionOverlay.tsx";
 import { GameMenu } from "../components/chrome/GameMenu.tsx";
 import { ConcedeDialog } from "../components/multiplayer/ConcedeDialog.tsx";
 import { TakebackRequestDialog } from "../components/multiplayer/TakebackRequestDialog.tsx";
@@ -142,18 +147,18 @@ import { DisconnectChoiceDialog } from "../components/hud/DisconnectChoiceDialog
 import { PlayerEnchantmentsDialog } from "../components/hud/PlayerEnchantmentsDialog.tsx";
 import { AttachmentFan } from "../components/board/AttachmentFan.tsx";
 import { PausedBanner } from "../components/chrome/PausedBanner.tsx";
-import type { P2PAdapterEvent } from "../adapter/p2p-adapter.ts";
+import { P2PHostAdapter, type P2PAdapterEvent } from "../adapter/p2p-adapter.ts";
 import { WebSocketAdapter } from "../adapter/ws-adapter.ts";
 import type { WsAdapterEvent } from "../adapter/ws-adapter.ts";
 import { MANA_PAYMENT_WAITING_FOR_TYPES } from "../game/waitingForRegistry.ts";
 import { useGameDispatch } from "../hooks/useGameDispatch.ts";
 import { useInspectHoverProps } from "../hooks/useInspectHoverProps.ts";
+import { useIsMobile } from "../hooks/useIsMobile.ts";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.ts";
 import { clearPromptOverlayState } from "../game/sessionCleanup.ts";
 import { clearGame, hasRemoteHumans, loadActiveGame, useGameStore } from "../stores/gameStore.ts";
 import { useUiStore } from "../stores/uiStore.ts";
 import { usePreferencesStore } from "../stores/preferencesStore.ts";
-import type { MultiplayerBoardLayout } from "../stores/preferencesStore.ts";
 import {
   FORMAT_DEFAULTS,
   getOpponentDisplayName,
@@ -180,6 +185,8 @@ import {
   getBoardChoiceView,
   getSeatCount,
   getWaitingForObjectChoiceIds,
+  isSplitBoardActive,
+  resolveMultiplayerBoardLayout,
   type ZoneViewerTarget,
 } from "../viewmodel/gameStateView.ts";
 import { gameButtonClass } from "../components/ui/buttonStyles.ts";
@@ -925,6 +932,7 @@ function GamePageContent({
   const [boardContextMenu, setBoardContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const playerId = usePlayerId();
+  const isMobile = useIsMobile();
   const isSpectatorMode = useSpectatorMode();
   // Card-report picker is valid in a live, participating game (never spectate).
   const canReportCard = gameState != null && !isSpectatorMode;
@@ -940,6 +948,13 @@ function GamePageContent({
   const dismissedReportCardNudge = usePreferencesStore((s) => s.dismissedReportCardNudge);
   const cardReportDialogOpen = useUiStore((s) => s.cardReportDialogOpen);
   const multiplayerBoardLayout = usePreferencesStore((s) => s.multiplayerBoardLayout);
+  const setMultiplayerBoardLayout = usePreferencesStore((s) => s.setMultiplayerBoardLayout);
+  const multiplayerSplitLayoutNudgeDismissed = usePreferencesStore(
+    (s) => s.multiplayerSplitLayoutNudgeDismissed,
+  );
+  const setMultiplayerSplitLayoutNudgeDismissed = usePreferencesStore(
+    (s) => s.setMultiplayerSplitLayoutNudgeDismissed,
+  );
   const debugPanelOpen = useUiStore((s) => s.debugPanelOpen);
   const debugClickModeButtonVisible = useUiStore((s) => s.debugClickModeButtonVisible);
   const toggleDebugClickModeButtonVisible = useUiStore(
@@ -947,21 +962,70 @@ function GamePageContent({
   );
   const opponentDisplayName = useMultiplayerStore((s) => s.opponentDisplayName);
   const adapter = useGameStore((s) => s.adapter);
+  const aiDecisionCaptureEnabled = useUiStore((s) => s.aiDecisionCaptureEnabled);
+  const setAiDecisionCaptureEnabled = useUiStore((s) => s.setAiDecisionCaptureEnabled);
+  const [aiDecisionReceipt, setAiDecisionReceipt] = useState<AiDecisionDiagnosticReceipt | null>(null);
+  // GamePage owns the only local diagnostic subscription. Adapter events remain
+  // gameplay-only so no receipt can enter P2P/server state or wire traffic.
+  useEffect(() => {
+    setAiDecisionReceipt(null);
+    if (!supportsAiDecisionDiagnostics(adapter)) {
+      return;
+    }
+    adapter.setAiDecisionDiagnosticsEnabled(aiDecisionCaptureEnabled);
+    if (!aiDecisionCaptureEnabled) {
+      return;
+    }
+    const unsubscribe = adapter.subscribeAiDecisionDiagnostics(setAiDecisionReceipt);
+    return () => {
+      unsubscribe();
+      adapter.setAiDecisionDiagnosticsEnabled(false);
+    };
+  }, [adapter, aiDecisionCaptureEnabled]);
   // The AUTHORITATIVE game mode. The URL-derived `mode` prop structurally
   // cannot contain `native-ai` (desktop solo arrives as `rawMode === "ai"`), so
   // it cannot answer "is anyone else at this table?".
   const storeGameMode = useGameStore((s) => s.gameMode);
   const seatCount = getSeatCount(gameState);
-  const effectiveMultiplayerBoardLayout: MultiplayerBoardLayout =
-    seatCount > 2 && canActForWaitingState && getBoardChoiceView(waitingFor, objects)?.intent === "untap"
-      ? "split"
-      : multiplayerBoardLayout;
+  const resolvedMultiplayerBoardLayout = resolveMultiplayerBoardLayout(
+    multiplayerBoardLayout,
+    seatCount,
+    isMobile,
+  );
+  const untapForcedSplit =
+    seatCount > 2 &&
+    canActForWaitingState &&
+    getBoardChoiceView(waitingFor, objects)?.intent === "untap";
+  const effectiveMultiplayerBoardLayout = untapForcedSplit
+    ? "split"
+    : resolvedMultiplayerBoardLayout;
+  const splitBoardActive = isSplitBoardActive(effectiveMultiplayerBoardLayout, seatCount);
+  const handleToggleMultiplayerBoardLayout = useCallback(() => {
+    setMultiplayerBoardLayout(
+      resolvedMultiplayerBoardLayout === "split" ? "focused" : "split",
+    );
+  }, [resolvedMultiplayerBoardLayout, setMultiplayerBoardLayout]);
+  const handleTryMultiplayerSplitLayout = useCallback(() => {
+    setMultiplayerBoardLayout("split");
+  }, [setMultiplayerBoardLayout]);
+  const handleDismissMultiplayerSplitLayoutNudge = useCallback(() => {
+    setMultiplayerSplitLayoutNudgeDismissed(true);
+  }, [setMultiplayerSplitLayoutNudgeDismissed]);
+  const showMultiplayerSplitLayoutNudge =
+    seatCount > 2 &&
+    !isMobile &&
+    multiplayerBoardLayout === "focused" &&
+    !untapForcedSplit &&
+    !multiplayerSplitLayoutNudgeDismissed;
   const handleKickPlayer = useCallback((pid: number) => {
     const adapter = useGameStore.getState().adapter as
       | { kickPlayer?: (pid: number) => Promise<void> }
       | null;
     void adapter?.kickPlayer?.(pid);
   }, []);
+  const handleResumeP2P = useCallback(() => {
+    if (adapter instanceof P2PHostAdapter) adapter.requestResume();
+  }, [adapter]);
 
   // Keep the Arena HUD render callback stable so ArenaGameBoard's memoization
   // is not defeated by unrelated GamePageContent updates.
@@ -1227,7 +1291,13 @@ function GamePageContent({
   const gamePageStyle = {
     "--game-top-overlay-offset": `${topOverlayOffsetPx}px`,
     "--game-split-safe-top": "0px",
-    "--game-targeting-prompt-top": "0.25rem",
+    // Where the targeting prompt starts, which is the only part of its
+    // placement this page can state: the split layout puts seat panes at the
+    // very top of the board, so the prompt clears them. How TALL the block is
+    // stays the block's own business — see TargetingOverlay.
+    "--game-targeting-prompt-top": splitBoardActive
+      ? isMobile ? "4.25rem" : "4.75rem"
+      : "0.25rem",
   } as CSSProperties;
   const handleViewZone = useCallback(
     (zone: "graveyard" | "exile" | "library", zonePlayerId: number) => {
@@ -1480,6 +1550,19 @@ function GamePageContent({
         isOnlineMode={isOnlineMode}
         showAiHand={showAiHand}
         onToggleAiHand={() => setShowAiHand((v) => !v)}
+        multiplayerBoardLayout={
+          seatCount > 2 && !untapForcedSplit ? resolvedMultiplayerBoardLayout : undefined
+        }
+        onToggleMultiplayerBoardLayout={
+          seatCount > 2 && !untapForcedSplit ? handleToggleMultiplayerBoardLayout : undefined
+        }
+        showMultiplayerSplitLayoutNudge={showMultiplayerSplitLayoutNudge}
+        onTryMultiplayerSplitLayout={
+          showMultiplayerSplitLayoutNudge ? handleTryMultiplayerSplitLayout : undefined
+        }
+        onDismissMultiplayerSplitLayoutNudge={
+          showMultiplayerSplitLayoutNudge ? handleDismissMultiplayerSplitLayoutNudge : undefined
+        }
         onSettingsClick={() => setPreferencesOpen({})}
         onHelpClick={() => setHelpSheetOpen(true)}
         onConcede={onShowConcedeDialog}
@@ -1548,7 +1631,11 @@ function GamePageContent({
       )}
 
       {/* P2P pause banner — visible to everyone while paused. */}
-      <PausedBanner isVisible={pauseReason !== null} reason={pauseReason ?? ""} />
+      <PausedBanner
+        isVisible={pauseReason !== null}
+        reason={pauseReason ?? ""}
+        onResume={isP2PHost && adapter instanceof P2PHostAdapter ? handleResumeP2P : undefined}
+      />
 
       {/* P2P host-only disconnect decision modal. */}
       {isP2PHost && disconnectChoice !== null && (
@@ -1641,7 +1728,14 @@ function GamePageContent({
       </AnimatePresence>
 
       {/* Overlay layers */}
-      <DebugPanel />
+      <DebugPanel
+        aiDecisionDiagnosticsAvailable={supportsAiDecisionDiagnostics(adapter)}
+      />
+      <AiDecisionOverlay
+        receipt={aiDecisionReceipt}
+        visible={aiDecisionCaptureEnabled}
+        onClose={() => setAiDecisionCaptureEnabled(false)}
+      />
       <ResolutionProgressOverlay />
 
       {preferencesOpen && (
@@ -1679,6 +1773,7 @@ function GamePageContent({
       <CommanderCutInHost />
       <TurnBanner />
       <DiceRollOverlay />
+      <ScryOutcomeOverlay />
 
       {/* Combat SVG overlays: blocker assignments + attack target arrows */}
       <BlockAssignmentLines effectiveMultiplayerBoardLayout={effectiveMultiplayerBoardLayout} />
@@ -1720,6 +1815,7 @@ function GamePageContent({
           canActForWaitingState && <AssistPaymentUI />}
         {waitingFor?.type === "ReplacementChoice" &&
           canActForWaitingState && <ReplacementModal />}
+        {canActForWaitingState && <ResolveAllConsentModal playerId={playerId} />}
         {waitingFor?.type === "OrderTriggers" &&
           canActForWaitingState && <TriggerOrderModal />}
         <BattleProtectorModal />
@@ -1730,6 +1826,7 @@ function GamePageContent({
         <PileOpponentModal />
         <AnnouncingOpponentModal />
         <GiftRecipientModal />
+        <EntryControllerModal />
         <TributeModal />
         <CombatTaxModal />
         <AlternativeCostModal />
@@ -1759,7 +1856,7 @@ function GamePageContent({
         {/* Ability choice picker (planeswalkers, multi-ability permanents) */}
         <AbilityChoiceModal />
 
-        {/* Player-attached Aura viewer (Curse cycle, Faith's Fetters, etc.).
+        {/* Player-attached Aura viewer (Curse cycle, Paradox Haze, etc.).
             Mounted here — not from inside HudPlate where the badge lives —
             so the dialog's `fixed inset-0` shell anchors to the viewport
             instead of HudPlate's transform-CB bounding box. */}
@@ -2881,6 +2978,8 @@ export function manaRestrictionLabel(
       return t("gamePage.manaRestrictions.onlyForSpellColor", restriction.data);
     case "onlyForSpellFromZone":
       return t("gamePage.manaRestrictions.onlyForSpellFromZone", restriction.data);
+    case "cannotCastSpellFromZone":
+      return t("gamePage.manaRestrictions.cannotCastSpellFromZone", restriction.data);
     case "onlyForFaceDownSpell":
       return t("gamePage.manaRestrictions.onlyForFaceDownSpell");
     case "onlyForAny":
@@ -3285,9 +3384,51 @@ function formatManaCost(cost: { type: string; shards?: string[]; generic?: numbe
 }
 
 function formatUnlessCost(
-  cost: { type: string; cost?: { type: string; shards?: string[]; generic?: number }; amount?: number; count?: number },
+  cost:
+    // CR 702.21a + CR 122.1 + CR 104.3d: Ward's player-counter cost is a real
+    // discriminated variant with required fields (the engine's
+    // `AbilityCost::GetPlayerCounters` always sends both) — rendered
+    // unchanged, not reinterpreted (no lowercasing, no fallback defaults).
+    | {
+        type: "GetPlayerCounters";
+        count: number;
+        counter_kind: "Poison" | "Experience" | "Rad" | "Ticket";
+      }
+    | {
+        type: string;
+        cost?: { type: string; shards?: string[]; generic?: number };
+        amount?: number;
+        count?: number;
+      },
   t: TFunction<"game">,
 ): string {
+  // `"counter_kind" in cost` narrows via property presence rather than a
+  // `cost.type` literal comparison — the sibling union member's `type: string`
+  // is too wide for a `switch (cost.type)`/`cost.type === "GetPlayerCounters"`
+  // check to exclude it, so `cost.counter_kind` would otherwise fail to
+  // type-check inside that branch. The exhaustive switch below maps each
+  // engine value to its i18n key explicitly rather than interpolating
+  // `cost.counter_kind` directly into the key template — that would make the
+  // display layer depend on the engine's serde string matching the locale
+  // JSON's key names, an implicit coupling the compiler can't check. This way
+  // a future `PlayerCounterKind` variant fails to compile here instead of
+  // silently rendering a missing translation.
+  if ("counter_kind" in cost) {
+    const kindKey: "Poison" | "Experience" | "Rad" | "Ticket" = (() => {
+      switch (cost.counter_kind) {
+        case "Poison":
+          return "Poison";
+        case "Experience":
+          return "Experience";
+        case "Rad":
+          return "Rad";
+        case "Ticket":
+          return "Ticket";
+      }
+    })();
+    const kind = t(`gamePage.cost.playerCounterKind.${kindKey}`);
+    return t("gamePage.cost.playerCounters", { count: cost.count, kind });
+  }
   switch (cost.type) {
     // Legacy `UnlessCost` JSON (pre-2026-05-09 fold) — preserved for
     // saved-game compat.
@@ -3480,7 +3621,10 @@ function MeldChoiceModal() {
     );
   }
 
-  if (waitingFor?.type === "MeldAttackTargetChoice") {
+  if (
+    waitingFor?.type === "MeldAttackTargetChoice" ||
+    waitingFor?.type === "EntryAttackTargetChoice"
+  ) {
     const targets = waitingFor.data.valid_targets;
     return (
       <ChoiceModal

@@ -5,11 +5,22 @@
     "close": "Close",
     "closeNamed": "Close {{name}}"
   },
+  "quantityRef": {
+    "highestNumber": "the highest number",
+    "lowestNumber": "the lowest number",
+    "chosenNumber": "the chosen number"
+  },
+  "scryOutcome": {
+    "title": "Scry complete",
+    "you": "You",
+    "result": "{{player}} — {{top}} on top · {{bottom}} on bottom"
+  },
   "modal": {
     "defaultEyebrow": "Workspace Tool"
   },
   "pausedBanner": {
-    "message": "Game paused — {{reason}}"
+    "message": "Game paused — {{reason}}",
+    "resume": "Resume"
   },
   "fullscreen": {
     "enter": "Enter fullscreen",
@@ -74,6 +85,11 @@
     "boardLayoutLegacy": "Legacy",
     "switchToSplitView": "Switch to split table view",
     "switchToLegacyView": "Switch to legacy focused view",
+    "multiplayerSplitLayoutNudge": {
+      "message": "See every opponent at once with split table view.",
+      "trySplit": "Try split view",
+      "dismiss": "Not now"
+    },
     "helpShortcuts": "Help & Shortcuts",
     "showAiHand": "Show AI Hand",
     "hideAiHand": "Hide AI Hand",
@@ -86,6 +102,7 @@
     "cardDataTitle": "Card data: {{date}}"
   },
   "volume": {
+    "deviceBlocked": "Audio unavailable — system audio server is not responding. Restart the app to retry.",
     "mute": "Mute",
     "unmute": "Unmute",
     "volume": "Volume"

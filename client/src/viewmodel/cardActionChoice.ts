@@ -1,4 +1,10 @@
-import type { GameAction, GameObject, ObjectId, WaitingFor } from "../adapter/types.ts";
+import type {
+  GameAction,
+  GameObject,
+  ObjectAction,
+  ObjectId,
+  WaitingFor,
+} from "../adapter/types.ts";
 
 /**
  * Look up the legal actions whose `source_object()` is `objectId`.
@@ -10,9 +16,9 @@ import type { GameAction, GameObject, ObjectId, WaitingFor } from "../adapter/ty
  * — never a client-side discriminated-union introspection.
  */
 export function collectObjectActions(
-  legalActionsByObject: Record<string, GameAction[]> | undefined,
+  legalActionsByObject: Record<string, ObjectAction[]> | undefined,
   objectId: ObjectId,
-): GameAction[] {
+): ObjectAction[] {
   if (!legalActionsByObject) return [];
   return legalActionsByObject[String(objectId)] ?? [];
 }
@@ -103,9 +109,9 @@ export function castActionsForObject(
  * castActionsForObject instead.
  */
 export function playOrCastActionsForObject(
-  legalActionsByObject: Record<string, GameAction[]> | undefined,
+  legalActionsByObject: Record<string, ObjectAction[]> | undefined,
   objectId: ObjectId,
-): GameAction[] {
+): ObjectAction[] {
   return collectObjectActions(legalActionsByObject, objectId).filter(
     (action) => action.type === "PlayLand" || isCastAction(action),
   );
@@ -121,7 +127,7 @@ export function playOrCastActionsForObject(
  * gold with a promise that releasing will cast immediately.
  */
 export function resolveDirectPlayOrCastAction(
-  legalActionsByObject: Record<string, GameAction[]> | undefined,
+  legalActionsByObject: Record<string, ObjectAction[]> | undefined,
   object: GameObject | undefined,
 ): GameAction | null {
   if (!object) return null;

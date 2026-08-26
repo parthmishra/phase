@@ -18,6 +18,7 @@ import { useGameStore } from "../../stores/gameStore";
 import { getPlayerDisplayName } from "../../stores/multiplayerStore";
 import { useUiStore } from "../../stores/uiStore";
 import { DebugActions } from "./DebugActions";
+import { copyText } from "../../services/copyText";
 
 const SCROLL_THRESHOLD = 40; // px from bottom to count as "at bottom"
 
@@ -58,8 +59,12 @@ function patchConsole(): void {
 // Patch immediately so we capture logs from app startup
 patchConsole();
 
-export function DebugPanel() {
-  const { t } = useTranslation();
+export function DebugPanel({
+  aiDecisionDiagnosticsAvailable = false,
+}: {
+  aiDecisionDiagnosticsAvailable?: boolean;
+}) {
+  const { t } = useTranslation(["common", "game"]);
   const open = useUiStore((s) => s.debugPanelOpen);
   const turnCheckpoints = useGameStore((s) => s.turnCheckpoints);
   const rewindTargets = useGameStore((s) => s.rewindTargets);
@@ -93,6 +98,8 @@ export function DebugPanel() {
   // can open the panel straight to "actions" via `openSandboxTools()`.
   const activeTab = useUiStore((s) => s.debugPanelTab);
   const setActiveTab = useUiStore((s) => s.setDebugPanelTab);
+  const aiDecisionCaptureEnabled = useUiStore((s) => s.aiDecisionCaptureEnabled);
+  const setAiDecisionCaptureEnabled = useUiStore((s) => s.setAiDecisionCaptureEnabled);
   // Deliberately NOT `!hasRemoteHumans(gameMode)`, despite reading like a
   // company question. This is the set of modes whose adapter implements
   // `restoreState`: `WasmAdapter` does; `WebSocketAdapter.restoreState`
@@ -214,9 +221,10 @@ export function DebugPanel() {
       setStatus({ type: "error", message: "No console entries to copy" });
       return;
     }
-    navigator.clipboard.writeText(formatEntries(visibleEntries))
-      .then(() => setStatus({ type: "success", message: `Copied ${visibleEntries.length} entries` }))
-      .catch(() => setStatus({ type: "error", message: "Failed to copy console" }));
+    void copyText(formatEntries(visibleEntries)).then((copied) =>
+      setStatus(copied
+        ? { type: "success", message: `Copied ${visibleEntries.length} entries` }
+        : { type: "error", message: "Failed to copy console" }));
   }, [visibleEntries, formatEntries]);
 
   const handleExportZip = useCallback(() => {
@@ -346,6 +354,21 @@ export function DebugPanel() {
           </svg>
           {t("help.reportCardNudge.open")}
         </button>
+      </section>
+
+      <section className="border-b border-gray-700 px-3 py-2">
+        <label className="flex items-center justify-between gap-2 text-xs text-gray-300">
+          <span>{t("game:debugPanel.aiDecisionVisibility")}</span>
+          <input
+            type="checkbox"
+            disabled={!aiDecisionDiagnosticsAvailable}
+            checked={aiDecisionCaptureEnabled}
+            onChange={(event) => setAiDecisionCaptureEnabled(event.target.checked)}
+          />
+        </label>
+        {!aiDecisionDiagnosticsAvailable ? (
+          <p className="mt-1 text-xs text-gray-500">{t("game:debugPanel.aiDecisionUnavailable")}</p>
+        ) : null}
       </section>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

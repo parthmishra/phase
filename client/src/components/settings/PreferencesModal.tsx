@@ -45,7 +45,7 @@ import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 import { ModalPanelShell } from "../ui/ModalPanelShell";
 import { MenuSelect } from "../ui/MenuSelect";
 import { downloadBackup, importBackupFromFile, type ImportMode } from "../../services/backup.ts";
-import { isTauri } from "../../services/platform.ts";
+import { isDesktopTauri } from "../../services/platform.ts";
 import { useCloudSyncStore } from "../../stores/cloudSyncStore.ts";
 import { DiscordIcon, GoogleIcon } from "../ui/ProviderIcons";
 
@@ -76,7 +76,7 @@ const CARD_PREVIEW_MODES: CardPreviewMode[] = ["follow", "side", "shift"];
 const SPELL_PAYMENT_MODES: SpellPaymentMode[] = ["auto", "autoExceptSacrificialMana", "manual"];
 const LOG_DEFAULTS: LogDefaultState[] = ["open", "closed"];
 const VFX_QUALITIES: VfxQuality[] = ["full", "reduced", "minimal"];
-const MULTIPLAYER_BOARD_LAYOUTS: MultiplayerBoardLayout[] = ["focused", "split"];
+const MULTIPLAYER_BOARD_LAYOUTS: MultiplayerBoardLayout[] = ["auto", "focused", "split"];
 
 /** Format a speed value as a user-facing label. The slider goes 0→max where
  *  max = instant (skip animations). `0` = slowest, `1` = normal. The endpoint
@@ -440,7 +440,7 @@ export function PreferencesModal({
                     />
                   </SettingGroup>
 
-                  {isTauri() && (
+                  {isDesktopTauri() && (
                     <label className="mt-1 flex min-h-11 items-start gap-2">
                       <input
                         type="checkbox"
@@ -1034,6 +1034,12 @@ function CloudSyncSection() {
                   onClick={() => void resolveConflict("local")}
                 >
                   {t("sync.keepLocal")}
+                </button>
+                <button
+                  className={SYNC_BUTTON_CLASS}
+                  onClick={() => void resolveConflict("merge")}
+                >
+                  {t("sync.keepBothDecks")}
                 </button>
               </div>
             </div>

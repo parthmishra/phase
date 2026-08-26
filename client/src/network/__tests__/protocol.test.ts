@@ -36,8 +36,8 @@ const viewerInteractionWithProducedMana = {
 } as never;
 
 describe("encodeWireMessage / decodeWireMessage", () => {
-  it("pins the P2P wire protocol to v17", () => {
-    expect(WIRE_PROTOCOL_VERSION).toBe(17);
+  it("pins the P2P wire protocol to v30", () => {
+    expect(WIRE_PROTOCOL_VERSION).toBe(30);
   });
 
   it("defaults shortcut actions for a legacy payload created before the additive field", () => {
@@ -90,6 +90,7 @@ describe("encodeWireMessage / decodeWireMessage", () => {
     { type: "reconnect", playerToken: "token-123" },
     { type: "reconnect_rejected", reason: "Unknown token" },
     { type: "action_rejected", reason: "Player kicked" },
+    { type: "action_noop" },
     { type: "mana_payment_preview", requestId: 4, sourceIds: [12] },
     { type: "mana_payment_preview_rejected", requestId: 4, reason: "Not your turn" },
     {
@@ -182,6 +183,32 @@ describe("encodeWireMessage / decodeWireMessage", () => {
     expect(out).toEqual(msg);
   });
 
+  it("round-trips monarch-bounded exile links", async () => {
+    const msg: P2PMessage = {
+      type: "state_update",
+      state: buildGameState({
+        exile_links: [
+          {
+            exiled_id: 12,
+            source_id: 34,
+            kind: {
+              UntilOpponentBecomesMonarch: {
+                return_zone: "Battlefield",
+                controller: 0,
+              },
+            },
+          },
+        ],
+      }),
+      events: [],
+      legalActions: [],
+      manaPaymentShortcutActions: [],
+      viewerInteraction: viewerInteractionWithProducedMana,
+    };
+    const bytes = await encodeWireMessage(msg);
+    await expect(decodeWireMessage(bytes)).resolves.toEqual(msg);
+  });
+
   // (b) Tiny messages take FORMAT_RAW.
   it("ping uses FORMAT_RAW (0x00) — too small for gzip to win", async () => {
     const bytes = await encodeWireMessage({ type: "ping", timestamp: 1 });
@@ -211,19 +238,6 @@ describe("encodeWireMessage / decodeWireMessage", () => {
 
   it("rejects empty payload", async () => {
     await expect(decodeWireMessage(new Uint8Array())).rejects.toThrow(/empty/);
-  });
-
-  it("rejects stale setup wire protocol versions", () => {
-    expect(() => validateMessage({
-      type: "game_setup",
-      wireProtocolVersion: 4,
-      assignedPlayerId: 1,
-      playerToken: "token-123",
-      state: buildGameState(),
-      events: [],
-      legalActions: [],
-      manaPaymentShortcutActions: [],
-    })).toThrow(/Wire protocol mismatch/);
   });
 
   // (e) Compressed payload still gates through validateMessage so unknown

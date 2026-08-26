@@ -806,6 +806,12 @@ pub enum ResolvedLedgerEdit {
         expected_turn_count: u32,
         expected_game_count: u32,
     },
+    /// CR 700.13: Record the first committed crime of the turn after its
+    /// targeting action is successfully placed on the stack.
+    CrimeCommitted {
+        player: PlayerId,
+        expected_turn_count: u32,
+    },
     /// CR 603.2c: Record one constrained trigger occurrence.
     TriggerFired {
         trigger: TriggerDefinitionRef,
@@ -899,6 +905,8 @@ pub enum ResolvedZoneChangeReplayInvariantError {
     DestinationPositionMismatch { expected: usize, found: usize },
     #[error("zone-change turn-record index mismatch: expected {expected}, found {found}")]
     TurnRecordIndexMismatch { expected: usize, found: usize },
+    #[error("zone-change recorded-turn mismatch: expected {expected}, found {found}")]
+    RecordedTurnMismatch { expected: u32, found: u32 },
     #[error("zone-change battlefield entry is missing its timestamp")]
     MissingBattlefieldEntryTimestamp,
     #[error("zone-change nonbattlefield entry unexpectedly has a timestamp")]
@@ -913,10 +921,30 @@ pub enum ResolvedZoneChangeReplayInvariantError {
 /// records stack positions, frame identities, or displaced frame payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResolvedFrameTransition {
-    Push { frame: ResolutionFrame },
-    InsertParentOfActive { frame: ResolutionFrame },
-    PopExpected { kind: FrameKind },
-    ReplaceActive { frame: ResolutionFrame },
+    Push {
+        frame: ResolutionFrame,
+    },
+    InsertParentOfActive {
+        frame: ResolutionFrame,
+    },
+    /// Park a prompt-less frame beneath the frame owning the live prompt.
+    ///
+    /// The operand is still native and no position is recorded: the applier
+    /// asks the stack where a parked frame belongs, and the stack answers from
+    /// its own shape. That keeps replay exact — the same frames plus the same
+    /// operand yield the same placement — while leaving the caller no position
+    /// to guess at. See [`ParkedFramePlacement`].
+    ///
+    /// [`ParkedFramePlacement`]: crate::types::resolution::ParkedFramePlacement
+    ParkBeneathLivePrompt {
+        frame: ResolutionFrame,
+    },
+    PopExpected {
+        kind: FrameKind,
+    },
+    ReplaceActive {
+        frame: ResolutionFrame,
+    },
 }
 
 /// One exact resolution-frame transition under its causal rules-execution node.
@@ -1636,6 +1664,7 @@ pub enum ResolvedLedgerEditReplayInvariantError {
     UnknownPlayer(PlayerId),
     SpellCastPreconditionMismatch,
     AbilityActivationPreconditionMismatch,
+    CrimeCommittedPreconditionMismatch,
     CardsDrawnPreconditionMismatch,
     DrawnObjectMismatch {
         expected: ObjectIncarnationRef,
@@ -1665,6 +1694,9 @@ impl std::fmt::Display for ResolvedLedgerEditReplayInvariantError {
                 f,
                 "resolved activated-ability command does not match its ledger prefix"
             ),
+            Self::CrimeCommittedPreconditionMismatch => {
+                write!(f, "resolved crime command does not match its ledger prefix")
+            }
             Self::CardsDrawnPreconditionMismatch => write!(
                 f,
                 "resolved draw-bookkeeping command does not match its ledger prefix"
@@ -3182,6 +3214,10 @@ pub(crate) fn ledger_edit_is_invalid(edit: &ResolvedLedgerEdit) -> bool {
             expected_game_count,
             ..
         } => *expected_turn_count == u32::MAX || *expected_game_count == u32::MAX,
+        ResolvedLedgerEdit::CrimeCommitted {
+            expected_turn_count,
+            ..
+        } => *expected_turn_count != 0,
         ResolvedLedgerEdit::CardsDrawn {
             drawn_object,
             attempted_empty_library,
@@ -3236,7 +3272,7 @@ pub(crate) fn ledger_edit_is_invalid(edit: &ResolvedLedgerEdit) -> bool {
                 || *resulting_first_card_drawn_this_turn != expected_first
         }
         ResolvedLedgerEdit::TriggerFired {
-            edit: ResolvedTriggerLedgerEdit::MaxTimesPerTurn { expected_old },
+            edit: ResolvedTriggerLedgerEdit::MaxTimesPerTurn { expected_old, .. },
             ..
         } => *expected_old == u32::MAX,
         ResolvedLedgerEdit::TriggerFired { .. }

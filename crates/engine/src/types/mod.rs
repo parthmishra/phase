@@ -6,6 +6,7 @@ pub mod attribution;
 pub mod card;
 pub mod card_type;
 pub mod counter;
+pub mod custom_format;
 pub mod definitions;
 pub(crate) mod deterministic_serde;
 pub mod events;
@@ -63,7 +64,10 @@ pub use interaction::{
 };
 pub use keywords::{Keyword, PartnerType, ProtectionTarget};
 pub use layers::{ActiveContinuousEffect, Layer};
-pub use log::{GameLogEntry, LogCategory, LogSegment};
+pub use log::{
+    GameLogEntry, LogBoundary, LogCategory, LogImportance, LogPresentation, LogSegment, LogTone,
+    LogVisibility,
+};
 pub use mana::{
     ManaColor, ManaCost, ManaCostShard, ManaPool, ManaRestriction, ManaSourceOutput,
     ManaSourcePenalty, ManaSourceSelection, ManaType, ManaUnit, SpellMeta, TapsForManaSelection,
@@ -78,10 +82,10 @@ pub use proposed_event::{AppliedReplacementKey, ProposedEvent, ReplacementId};
 pub use replacements::ReplacementEvent;
 pub use replay::{RecordedAction, ReplayHeader, ReplayLog, REPLAY_FORMAT_VERSION};
 pub use resolution::{
-    AbilityContinuationFrame, ChangeZoneFrame, DirectChoiceGate, FrameGate, FrameKind,
-    MultiDrawFrame, OptionalEffectFrame, PerCategoryZoneChoiceFrame, RepeatedOptionalPaymentFrame,
-    ResolutionFrame, ResolutionStack, ResolutionStackError, ResolutionStateWire,
-    RESOLUTION_STATE_WIRE_VERSION,
+    AbilityContinuationFrame, ChangeZoneFrame, ChildStackDepth, DirectChoiceGate, FrameGate,
+    FrameKind, MultiDrawFrame, OptionalEffectFrame, PerCategoryZoneChoiceFrame,
+    RepeatedOptionalPaymentFrame, ResolutionFrame, ResolutionStack, ResolutionStackError,
+    ResolutionStateWire, RESOLUTION_STATE_WIRE_VERSION,
 };
 pub use resolved_commands::{
     ManaPaymentRecipient, ProducedManaUnit, ResolvedCommandJournalEntry, ResolvedCommandOrdinal,

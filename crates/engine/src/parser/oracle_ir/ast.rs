@@ -5,12 +5,12 @@ use crate::types::ability::MultiTargetSpec;
 use crate::types::ability::{
     AbilityCondition, AbilityCost, AbilityDefinition, ActivationRestriction, BounceSelection,
     CastingPermission, ChosenCounterCountCondition, ControlWindow, ControllerRef,
-    CopyRetargetPermission, CounterAdjustment, CounterSourceRider, DoorLockOp, Duration, Effect,
-    EffectScope, FaceDownProfile, ForceBlockAttackerRef, LibraryPosition, ManaProduction,
-    ManaSpendRestriction, ManaTargetRole, ModalSelectionConstraint, OutsideGameSourcePool,
-    PlayerFilter, PtStat, PtValue, QuantityExpr, SearchDestinationSplit, SearchSelectionConstraint,
-    SpellStackToGraveyardReplacement, StaticCondition, StaticDefinition, SubAbilityLink,
-    TargetFilter,
+    CopyRetargetPermission, CounterAdjustment, CounterSourceRider, DigRestOrder, DoorLockOp,
+    Duration, Effect, EffectScope, FaceDownProfile, ForceBlockAttackerRef, LibraryPosition,
+    ManaProduction, ManaSpendRestriction, ManaTargetRole, ModalSelectionConstraint,
+    OutsideGameSourcePool, PlayerFilter, PtStat, PtValue, QuantityExpr, SearchDestinationSplit,
+    SearchSelectionConstraint, SpellStackToGraveyardReplacement, StaticCondition, StaticDefinition,
+    SubAbilityLink, TargetFilter, ThisWayCause,
 };
 use crate::types::card_type::Supertype;
 use crate::types::counter::CounterType;
@@ -386,9 +386,14 @@ pub(crate) enum ContinuationAst {
         chosen_destination: Zone,
         rest_destination: Zone,
     },
-    /// "Put those cards on top ..." after a search/dig/choice producer.
+    /// "Put those cards/the chosen cards on top ..." after a search/dig/choice
+    /// producer.
     /// Count is supplied by the already-selected target set.
     PutChosenCardsAtLibraryPosition { position: LibraryPosition },
+    /// CR 701.23a + CR 608.2c: "exile the rest" after a multi-zone search.
+    /// The searched player's cards in the searched zones, excluding the cards
+    /// selected by the SearchLibrary choice, are moved to exile.
+    ExileSearchRemainder,
     /// CR 702.170c-d: "It/that card/they become plotted" after an exile effect.
     BecomesPlotted,
     /// CR 702.143d: "It/that card/they become foretold" after an exile effect.
@@ -402,6 +407,10 @@ pub(crate) enum ContinuationAst {
     PutRest {
         destination: Zone,
         reorder_all: bool,
+        /// CR 400.5 + CR 608.2c: Only exact "in a random order" text
+        /// randomizes the unchosen library remainder.
+        #[serde(default, skip_serializing_if = "DigRestOrder::is_preserve")]
+        rest_order: DigRestOrder,
     },
     /// CR 701.20e + CR 608.2c: "Put up to N [filter] from among them onto the battlefield/into
     /// your hand" after Dig — patches the Dig's keep_count, filter, destination, and rest_destination.
@@ -420,6 +429,10 @@ pub(crate) enum ContinuationAst {
         /// "put two of them into your hand and the rest on the bottom of your library".
         /// When None, a subsequent PutRest continuation handles rest_destination.
         rest_destination: Option<Zone>,
+        /// CR 400.5 + CR 608.2c: Only exact "in a random order" text sets
+        /// `Random`; every other accepted form preserves existing behavior.
+        #[serde(default)]
+        rest_order: DigRestOrder,
         /// CR 110.2a: Controller override for the kept cards' battlefield entry
         /// ("... onto the battlefield ... under your control"). `None` leaves
         /// them under their owner's control.
@@ -434,12 +447,21 @@ pub(crate) enum ContinuationAst {
         /// from-among put-step.
         #[serde(default)]
         enter_tapped: bool,
+        /// CR 508.4: Kept cards enter attacking when the from-among clause
+        /// says "onto the battlefield ... attacking".
+        #[serde(default)]
+        enters_attacking: bool,
         /// CR 701.20a vs 701.20e: True when the from-among clause's stripped verb
         /// was "reveal" (a public action) rather than "put"/"choose" (a private
         /// look). Promotes the patched Dig to `reveal: true` even when the kept
         /// cards route to a fixed library position (Fertile Thicket).
         #[serde(default)]
         reveal_verb: bool,
+        /// CR 608.2c: The producer action named by an explicit tracked-set suffix
+        /// such as "milled this way". Generic "from among" selection remains
+        /// action-agnostic (`None`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caused_by: Option<ThisWayCause>,
     },
     /// CR 708.2a + CR 205.1a: "They're N/M [types] [subtypes] creatures." after a
     /// put-face-down clause — refines the preceding face-down move's profile.
@@ -609,20 +631,73 @@ pub(crate) enum ImperativeFamilyAst {
     Explore,
     /// CR 702.162a: Connive.
     Connive,
+    /// CR 701.70a + CR 608.2c: Recruit — draw, discard, then create the
+    /// contingent Soldier token when the card discarded by this instruction was
+    /// nonland. This remains a parser IR node because lowering must build the
+    /// three-step, direct-child chain rather than introduce a card-specific
+    /// runtime effect.
+    Recruit,
+    /// CR 205.1a + CR 205.1b + CR 613.1d + CR 110.2a + CR 122.1: `assimilate
+    /// <target phrase>` (Borg Queen, Perfection Manifest — Star Trek Commander).
+    ///
+    /// The keyword action's definition is supplied ONLY by reminder text, which
+    /// is stripped before the parser runs, so it is encoded here rather than
+    /// parsed: "Put it onto the battlefield under your control with a +1/+1
+    /// counter. It's a Borg artifact creature and loses all other creature
+    /// types."
+    ///
+    /// Like `Recruit`, this remains a parser IR node because lowering must build
+    /// a two-step, direct-child chain (`ChangeZone` + a `Duration::Permanent`
+    /// `GenericEffect` bound to the parent target) rather than introduce a
+    /// card-specific runtime effect. The chain it lowers to is the SAME shape
+    /// the reanimate-then-retype class already produces from spelled-out Oracle
+    /// text (Ashen Powder's move + Rise from the Grave's type rider).
+    ///
+    /// CR 205.1b: "becomes a '[creature type or types] artifact creature'"
+    /// RETAINS all prior card types, supertypes, and non-creature subtypes and
+    /// REPLACES only the creature types — so the lowering emits additive
+    /// `AddType`s plus a creature-set-scoped subtype replacement, never
+    /// `SetCardTypes`.
+    ///
+    /// CR 611.2e: because the definition uses the "is [characteristic]" form
+    /// ("It's a Borg artifact creature"), the rule requires the type change to
+    /// apply SIMULTANEOUSLY with the permanent entering the battlefield. The
+    /// engine installs it after entry via the shared `ChangeZone` +
+    /// `GenericEffect` continuation, so an ETB trigger keying on the new
+    /// characteristics does not see them. This is a PRE-EXISTING, CLASS-WIDE
+    /// deviation shared with Rise from the Grave and Grave Betrayal (both also
+    /// the "is" form); Puppeteer Clique's "It gains haste" is the "gains" form
+    /// and is correct. Not introduced here, and out of scope to fix.
+    ///
+    /// `assimilate` has NO CR 701.x keyword-action number: the set is
+    /// unreleased and `docs/MagicCompRules.txt` has zero matches for it. Do not
+    /// invent one, and do not reuse Recruit's `CR 701.70a` — that number is
+    /// Recruit's, not assimilate's.
+    Assimilate {
+        /// The card the keyword action moves — "target creature card from an
+        /// opponent's graveyard" (CR 115.2: a non-battlefield-zone target).
+        target: TargetFilter,
+    },
     /// CR 509.1c: Block this turn/combat if able.
     ForceBlock {
         attacker: Option<ForceBlockAttackerRef>,
         duration: Duration,
     },
-    /// CR 508.1d: Attack a required player this turn/combat if able. The
-    /// `required_player` filter selects whom the forced attacker must attack —
-    /// `TargetFilter::Controller` for "attacks you", or
+    /// CR 508.1d + CR 506.3: Attack a required DEFENDER this turn/combat if
+    /// able. The `required_defender` filter selects whom the forced attacker
+    /// must attack — `TargetFilter::Controller` for "attacks you",
     /// `ControllerRef::ChosenPlayer { index }` for "attacks that player" (the
     /// opponent chosen by a preceding "choose an opponent" instruction in the
-    /// same resolution, e.g. Ruhan of the Fomori).
+    /// same resolution, e.g. Ruhan of the Fomori), or `TargetFilter::SelfRef`
+    /// for a permanent defender ("attack ~ if able" — Gideon Jura, whose
+    /// required defender is the planeswalker itself).
     ForceAttack {
-        duration: Duration,
-        required_player: TargetFilter,
+        /// `None` is the WINDOWLESS form ("attack ~ if able" — Gideon Jura),
+        /// whose span is stated by an enclosing clause ("During target
+        /// opponent's next turn, …") and applied by the clause machinery.
+        /// `Some` carries the window the predicate states for itself.
+        duration: Option<Duration>,
+        required_defender: TargetFilter,
     },
     /// CR 701.15a: Goad target creature.
     Goad,
@@ -666,10 +741,24 @@ pub(crate) enum ImperativeFamilyAst {
     Behold(TargetFilter),
     /// CR 701.48a: Learn.
     Learn,
+    /// CR 106.1b + CR 602.2b: "note the type of mana spent to pay this
+    /// activation cost" (Jeweled Amulet). Field-less: there is nothing to
+    /// select — the payment already happened, so the effect is a pure
+    /// readback recorded at resolution. Scoped to the singular-type wording;
+    /// Ice Cauldron's "note the type AND AMOUNT..." sibling is intentionally
+    /// left unmatched (see `parse_imperative_family_ast`).
+    NoteManaSpent,
     /// CR 701.40a: Manifest the top card(s) of library.
     Manifest {
         target: TargetFilter,
         count: QuantityExpr,
+        /// CR 701.40a: Source discriminant, mirroring `Cloak.from_zone`:
+        /// `None` manifests the top `count` cards of `target`'s library;
+        /// `Some(zone)` manifests a card the controller chooses from that zone
+        /// (Scroll of Fate's "manifest a card from your hand"), which lowers
+        /// to a `ChooseFromZone` parent + `Manifest { object_source }`
+        /// sub-chain.
+        from_zone: Option<Zone>,
         /// CR 110.2a: Direct imperative manifest defaults to the instruction's
         /// controller; subject-predicate forms leave this unset so the subject's
         /// library owner controls the manifested card.
@@ -1420,7 +1509,9 @@ pub(crate) enum ChooseImperativeAst {
     /// sub_ability lattice.
     TwoTargets {
         target_a: TargetFilter,
-        target_b: TargetFilter,
+        target_a_multi_target: Option<MultiTargetSpec>,
+        target_b: Box<TargetFilter>,
+        target_b_multi_target: Option<MultiTargetSpec>,
     },
     /// CR 608.2d + CR 122.1: "choose a counter on it / that permanent" — pick one
     /// of the distinct counter kinds present on the anaphoric object (The Caves
@@ -1449,7 +1540,7 @@ pub(crate) enum PutImperativeAst {
         enters_under: EntersUnderSpec,
         /// CR 603.6d: "enters tapped" — enters the battlefield tapped.
         enter_tapped: bool,
-        /// CR 701.28c: "transformed" — enters with its back face up.
+        /// CR 712.14a: "transformed" — enters with its back face up.
         enter_transformed: bool,
         /// CR 508.4: "tapped and attacking [<player_phrase>]" — the moved
         /// object enters the battlefield as an attacking creature (without
@@ -1745,6 +1836,13 @@ pub(crate) enum ZoneCounterImperativeAst {
         selection: crate::types::ability::CounterMoveSelection,
         target: TargetFilter,
     },
+    /// CR 122.1 + CR 603.2c: "put the same number and kind of counters" / "put
+    /// one of each of those kinds of counters" — reproduce the triggering
+    /// event's counters onto `target`. Lowered to `Effect::ReproduceEventCounters`.
+    ReproduceEventCounters {
+        target: TargetFilter,
+        per_kind_count: crate::types::ability::EventCounterReproductionCount,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1885,8 +1983,9 @@ pub(crate) fn with_clause_duration(
     clause
 }
 
-fn normalize_play_from_exile_duration(duration: Duration) -> Duration {
-    match duration {
+pub(crate) fn is_play_from_exile_lifetime_duration(duration: &Duration) -> bool {
+    matches!(
+        duration,
         Duration::ForAsLongAs {
             condition: StaticCondition::Unrecognized { text },
         } if matches!(
@@ -1895,8 +1994,13 @@ fn normalize_play_from_exile_duration(duration: Duration) -> Duration {
                 | "that card remains exiled"
                 | "those cards remain exiled"
                 | "they remain exiled"
-        ) =>
-        {
+        )
+    )
+}
+
+fn normalize_play_from_exile_duration(duration: Duration) -> Duration {
+    match duration {
+        duration if is_play_from_exile_lifetime_duration(&duration) => {
             // CR 400.7i + CR 611.2a: exile-play permissions persist until the
             // referenced object leaves exile; zone-exit cleanup removes the
             // object-tagged permission.
@@ -1907,6 +2011,28 @@ fn normalize_play_from_exile_duration(duration: Duration) -> Duration {
 }
 
 // --- Modal types (moved from oracle_modal.rs) ---
+
+/// CR 603.12: The printed instruction a triggered modal's reflexive
+/// connector rides on — `"<trigger>, <instruction>. When you do, choose …"`.
+///
+/// The `"When you do"` connector creates the reflexive triggered ability. The
+/// `"you may "` marker only makes its parent instruction optional, so it cannot
+/// decide whether a reflexive exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) enum ReflexiveModalParent {
+    /// `"…, you may <instruction>. When you do, choose …"` — a declinable
+    /// resolution-time instruction (Caesar, Legion's Emperor). Carries the
+    /// printed instruction text with the `"you may "` marker and connector stripped;
+    /// `trigger_line` is reduced to the bare trigger condition alongside it.
+    MayPay(String),
+    /// `"…, <instruction>. When you do, choose …"` — a mandatory instruction
+    /// (Cemetery Desecrator). No text is carried: the
+    /// instruction stays in `trigger_line`, where the ordinary trigger parser
+    /// lowers it as it already does for every non-modal reflexive (Bone
+    /// Rattler, Diregraf Horde). Lowering then attaches the modal as that
+    /// chain's `WhenYouDo` sub instead of replacing it.
+    Mandatory,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum OracleBlockAst {
@@ -1924,15 +2050,14 @@ pub(crate) enum OracleBlockAst {
         trigger_line: String,
         header: ModalHeaderAst,
         modes: Vec<ModeAst>,
-        /// CR 603.12 + CR 700.2b: When the trigger gates its modal choice behind
-        /// an optional reflexive cost ("Whenever you attack, you may sacrifice
-        /// another creature. When you do, choose ..."), this holds the cost
-        /// effect text (e.g. "Sacrifice another creature"). The lowering builds
-        /// an `Effect::Sacrifice { optional }` whose `WhenYouDo` sub_ability
-        /// carries the modal, so the modes fire only after the cost is paid.
-        /// `None` for a plain triggered modal (Pip-Boy), where the modal attaches
-        /// directly as the trigger's execute.
-        optional_cost: Option<String>,
+        /// CR 603.12 + CR 700.2b: How the modal choice is introduced.
+        ///
+        /// `None` is a plain triggered modal (Pip-Boy 3000), where the modal
+        /// attaches directly as the trigger's execute. Anything else means a
+        /// reflexive connector stands between the trigger and the mode list,
+        /// and the modal must ride on the printed instruction before it —
+        /// see `ReflexiveModalParent`.
+        reflexive_parent: Option<ReflexiveModalParent>,
     },
     /// CR 614.12c + CR 607.2d: "As [this permanent] enters, choose <A> or
     /// <B>. \n • <A> — <linked ability>. \n • <B> — <linked ability>." The

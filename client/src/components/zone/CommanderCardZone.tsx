@@ -11,6 +11,7 @@ import { useCardImage } from "../../hooks/useCardImage.ts";
 import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
 import { getPlayerId, useCanActForWaitingState } from "../../hooks/usePlayerId.ts";
 import { useDragToCast } from "../../hooks/useDragToCast.ts";
+import { cardImageLookup } from "../../services/cardImageLookup.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import {
@@ -22,6 +23,7 @@ import { CASTABLE_AFFORDANCE_ACTIVE } from "../../viewmodel/castableAffordance.t
 import { spellCostDisplay } from "../../viewmodel/costLabel.ts";
 import { commandZoneLeaders } from "../../viewmodel/commanderColumn.ts";
 import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import { CardArtFallback } from "../card/CardArtFallback.tsx";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 
 interface CommanderCardZoneProps {
@@ -330,11 +332,21 @@ function LegacyCommanderFace({
   commander: GameObject;
   actionable: boolean;
 }) {
-  const { src } = useCardImage(commander.name, { size: "normal" });
+  // Use the canonical printed-face identity so double-faced commanders resolve
+  // the same art as battlefield, stack, and preview surfaces.
+  const imageLookup = cardImageLookup(commander);
+  const { src, isLoading } = useCardImage(imageLookup.name, {
+    size: "normal",
+    faceIndex: imageLookup.faceIndex,
+    oracleId: imageLookup.oracleId,
+    faceName: imageLookup.faceName,
+  });
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-amber-400/60 shadow-md">
-      {src ? (
+      {isLoading ? (
+        <div className="h-full w-full animate-pulse bg-gray-700" />
+      ) : src ? (
         <img
           src={src}
           alt={commander.name}
@@ -342,9 +354,7 @@ function LegacyCommanderFace({
           draggable={false}
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-gray-700 text-[10px] text-gray-400">
-          {commander.name}
-        </div>
+        <CardArtFallback name={commander.name} variant="artCrop" className="h-full w-full" />
       )}
 
       <div

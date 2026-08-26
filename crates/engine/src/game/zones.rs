@@ -213,8 +213,8 @@ pub(crate) fn apply_zone_exit_cleanup(
                 toughness: obj.toughness,
                 // CR 208.4b + CR 613.4b: Capture the layer-7b base values so
                 // base-scope P/T look-back filters read the base, not current.
-                base_power: obj.base_power,
-                base_toughness: obj.base_toughness,
+                base_power: obj.layer_base_power.or(obj.base_power),
+                base_toughness: obj.layer_base_toughness.or(obj.base_toughness),
                 // CR 202.3d + CR 709.4b: this LKI is captured on leaving the
                 // battlefield or exile (off the stack), so a split card records
                 // its combined mana value and colors (no-op for single-face and
@@ -338,6 +338,8 @@ pub(crate) fn apply_zone_exit_cleanup(
         // restored into the graveyard.
         crate::game::flip::revert_flip_on_zone_exit(obj_mut);
 
+        clear_cast_origin_off_provenance_zones(obj_mut, to);
+
         // CR 400.7 + CR 113.6e: Clear exile-based casting permissions when leaving exile
         // (prevents re-casting if the card returns to exile via a different effect).
         if from == Zone::Exile {
@@ -345,7 +347,16 @@ pub(crate) fn apply_zone_exit_cleanup(
             // while it remains in exile. Once it changes zones, the new object
             // is no longer a foretold card.
             obj_mut.foretold = false;
-            obj_mut.face_down = false;
+            // CR 708.4: a spell CAST face down (morph/disguise via an exile
+            // permission) is turned face down as part of the cast and keeps
+            // that status on the stack. Only the exile-zone face-down
+            // designation ends here (foretold/hideaway cards, which stash no
+            // identity in `back_face`); the cast is the one exile exit whose
+            // destination is the stack and whose object carries the cast
+            // stash (`spell_is_cast_face_down`, #5171's discriminator).
+            if !(to == Zone::Stack && obj_mut.spell_is_cast_face_down()) {
+                obj_mut.face_down = false;
+            }
             obj_mut.casting_permissions.retain(|p| {
                 !matches!(
                     p,
@@ -576,6 +587,7 @@ pub(crate) fn apply_zone_exit_cleanup(
                 || matches!(
                     link.kind,
                     crate::types::game_state::ExileLinkKind::UntilSourceLeaves { .. }
+                        | crate::types::game_state::ExileLinkKind::UntilOpponentBecomesMonarch { .. }
                         | crate::types::game_state::ExileLinkKind::Haunt
                         | crate::types::game_state::ExileLinkKind::CraftMaterial
                 )
@@ -824,6 +836,7 @@ pub fn resolve_and_apply_zone_change(
     zone_change_record.entered_incarnation =
         (to == Zone::Battlefield).then_some(resulting_incarnation);
     zone_change_record.turn_zone_change_index = turn_zone_change_index;
+    zone_change_record.recorded_turn_number = state.turn_number;
 
     let command = ResolvedZoneChangeCommand {
         object: occurrence,
@@ -847,6 +860,24 @@ pub fn resolve_and_apply_zone_change(
 
 /// Installs one recorded transition core without a replacement consult, query,
 /// timestamp allocation, or incarnation allocation.
+/// CR 400.7: the narrow `cast_from_zone` lifetime — the stamp survives only
+/// onto the STACK (the cast itself) and onto the BATTLEFIELD (whose entry
+/// reset + `CastLinkSnapshot` restore own it there,
+/// `reset_for_battlefield_entry`/`_exit`). Every other destination clears it,
+/// so a spell leaving the stack countered/fizzled/resolved-to-graveyard
+/// cannot hand a stale origin to a later recast. ONE primitive shared by the
+/// live transition cleanup and the resolved-zone-change replay applier, so
+/// replay equivalence holds by construction rather than by two hand-kept
+/// conditions.
+pub(crate) fn clear_cast_origin_off_provenance_zones(
+    obj: &mut crate::game::game_object::GameObject,
+    to: Zone,
+) {
+    if to != Zone::Stack && to != Zone::Battlefield {
+        obj.cast_from_zone = None;
+    }
+}
+
 pub fn apply_resolved_zone_change(
     state: &mut GameState,
     command: &ResolvedZoneChangeCommand,
@@ -888,6 +919,14 @@ pub fn apply_resolved_zone_change(
             },
         );
     }
+    if command.zone_change_record.recorded_turn_number != state.turn_number {
+        return Err(
+            ResolvedZoneChangeReplayInvariantError::RecordedTurnMismatch {
+                expected: command.zone_change_record.recorded_turn_number,
+                found: state.turn_number,
+            },
+        );
+    }
 
     let destination_position = destination_position_after_removal(
         state,
@@ -922,6 +961,8 @@ pub fn apply_resolved_zone_change(
         );
     } else {
         object.incarnation = command.resulting_incarnation;
+        // CR 400.7: same cast-origin lifetime as the live transition cleanup.
+        clear_cast_origin_off_provenance_zones(object, command.to);
     }
     if object.incarnation != command.resulting_incarnation {
         return Err(
@@ -941,8 +982,9 @@ pub fn apply_resolved_zone_change(
         state.adopt_replayed_timestamp(entry_timestamp);
     }
 
+    let mut zone_change_record = command.zone_change_record.clone();
     let turn_zone_change_index =
-        super::restrictions::record_zone_change(state, command.zone_change_record.clone());
+        super::restrictions::record_zone_change(state, &mut zone_change_record);
     if turn_zone_change_index != command.turn_zone_change_index {
         return Err(
             ResolvedZoneChangeReplayInvariantError::TurnRecordIndexMismatch {
@@ -955,11 +997,59 @@ pub fn apply_resolved_zone_change(
 }
 
 /// CR 400.7: Move an object to a new zone. An object that moves to a new zone becomes a new object.
+///
+/// Plain-entry convenience wrapper: delegates to
+/// [`move_to_zone_with_entry_flags`] with `enter_transformed = false`, so
+/// every existing call site that does not instruct an effect-driven
+/// transformed entry is unchanged. Only the plain-fallback branch of
+/// `deliver_replaced_zone_change` threads the flag through the
+/// `with_entry_flags` form.
 pub fn move_to_zone(
+    state: &mut GameState,
+    object_id: ObjectId,
+    to: Zone,
+    events: &mut Vec<GameEvent>,
+) {
+    move_to_zone_with_entry_flags(state, object_id, to, events, false);
+}
+
+/// CR 400.7: Move an object to a new zone. An object that moves to a new zone becomes a new object.
+///
+/// `enter_transformed` (CR 712.14a) is the transient, single-authority "enters
+/// with its back face up" intent carried LIVE from the post-replacement
+/// `ProposedEvent::ZoneChange.enter_transformed` into the battlefield-entry
+/// guard below. It is a synchronous parameter for this one delivery — never a
+/// stored/written `GameState` field.
+///
+/// WHY a parameter rather than a transient `obj.transformed` marker: CR 712.8a
+/// (zones.rs:291-298) reverts a transformed permanent to its front face on any
+/// non-battlefield zone exit, and the post-move transform itself
+/// (zone_pipeline.rs:3670, `transform_permanent`, CR 712.14a) executes the same
+/// face swap when the object reaches the battlefield. A pre-move transient
+/// `transformed` flag would survive into that authoritative swap and
+/// double-corrupt the face (CR 712.8a exit revert + post-move transform both
+/// mutating `back_face`/the live face). The parameter carries the intent without
+/// touching object state. (The `modal_back_face` revert at zones.rs:301-310 is
+/// a SEPARATE MDFC mechanism and is not implicated.)
+///
+/// SF1 asymmetry: a single-faced object (`back_face.is_none()`) instructed to
+/// enter transformed can never enter that way — CR 712.14a (2nd sentence)
+/// requires a back face, and the object's FRONT-face core types must NOT be
+/// consulted as a fallback for the CR 307.4 / CR 400.4a eligibility check. The
+/// asymmetric guard below therefore returns before any core-type consult.
+///
+/// A3 (no post-move re-assert): unlike the face-down entry profile's
+/// re-assertion authority (`apply_face_down_entry_profile` in zone_pipeline.rs),
+/// a transformed entry needs no analogous re-assert after the move.
+/// `transform_permanent` (zone_pipeline.rs:3687) is the SINGLE authoritative
+/// post-move face swap and already runs on `to == Zone::Battlefield`, so the
+/// guard here only gates eligibility — it never mutates the face.
+pub(crate) fn move_to_zone_with_entry_flags(
     state: &mut GameState,
     object_id: ObjectId,
     mut to: Zone,
     events: &mut Vec<GameEvent>,
+    enter_transformed: bool,
 ) {
     // CR 111.8: A token that has left the battlefield can't move to another zone
     // or come back onto the battlefield — "if such a token would change zones, it
@@ -986,7 +1076,7 @@ pub fn move_to_zone(
             state
                 .liminal_entries
                 .get(&object_id)
-                .map(|entry| entry.object.clone())
+                .map(|entry| entry.object.projected().clone())
         })
         .flatten();
     let liminal_attack_target = (to == Zone::Battlefield)
@@ -1017,13 +1107,36 @@ pub fn move_to_zone(
             if is_blocked_from_entering_battlefield(state, obj) {
                 return;
             }
+            // CR 712.14a (2nd sentence) + CR 712.8e: a transformed entry reads
+            // the BACK face's card types for the CR 307.4 / CR 400.4a
+            // eligibility check (CR 712.8e: "read from its back face"). A
+            // single-faced object instructed to enter transformed has no back
+            // face, so it can never enter that way — and its FRONT face's
+            // permanent types must NOT be consulted as a fallback (CR 712.14a
+            // 2nd sentence). This asymmetric guard precedes any core-type
+            // consult so the front face is never used for a transformed entry.
+            if enter_transformed && obj.back_face.is_none() {
+                return; // CR 712.14a: no back face -> remain in previous zone
+            }
+            let entry_core_types = if enter_transformed {
+                // CR 712.14a + CR 712.8e: eligibility reads the back face's core
+                // types. `back_face` is guaranteed `Some` after the guard above;
+                // the `unwrap_or_default()` empty-slice is an unreachable
+                // safeguard (present only so the borrow stays total).
+                obj.back_face
+                    .as_ref()
+                    .map(|b| b.card_types.core_types.as_slice())
+                    .unwrap_or_default()
+            } else {
+                obj.card_types.core_types.as_slice()
+            };
             // CR 304.4 / CR 307.4 / CR 400.4a: Instants and sorceries can't enter
             // the battlefield. Skip for face-down (morph/manifest) and objects with
-            // a permanent type (MDFC back faces).
+            // a permanent type (DFC/MDFC back faces).
             if !obj.face_down
-                && (obj.card_types.core_types.contains(&CoreType::Instant)
-                    || obj.card_types.core_types.contains(&CoreType::Sorcery))
-                && !obj.card_types.core_types.iter().any(|ct| {
+                && (entry_core_types.contains(&CoreType::Instant)
+                    || entry_core_types.contains(&CoreType::Sorcery))
+                && !entry_core_types.iter().any(|ct| {
                     matches!(
                         ct,
                         // CR 110.4: Permanent types
@@ -1347,9 +1460,7 @@ pub fn move_to_zone(
     }
 
     if !transition_recorded {
-        let turn_zone_change_index =
-            super::restrictions::record_zone_change(state, zone_change_record.clone());
-        zone_change_record.turn_zone_change_index = turn_zone_change_index;
+        super::restrictions::record_zone_change(state, &mut zone_change_record);
     }
 
     if let Some(old_target) = unattached_from {
@@ -1426,7 +1537,7 @@ pub(crate) fn record_and_emit_entry_from_no_zone(
         .objects
         .get(&object_id)
         .map(|obj| obj.snapshot_for_zone_change(object_id, None, Zone::Battlefield))?;
-    record.turn_zone_change_index = super::restrictions::record_zone_change(state, record.clone());
+    super::restrictions::record_zone_change(state, &mut record);
     events.push(GameEvent::ZoneChanged {
         object_id,
         from: None,
@@ -1671,12 +1782,13 @@ pub(crate) fn capture_combat_status(
 }
 
 /// Reorder objects that remain in one player's library without performing a
-/// zone change. `ordered` is placed at `start_index` in the supplied order.
+/// zone change. `ordered` is placed at `index` in the supplied order, or
+/// appended when `index` is `None`.
 pub(crate) fn reorder_within_library(
     state: &mut GameState,
     player: PlayerId,
     ordered: &[ObjectId],
-    start_index: usize,
+    index: Option<usize>,
 ) {
     let player_state = state
         .players
@@ -1684,9 +1796,15 @@ pub(crate) fn reorder_within_library(
         .find(|candidate| candidate.id == player)
         .expect("player exists");
     player_state.library.retain(|id| !ordered.contains(id));
+    let insert_index = index
+        .unwrap_or(player_state.library.len())
+        .min(player_state.library.len());
     for (offset, &object_id) in ordered.iter().enumerate() {
-        player_state.library.insert(start_index + offset, object_id);
+        player_state
+            .library
+            .insert(insert_index + offset, object_id);
     }
+    state.advance_library_knowledge_epoch(player);
 
     // CR 401.5 + CR 611.3a: A library reorder can change its top card without
     // creating a ZoneChanged event, so invalidate the dependent static directly
@@ -1742,12 +1860,16 @@ pub fn move_to_library_at_index(
         return;
     }
 
-    // CR 903.9a: A fresh zone change resets the "declined zone return" flag.
-    state.commander_declined_zone_return.remove(&object_id);
-
     let obj = state.objects.get(&object_id).expect("object exists");
     let from = obj.zone;
     let owner = obj.owner;
+    if from == Zone::Library {
+        reorder_within_library(state, owner, &[object_id], index);
+        return;
+    }
+
+    // CR 903.9a: A fresh zone change resets the "declined zone return" flag.
+    state.commander_declined_zone_return.remove(&object_id);
     let unattached_from = state.objects.get(&object_id).and_then(|obj| {
         obj.attached_to
             .map(super::effects::attach::target_ref_from_attach_target)
@@ -1798,6 +1920,7 @@ pub fn move_to_library_at_index(
         }
         None => player.library.push_back(object_id),
     }
+    state.advance_library_knowledge_epoch(owner);
 
     let mut bump: Option<(u64, u64)> = None;
     if let Some(obj_mut) = state.objects.get_mut(&object_id) {
@@ -1815,9 +1938,7 @@ pub fn move_to_library_at_index(
         record_resolution_source_relatch(state, object_id, pre, new);
     }
 
-    let turn_zone_change_index =
-        super::restrictions::record_zone_change(state, zone_change_record.clone());
-    zone_change_record.turn_zone_change_index = turn_zone_change_index;
+    super::restrictions::record_zone_change(state, &mut zone_change_record);
 
     if let Some(old_target) = unattached_from {
         events.push(GameEvent::Unattached {
@@ -3233,6 +3354,89 @@ mod tests {
     }
 
     #[test]
+    fn within_library_reposition_does_not_create_a_zone_change() {
+        let mut state = setup();
+        let filler = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Filler".to_string(),
+            Zone::Library,
+        );
+        let card = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Card".to_string(),
+            Zone::Library,
+        );
+
+        let incarnation_before = state.objects[&card].incarnation;
+        state.commander_declined_zone_return.insert(card);
+        let mut events = Vec::new();
+        move_to_library_at_index(&mut state, card, Some(0), &mut events); // to top
+        move_to_library_at_index(&mut state, card, None, &mut events); // to bottom
+
+        assert_eq!(
+            state.objects[&card].incarnation, incarnation_before,
+            "a within-library reposition must preserve object identity"
+        );
+        assert!(
+            state.players[0].library.contains(&filler) && state.players[0].library.contains(&card)
+        );
+        assert!(
+            events.is_empty(),
+            "repositioning within a library emits no events"
+        );
+        assert!(
+            state.zone_changes_this_turn.is_empty(),
+            "repositioning within a library does not enter the zone-change ledger"
+        );
+        assert!(
+            state.commander_declined_zone_return.contains(&card),
+            "without a zone change, the commander marker must be preserved"
+        );
+    }
+
+    #[test]
+    fn reorder_within_library_clamps_after_removal_and_appends_when_unspecified() {
+        let mut state = setup();
+        let first = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "First".to_string(),
+            Zone::Library,
+        );
+        let second = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Second".to_string(),
+            Zone::Library,
+        );
+        let third = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Third".to_string(),
+            Zone::Library,
+        );
+
+        reorder_within_library(&mut state, PlayerId(0), &[first, third], Some(99));
+        assert_eq!(
+            state.players[0].library.iter().copied().collect::<Vec<_>>(),
+            [second, first, third]
+        );
+
+        reorder_within_library(&mut state, PlayerId(0), &[first], None);
+        assert_eq!(
+            state.players[0].library.iter().copied().collect::<Vec<_>>(),
+            [second, third, first]
+        );
+    }
+
+    #[test]
     fn player_zones_are_per_player() {
         let mut state = setup();
         let id1 = create_object(
@@ -3565,6 +3769,220 @@ mod tests {
 
         // Should enter because it has a permanent type (Creature)
         assert_eq!(state.objects[&id].zone, Zone::Battlefield);
+    }
+
+    /// CR 712.14a + CR 712.8e: a DFC whose FRONT face is a Sorcery (non-permanent)
+    /// can still enter the battlefield when it is instructed to enter TRANSFORMED
+    /// (back face up) — eligibility reads the BACK face's core types (a Creature,
+    /// a permanent type, CR 110.4), so the CR 307.4 / CR 400.4a reject is bypassed.
+    ///
+    /// REVERT-CATCHER: flips red if the entry-face rewrite (reading the back
+    /// face for a transformed entry) is removed — the front Sorcery type would
+    /// then trip the instant/sorcery guard and the DFC would stay in hand.
+    #[test]
+    fn transform_entry_sorcery_front_creature_back_allowed_via_flag() {
+        use crate::game::game_object::BackFaceData;
+        use crate::types::card_type::CardType;
+
+        let mut state = setup();
+        let id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Esper Origins".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&id).unwrap();
+            obj.card_types = CardType {
+                supertypes: vec![],
+                core_types: vec![CoreType::Sorcery],
+                subtypes: vec![],
+            };
+            obj.base_card_types = obj.card_types.clone();
+            obj.back_face = Some(BackFaceData {
+                name: "Summon: Esper Maduin".to_string(),
+                power: None,
+                toughness: None,
+                loyalty: None,
+                printed_loyalty: None,
+                defense: None,
+                card_types: CardType {
+                    supertypes: vec![],
+                    core_types: vec![CoreType::Creature],
+                    subtypes: vec![],
+                },
+                mana_cost: crate::types::mana::ManaCost::default(),
+                keywords: vec![],
+                abilities: vec![],
+                trigger_definitions: Default::default(),
+                replacement_definitions: Default::default(),
+                static_definitions: Default::default(),
+                color: vec![],
+                printed_ref: None,
+                modal: None,
+                additional_cost: None,
+                strive_cost: None,
+                casting_restrictions: vec![],
+                casting_options: vec![],
+                layout_kind: None,
+                parse_warnings: vec![],
+            });
+        }
+
+        let mut events = Vec::new();
+        move_to_zone_with_entry_flags(&mut state, id, Zone::Battlefield, &mut events, true);
+
+        assert_eq!(
+            state.objects[&id].zone,
+            Zone::Battlefield,
+            "CR 712.14a + CR 712.8e: a transformed entry reads the back face's \
+             Creature (permanent, CR 110.4) type and is permitted by CR 400.4a"
+        );
+    }
+
+    /// CR 307.4 / CR 400.4a negative reach-guard: the SAME Sorcery//Creature DFC
+    /// entering through the PUBLIC `move_to_zone` (enter_transformed = false) is
+    /// rejected — its FRONT Sorcery face falls to the instant/sorcery guard. This
+    /// proves the transformed-entry carve-out is conditioned on `enter_transformed`
+    /// and is never unconditional.
+    #[test]
+    fn transform_entry_sorcery_front_rejected_without_flag() {
+        use crate::game::game_object::BackFaceData;
+        use crate::types::card_type::CardType;
+
+        let mut state = setup();
+        let id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Esper Origins".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&id).unwrap();
+            obj.card_types = CardType {
+                supertypes: vec![],
+                core_types: vec![CoreType::Sorcery],
+                subtypes: vec![],
+            };
+            obj.base_card_types = obj.card_types.clone();
+            obj.back_face = Some(BackFaceData {
+                name: "Summon: Esper Maduin".to_string(),
+                power: None,
+                toughness: None,
+                loyalty: None,
+                printed_loyalty: None,
+                defense: None,
+                card_types: CardType {
+                    supertypes: vec![],
+                    core_types: vec![CoreType::Creature],
+                    subtypes: vec![],
+                },
+                mana_cost: crate::types::mana::ManaCost::default(),
+                keywords: vec![],
+                abilities: vec![],
+                trigger_definitions: Default::default(),
+                replacement_definitions: Default::default(),
+                static_definitions: Default::default(),
+                color: vec![],
+                printed_ref: None,
+                modal: None,
+                additional_cost: None,
+                strive_cost: None,
+                casting_restrictions: vec![],
+                casting_options: vec![],
+                layout_kind: None,
+                parse_warnings: vec![],
+            });
+        }
+
+        let mut events = Vec::new();
+        move_to_zone(&mut state, id, Zone::Battlefield, &mut events);
+
+        assert_eq!(
+            state.objects[&id].zone,
+            Zone::Hand,
+            "CR 307.4 / CR 400.4a: without enter_transformed the front Sorcery \
+             face cannot enter the battlefield"
+        );
+        assert!(state.players[0].hand.contains(&id));
+    }
+
+    /// CR 712.14a (2nd sentence) — SF1 asymmetric branch, DIRECT reach-guard: a
+    /// SINGLE-FACED permanent-front object (`back_face = None`) instructed to
+    /// enter transformed can NEVER enter, even though its front face is a
+    /// creature. `move_to_zone_with_entry_flags(..., true)` drives the wrapper
+    /// directly, bypassing the zone_pipeline single-faced early-return (so only
+    /// this guard's SF1 branch is exercised).
+    ///
+    /// REVERT-CATCHER for SF1: if the asymmetric guard were removed or regressed
+    /// to a front-face fallback, this single-faced Creature-with-flag=true call
+    /// would land in Battlefield and this test flips red.
+    #[test]
+    fn transform_entry_single_faced_permanent_front_rejected_with_flag() {
+        let mut state = setup();
+        let id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Single-Faced".to_string(),
+            Zone::Hand,
+        );
+        state
+            .objects
+            .get_mut(&id)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Creature);
+        // back_face intentionally left None (single-faced; the GameState default).
+
+        let mut events = Vec::new();
+        move_to_zone_with_entry_flags(&mut state, id, Zone::Battlefield, &mut events, true);
+
+        assert_eq!(
+            state.objects[&id].zone,
+            Zone::Hand,
+            "CR 712.14a (2nd sentence): a single-faced object cannot enter transformed"
+        );
+        assert!(state.players[0].hand.contains(&id));
+    }
+
+    /// CR 712.14a + CR 400.4a positive reach-guard pairing the SF1 rejection: the
+    /// SAME single-faced permanent-front fixture entering through the PUBLIC
+    /// `move_to_zone` (enter_transformed = false) lands in Battlefield. Proves the
+    /// rejection above is conditioned on `enter_transformed`, NOT on
+    /// single-facedness — a bare single-faced Creature on a plain entry has no
+    /// instant/sorcery type on the entry face, so CR 400.4a passes.
+    #[test]
+    fn transform_entry_single_faced_permanent_front_allowed_without_flag() {
+        let mut state = setup();
+        let id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Single-Faced".to_string(),
+            Zone::Hand,
+        );
+        state
+            .objects
+            .get_mut(&id)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Creature);
+        // back_face intentionally left None (single-faced).
+
+        let mut events = Vec::new();
+        move_to_zone(&mut state, id, Zone::Battlefield, &mut events);
+
+        assert_eq!(
+            state.objects[&id].zone,
+            Zone::Battlefield,
+            "CR 400.4a: a single-faced Creature on a plain entry is a permanent and \
+             enters normally"
+        );
     }
 
     #[test]
@@ -3922,6 +4340,7 @@ mod tests {
                 casting_restrictions: vec![],
                 casting_options: vec![],
                 layout_kind: Some(crate::types::card::LayoutKind::Modal),
+                parse_warnings: vec![],
             });
         }
 
@@ -3964,6 +4383,75 @@ mod tests {
         assert_eq!(obj.name, "Front Face", "must show front face in graveyard");
         assert_eq!(obj.power, Some(1), "power must revert to front face");
         assert_eq!(obj.card_types.core_types, vec![CoreType::Creature]);
+    }
+
+    /// #7782 round 4: the REPLAY applier must install the same cast-origin
+    /// lifetime as the live path — a replayed stamped Stack → Graveyard
+    /// command clears the stamp exactly like the live transition did.
+    #[test]
+    fn a_replayed_stack_exit_clears_the_stamp_like_the_live_one() {
+        let mut live = setup();
+        let id = create_object(
+            &mut live,
+            CardId(7783),
+            PlayerId(0),
+            "Replayed Spell".to_string(),
+            Zone::Stack,
+        );
+        live.objects.get_mut(&id).unwrap().cast_from_zone = Some(Zone::Hand);
+        let mut replayed = live.clone();
+
+        let record = crate::types::game_state::ZoneChangeRecord::test_minimal(
+            id,
+            Some(Zone::Stack),
+            Zone::Graveyard,
+        );
+        let command = resolve_and_apply_zone_change(
+            &mut live,
+            id,
+            Zone::Stack,
+            Zone::Graveyard,
+            PlayerId(0),
+            record,
+        )
+        .expect("live transition must resolve");
+        assert_eq!(
+            live.objects[&id].cast_from_zone, None,
+            "reach-guard: the live transition clears the stamp"
+        );
+
+        apply_resolved_zone_change(&mut replayed, &command)
+            .expect("replaying the recorded command must succeed");
+        assert_eq!(
+            replayed.objects[&id].cast_from_zone, None,
+            "the replayed transition must clear the stamp exactly like the live one"
+        );
+    }
+
+    /// #7782 round 3: a spell leaving the STACK for a non-battlefield zone
+    /// (countered / fizzled / instant to the graveyard) must lose its
+    /// `cast_from_zone` stamp (CR 400.7 — a new object has no memory of its
+    /// cast), so a later recast from another zone cannot inherit the stale
+    /// origin. The battlefield legs are owned by `reset_for_battlefield_entry`
+    /// / `_exit` and their `CastLinkSnapshot` restore.
+    #[test]
+    fn the_cast_from_zone_stamp_dies_off_stack_and_battlefield() {
+        let mut state = setup();
+        let id = create_object(
+            &mut state,
+            CardId(7782),
+            PlayerId(0),
+            "Stamped Spell".to_string(),
+            Zone::Stack,
+        );
+        state.objects.get_mut(&id).unwrap().cast_from_zone = Some(Zone::Hand);
+
+        let mut events = Vec::new();
+        move_to_zone(&mut state, id, Zone::Graveyard, &mut events);
+        assert_eq!(
+            state.objects[&id].cast_from_zone, None,
+            "a spell leaving the stack for the graveyard must lose the stamp (CR 400.7)"
+        );
     }
 
     /// CR 708.9: A face-down permanent is revealed when it leaves the battlefield.
@@ -4087,6 +4575,7 @@ mod tests {
                 casting_restrictions: vec![],
                 casting_options: vec![],
                 layout_kind: Some(crate::types::card::LayoutKind::Modal),
+                parse_warnings: vec![],
             });
         }
         // Apply back face (simulating ChooseModalFace on stack).

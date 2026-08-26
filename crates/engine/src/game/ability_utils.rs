@@ -3,8 +3,8 @@ use crate::types::ability::TapStateChange;
 use crate::types::ability::{
     AbilityCondition, AbilityCost, AbilityDefinition, AbilityKind, AdditionalCost,
     CardTypeSetSource, CastManaSpentMetric, CombatRelationSubject, ControllerRef,
-    CounterMoveSelection, DamageSource, Effect, EffectKind, EffectScope, FilterProp,
-    GameRestriction, ModalChoice, ModalSelectionCondition, ModalSelectionConstraint,
+    CounterMoveSelection, DamageSource, EachDamageRecipient, Effect, EffectKind, EffectScope,
+    FilterProp, GameRestriction, ModalChoice, ModalSelectionCondition, ModalSelectionConstraint,
     MultiTargetSpec, ObjectScope, PlayerFilter, PlayerScope, PtValue, QuantityExpr, QuantityRef,
     ResolvedAbility, RestrictionPlayerScope, SpellContext, SubAbilityLink, TargetChoiceTiming,
     TargetFilter, TargetRef, TriggerDefinition, TypeFilter, TypedFilter,
@@ -119,6 +119,7 @@ pub fn build_resolved_from_def_with_targets(
     }
     resolved.optional_targeting = def.optional_targeting;
     resolved.optional = def.optional;
+    resolved.optional_player = def.optional_player.clone();
     resolved.optional_for = def.optional_for;
     resolved.multi_target = def.multi_target.clone();
     // CR 115.1 + CR 601.2c: Carry the target-set constraints (e.g. combined
@@ -142,6 +143,9 @@ pub fn build_resolved_from_def_with_targets(
     resolved.description = def.description.clone();
     resolved.forward_result = def.forward_result;
     resolved.unless_pay = def.unless_pay.clone();
+    // CR 601.2d + CR 603.3d: Preserve the unassigned division unit until the
+    // ordinary stack-announcement authority assigns concrete portions.
+    resolved.distribute = def.distribute.clone();
     resolved.player_scope = def.player_scope.clone();
     // CR 101.4 + CR 800.4: Propagate the turn-order override for `player_scope`
     // iteration. The iteration driver in `effects/mod.rs` reads this and calls
@@ -168,7 +172,7 @@ pub fn build_resolved_from_def_with_targets(
     // keyword list collapses after the first false gate.
     resolved.sibling_condition = def.sibling_condition;
     // CR 700.2b + CR 603.3c: Carry the reflexive modal choice + per-mode abilities
-    // through so try_begin_reflexive_target_selection can route a gated modal
+    // through so try_materialize_reflexive_trigger can route a gated modal
     // trigger (Caesar) to AbilityModeChoice instead of resolving the modes
     // unconditionally.
     resolved.modal = def.modal.clone();
@@ -192,7 +196,8 @@ pub fn build_resolved_from_def_with_targets(
 /// Fields from `sub`: effect, duration, sub_ability, else_ability,
 /// player_scope, optional, optional_for, optional_targeting, multi_target,
 /// target_constraints, target_choice_timing, description, repeat_for,
-/// min_x_value, forward_result, unless_pay, distribution, target_selection_mode.
+/// min_x_value, forward_result, unless_pay, distribution, distribute,
+/// target_selection_mode.
 ///
 /// Fields preserved from `parent`: controller, source_id, kind, context,
 /// original_controller, scoped_player, chosen_x, cost_paid_object,
@@ -245,6 +250,7 @@ pub(crate) fn apply_instead_swap(
     overridden.forward_result = sub.forward_result;
     overridden.unless_pay = sub.unless_pay.clone();
     overridden.distribution = sub.distribution.clone();
+    overridden.distribute = sub.distribute.clone();
     overridden.target_selection_mode = sub.target_selection_mode;
     overridden.target_chooser = sub.target_chooser.clone();
     // CR 608.2b + CR 601.2c: a swapped-in effect with its own declared target
@@ -297,8 +303,12 @@ pub fn build_chained_resolved(
     controller: PlayerId,
 ) -> Result<ResolvedAbility, EngineError> {
     if indices.is_empty() {
-        // CR 700.2a: "Choose up to one" permits choosing no modes. The ability
-        // still resolves, but it has no instructions to perform.
+        // CR 700.2: the modes are the bulleted options, chosen per "instructions
+        // for a player to choose A NUMBER of those options" — and under "choose up
+        // to one" that number may be zero. The ability still resolves; it just has
+        // no instructions to perform. (Not CR 700.2a, which is about WHEN modes are
+        // chosen and illegal modes; not CR 700.2i, whose "choose up to" is specific
+        // to pawprint {P} worth of modes.)
         return Ok(ResolvedAbility::new(
             Effect::GenericEffect {
                 static_abilities: Vec::new(),
@@ -315,11 +325,19 @@ pub fn build_chained_resolved(
     let ordered = ordered_selected_mode_indices(indices);
 
     let mut result: Option<ResolvedAbility> = None;
-    for &idx in ordered.iter().rev() {
+    for (ordinal, &idx) in ordered.iter().enumerate().rev() {
         let def = abilities
             .get(idx)
             .ok_or_else(|| EngineError::InvalidAction(format!("Mode index {idx} out of range")))?;
         let mut resolved = build_resolved_from_def(def, source_id, controller);
+        // CR 700.2 ("each of those options is a mode") + CR 700.2d: stamp this
+        // mode root with its OCCURRENCE ORDINAL within the ordered selection —
+        // taken from `enumerate()`, never from `idx`. `ordered_selected_mode_indices`
+        // preserves duplicates, so an `allow_repeat_modes` card (Eldrazi
+        // Confluence, `[1, 1]`) has two distinct instructions at one printed
+        // index; keying on `idx` would collapse them into one. This is the ONLY
+        // write site for the field (see its doc on `ResolvedAbility`).
+        resolved.modal_instruction_ordinal = Some(ordinal);
         // CR 700.2d: When chaining multiple modes, append subsequent modes after
         // the current mode's own sub_ability chain (e.g., Cathartic Pyre mode 2's
         // "discard, then draw that many" must preserve the draw sub_ability).
@@ -898,6 +916,35 @@ pub fn compute_unavailable_modes(
     unavailable.sort_unstable();
     unavailable.dedup();
     unavailable
+}
+
+/// CR 700.2a / CR 700.2e: every player the modal's `chooser` admits, in APNAP
+/// order.
+///
+/// `PlayerFilter::Controller` — every standard modal and the `you choose —`
+/// alias — is the controller alone, without consulting
+/// `effects::matches_player_scope`. Any other filter (CR 700.2e, "an opponent
+/// chooses …") is resolved through that canonical authority over APNAP order.
+///
+/// Spell announcement wants only the first admitted player, which is what
+/// `casting::resolve_modal_chooser` takes; trigger construction needs the whole
+/// set, because more than one non-controller candidate makes the controller's
+/// CR 700.2e chooser selection a real choice rather than a derivation.
+pub(crate) fn modal_chooser_candidates(
+    state: &GameState,
+    modal: &ModalChoice,
+    controller: PlayerId,
+    source_id: ObjectId,
+) -> Vec<PlayerId> {
+    if modal.chooser == PlayerFilter::Controller {
+        return vec![controller];
+    }
+    players::apnap_order(state)
+        .into_iter()
+        .filter(|&p| {
+            super::effects::matches_player_scope(state, p, &modal.chooser, controller, source_id)
+        })
+        .collect()
 }
 
 /// CR 700.2a-b: Mode indices a modal spell cannot choose — repeat constraints
@@ -1777,10 +1824,12 @@ pub fn assign_targets_in_chain(
 ) -> Result<(), EngineError> {
     if is_per_opponent_target_fanout(ability) {
         ability.targets = targets.to_vec();
+        ability.capture_target_incarnations_recursive(state);
         return Ok(());
     }
     if !chain_has_target_sink(ability) {
         ability.targets = targets.to_vec();
+        ability.capture_target_incarnations_recursive(state);
         return Ok(());
     }
     let mut next_target = 0usize;
@@ -1790,6 +1839,8 @@ pub fn assign_targets_in_chain(
             "Unused selected targets".to_string(),
         ));
     }
+    stamp_other_batch_source_targets(ability);
+    ability.capture_target_incarnations_recursive(state);
     Ok(())
 }
 
@@ -1800,10 +1851,12 @@ pub fn assign_selected_slots_in_chain(
 ) -> Result<(), EngineError> {
     if is_per_opponent_target_fanout(ability) {
         ability.targets = selected_slots.iter().flatten().cloned().collect();
+        ability.capture_target_incarnations_recursive(state);
         return Ok(());
     }
     if !chain_has_target_sink(ability) {
         ability.targets = selected_slots.iter().flatten().cloned().collect();
+        ability.capture_target_incarnations_recursive(state);
         return Ok(());
     }
     let mut next_slot = 0usize;
@@ -1813,7 +1866,51 @@ pub fn assign_selected_slots_in_chain(
             "Unused selected target slots".to_string(),
         ));
     }
+    stamp_other_batch_source_targets(ability);
+    ability.capture_target_incarnations_recursive(state);
     Ok(())
+}
+
+/// CR 608.2c + CR 120.1: a pairwise "each of those ... to the other" damage
+/// node has no target slot of its own, but it must retain the exact announced
+/// object pair rather than inherit only the immediately preceding slot.
+/// Uses the two nearest `TargetOnly` producers in this branch. Empty optional
+/// slots remain in the window so older unrelated targets cannot backfill them.
+fn stamp_other_batch_source_targets(ability: &mut ResolvedAbility) {
+    fn visit(ability: &mut ResolvedAbility, recent_slots: &mut Vec<Vec<TargetRef>>) {
+        if matches!(ability.effect, Effect::TargetOnly { .. }) {
+            recent_slots.push(object_targets_only(&ability.targets));
+            if recent_slots.len() > 2 {
+                recent_slots.remove(0);
+            }
+        }
+
+        if matches!(
+            ability.effect,
+            Effect::EachSourceDealsDamage {
+                sources: TargetFilter::ParentTarget,
+                recipient: EachDamageRecipient::OtherBatchSource { .. },
+                ..
+            }
+        ) {
+            ability.targets = if recent_slots.len() == 2 {
+                recent_slots.iter().flatten().cloned().collect()
+            } else {
+                Vec::new()
+            };
+        }
+
+        let branch_slots = recent_slots.clone();
+        if let Some(sub) = ability.sub_ability.as_deref_mut() {
+            visit(sub, recent_slots);
+        }
+        if let Some(other) = ability.else_ability.as_deref_mut() {
+            let mut other_slots = branch_slots;
+            visit(other, &mut other_slots);
+        }
+    }
+
+    visit(ability, &mut Vec::new());
 }
 
 pub fn flatten_targets_in_chain(ability: &ResolvedAbility) -> Vec<TargetRef> {
@@ -1860,6 +1957,28 @@ pub fn distribution_targets(ability: &ResolvedAbility) -> Vec<TargetRef> {
 }
 
 /// CR 608.2b: Re-validate targets on resolution — remove any that are no longer legal.
+fn target_is_current(ability: &ResolvedAbility, target: &TargetRef, state: &GameState) -> bool {
+    match target {
+        TargetRef::Object(id) => {
+            ability.target_pin_is_current(*id, state)
+                && ability.selected_target_pin_is_current(*id, state)
+        }
+        TargetRef::Player(_) => true,
+    }
+}
+
+fn validate_pinned_targets(
+    state: &GameState,
+    targets: &[TargetRef],
+    filter: &TargetFilter,
+    ability: &ResolvedAbility,
+) -> Vec<TargetRef> {
+    targeting::validate_targets_for_ability(state, targets, filter, ability)
+        .into_iter()
+        .filter(|target| target_is_current(ability, target, state))
+        .collect()
+}
+
 pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -> ResolvedAbility {
     let mut validated = ability.clone();
     validated.targets = if is_per_opponent_target_fanout(&validated) {
@@ -1876,7 +1995,7 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
             .filter(|filter| !filter.is_context_ref())
             .zip(validated.targets.iter())
             .filter_map(|(filter, target_ref)| {
-                let legal = targeting::validate_targets_for_ability(
+                let legal = validate_pinned_targets(
                     state,
                     std::slice::from_ref(target_ref),
                     filter,
@@ -1905,14 +2024,10 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
             let Some(target_ref) = target_iter.next() else {
                 continue;
             };
-            if let Some(legal) = targeting::validate_targets_for_ability(
-                state,
-                std::slice::from_ref(target_ref),
-                filter,
-                &validated,
-            )
-            .into_iter()
-            .next()
+            if let Some(legal) =
+                validate_pinned_targets(state, std::slice::from_ref(target_ref), filter, &validated)
+                    .into_iter()
+                    .next()
             {
                 kept.push(legal);
             }
@@ -1967,13 +2082,8 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
             let Some(target_ref) = target_iter.next() else {
                 break;
             };
-            if !targeting::validate_targets_for_ability(
-                state,
-                std::slice::from_ref(target_ref),
-                filter,
-                &validated,
-            )
-            .is_empty()
+            if !validate_pinned_targets(state, std::slice::from_ref(target_ref), filter, &validated)
+                .is_empty()
             {
                 any_legal = true;
             }
@@ -1998,7 +2108,7 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                 let Some(target_ref) = target_iter.next() else {
                     continue;
                 };
-                if let Some(legal) = targeting::validate_targets_for_ability(
+                if let Some(legal) = validate_pinned_targets(
                     state,
                     std::slice::from_ref(target_ref),
                     filter,
@@ -2043,15 +2153,10 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
             let explicit: Vec<TargetRef> = candidate_targets
                 .iter()
                 .filter(|t| {
-                    targeting::validate_targets_for_ability(
-                        state,
-                        std::slice::from_ref(t),
-                        target,
-                        &validated,
-                    )
-                    .into_iter()
-                    .next()
-                    .is_some()
+                    validate_pinned_targets(state, std::slice::from_ref(t), target, &validated)
+                        .into_iter()
+                        .next()
+                        .is_some()
                 })
                 .cloned()
                 .collect();
@@ -2062,7 +2167,9 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                     let TargetRef::Object(id) = t else {
                         return false;
                     };
-                    !explicit.contains(t) && fight_creature_on_battlefield(state, *id)
+                    !explicit.contains(t)
+                        && fight_creature_on_battlefield(state, *id)
+                        && target_is_current(&validated, t, state)
                 }) {
                     kept.push(ally.clone());
                 }
@@ -2077,7 +2184,29 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
         // would fizzle-filter the spell to battlefield presence and drop it
         // (the spell lives on the STACK). Re-validate against the source leaf
         // (`InZone Stack`-aware) instead, preserving the spell target.
-        targeting::validate_targets_for_ability(state, &validated.targets, &src_leaf, &validated)
+        validate_pinned_targets(state, &validated.targets, &src_leaf, &validated)
+    } else if matches!(
+        &validated.effect,
+        Effect::ChangeZoneAll { target, .. } if crate::game::effects::filter_refs_parent_target(target)
+    ) {
+        // CR 115.1 + CR 608.2b: `ChangeZoneAll` is a resolution-time mass
+        // instruction when its filter carries a delayed `ParentTarget` snapshot
+        // inside a tracked set. Treating that internal filter as a target would
+        // fizzle a valid Exile -> Battlefield return before the mass resolver
+        // can inspect the tracked member. Ordinary ChangeZoneAll player filters
+        // remain declared targets and follow the generic validation below.
+        validated.targets.clone()
+    } else if matches!(
+        mass_all_target_filter(&validated.effect),
+        Some(TargetFilter::Player)
+    ) {
+        // CR 115.1 + CR 608.2b: A bare `Player` mass-operation filter (such as
+        // "exile target player's graveyard") is represented by a companion
+        // declared-player slot. The mass filter is normally a resolution-time
+        // population scan, so it has no `target_filter()` entry; validate this
+        // exceptional declared target against the same legal-player set used
+        // to build the slot.
+        validate_pinned_targets(state, &validated.targets, &TargetFilter::Player, &validated)
     } else {
         match triggers::extract_target_filter_from_effect(&validated.effect) {
             Some(filter) if matches!(validated.effect, Effect::PairWith { .. }) => {
@@ -2085,7 +2214,10 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                 validated
                     .targets
                     .iter()
-                    .filter(|target| legal_choices.contains(target))
+                    .filter(|target| {
+                        legal_choices.contains(target)
+                            && target_is_current(&validated, target, state)
+                    })
                     .cloned()
                     .collect()
             }
@@ -2102,7 +2234,12 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                     Some((_, rest)) => rest,
                     None => &[],
                 };
-                kept.extend(targeting::validate_targets_for_ability(
+                if let Some(companion) = kept.first() {
+                    if !target_is_current(&validated, companion, state) {
+                        kept.clear();
+                    }
+                }
+                kept.extend(validate_pinned_targets(
                     state,
                     primary_targets,
                     filter,
@@ -2110,12 +2247,7 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                 ));
                 kept
             }
-            Some(filter) => targeting::validate_targets_for_ability(
-                state,
-                &validated.targets,
-                filter,
-                &validated,
-            ),
+            Some(filter) => validate_pinned_targets(state, &validated.targets, filter, &validated),
             // CR 608.2b: A context-ref filter (`ParentTarget`,
             // `TriggeringSource`, etc.) carries a resolution-time *snapshot*,
             // not a player-chosen target. `extract_target_filter_from_effect`
@@ -2160,17 +2292,17 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                     state,
                     validated.source_id,
                 ) {
-                    Some(filter) => targeting::validate_targets_for_ability(
-                        state,
-                        &validated.targets,
-                        &filter,
-                        &validated,
-                    ),
+                    Some(filter) => {
+                        validate_pinned_targets(state, &validated.targets, &filter, &validated)
+                    }
                     None => validated
                         .targets
                         .iter()
                         .filter(|target| match target {
-                            TargetRef::Object(object_id) => state.battlefield.contains(object_id),
+                            TargetRef::Object(object_id) => {
+                                state.battlefield.contains(object_id)
+                                    && target_is_current(&validated, target, state)
+                            }
                             TargetRef::Player(_) => true,
                         })
                         .cloned()
@@ -2181,7 +2313,10 @@ pub fn validate_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -
                 .targets
                 .iter()
                 .filter(|target| match target {
-                    TargetRef::Object(object_id) => state.battlefield.contains(object_id),
+                    TargetRef::Object(object_id) => {
+                        state.battlefield.contains(object_id)
+                            && target_is_current(&validated, target, state)
+                    }
                     TargetRef::Player(_) => true,
                 })
                 .cloned()
@@ -2651,20 +2786,25 @@ fn collect_target_slots_inner(
             });
         }
     } else if let Effect::Attach { attachment, target } = &ability.effect {
-        collect_attach_attachment_target_slots(state, ability, attachment, acc)?;
-        if attach_host_filter_needs_target_slot(target) {
-            let legal_targets =
-                legal_targets_for_ability_filter(state, ability, target, &acc.slots);
-            if legal_targets.is_empty() && !ability.optional_targeting {
-                return Err(no_legal_target_slots());
+        // CR 115.1 + CR 608.2d: an untargeted attachment choice occurs while
+        // resolving, so it must not claim a target slot when this ability is
+        // announced.
+        if ability.target_choice_timing == TargetChoiceTiming::Stack {
+            collect_attach_attachment_target_slots(state, ability, attachment, acc)?;
+            if attach_host_filter_needs_target_slot(target) {
+                let legal_targets =
+                    legal_targets_for_ability_filter(state, ability, target, &acc.slots);
+                if legal_targets.is_empty() && !ability.optional_targeting {
+                    return Err(no_legal_target_slots());
+                }
+                acc.push(TargetSelectionSlot {
+                    legal_targets,
+                    optional: ability.optional_targeting,
+                    chooser: None,
+                    effect_kind: acc.current_effect_kind,
+                    effect_detail: acc.current_effect_detail,
+                });
             }
-            acc.push(TargetSelectionSlot {
-                legal_targets,
-                optional: ability.optional_targeting,
-                chooser: None,
-                effect_kind: acc.current_effect_kind,
-                effect_detail: acc.current_effect_detail,
-            });
         }
     } else if let Effect::CreateDamageReplacement {
         recipient_object_filter,
@@ -3286,6 +3426,101 @@ fn target_filter_needs_ability_context(filter: &TargetFilter) -> bool {
     target_filter_contains_chosen_x_ref(filter)
         || target_filter_contains_amassed_army_ref(filter)
         || target_filter_contains_scoped_player_ref(filter)
+        || filter_needs_trigger_source(filter)
+}
+
+/// CR 508.5 + CR 508.5a + CR 603.3d: a filter whose evaluation asks
+/// `combat::defending_player_cr508_5` for the attacked-player anaphor needs the
+/// resolving ability's `trigger_source`, because that authority's binding rule is
+/// `trigger_source.and_then(|_| detection.or(state.current_trigger_event))` — with
+/// no `trigger_source` the binding is `DefenderBinding::None`, which skips the
+/// attack-entry tiers entirely and leaves only `resolve_defending_player`. That
+/// tail resolves a non-attacking source through `extract_source_from_event`,
+/// whose `AttackersDeclared` arm is gated on `attacker_ids.len() == 1`, so ANY
+/// declaration with two or more attackers yields `None`,
+/// `filter::attacking_defender_matches`'s `is_some_and` is false for every
+/// candidate, the target slot is empty, and CR 603.3d removes the triggered
+/// ability from the stack ("If a choice is required when the triggered ability
+/// goes on the stack but no legal choices can be made for it ... the ability is
+/// simply removed from the stack").
+///
+/// Routing these filters to `find_legal_targets_for_ability`
+/// (`FilterContext::from_ability`) supplies the `trigger_source` that
+/// `set_trigger_source_recursive` already put on every instantiated triggered
+/// ability, making SLOT-BUILD agree with the CR 608.2b re-validation door
+/// (`targeting::validate_targets_for_ability`), which has always used
+/// `from_ability`. The disagreement between those two doors is what made this
+/// failure silent.
+///
+/// SCOPE — exactly the refs that consume `trigger_source`, and no others.
+/// `filter::source_controller_ref_player` special-cases three refs:
+/// `DefendingPlayer` (reads `trigger_source`), `SourceChosenPlayer` (reads the
+/// source), and `EnchantedPlayer` (reads `source.attached_to`); everything else
+/// routes to `controller_ref_player`. Only `DefendingPlayer` needs the ability
+/// context, so only `DefendingPlayer` is matched here — leaving the existing
+/// corpus producers of `Attacking { defender: Some(You | Opponent |
+/// SourceChosenPlayer | EnchantedPlayer) }` on their existing door, unchanged.
+///
+/// `FilterProp::CombatRelation` is deliberately EXCLUDED: it is evaluated by
+/// `filter::matches_combat_relation`, which reads `source.id` and
+/// `source.ability` and never calls `source_defending_player`.
+///
+/// `TypedFilter { controller: Some(ControllerRef::DefendingPlayer) }` is ALSO
+/// deliberately excluded despite having the identical door bug (Greatsword of
+/// Tyr class). The deferral is SCOPED AND MEASURED, not open-ended — measured
+/// against `data/card-data.json`, the exported engine corpus:
+///
+/// | population | cards |
+/// |---|---|
+/// | reference `ControllerRef::DefendingPlayer` anywhere | 116 |
+/// | …of those, inside a TRIGGER's definition chain | 104 |
+/// | …of those, inside a trigger's TARGET slot (the door this predicate gates) | 97 |
+/// | the `FilterProp::Attacking { defender: DefendingPlayer }` shape fixed here | 3 |
+///
+/// So the follow-up's exact enumeration delta is 97 cards (Greatsword of Tyr,
+/// Thraximundar, Kogla, Warkite Marauder, …) moving from the bare
+/// `find_legal_targets` door to `find_legal_targets_for_ability`. It is a
+/// separate change because 97 re-routed target enumerations need their own
+/// multi-attacker fixtures and their own blast-radius measurement — not because
+/// the size is unknown. The tripwire test
+/// `filter_needs_trigger_source_does_not_widen_to_defending_player_controller`
+/// keeps the omission a decision rather than an oversight.
+///
+/// STRUCTURAL TRAVERSAL IS NOT RE-IMPLEMENTED HERE. The "does this filter
+/// mention X anywhere" question has exactly one authority — `filter::
+/// filter_contains` and its `filter_prop_contains` / `player_filter_contains`
+/// halves, whose matches are exhaustive (no `_` arm) precisely so a future
+/// nesting variant cannot be silently classified as a leaf. A hand-rolled
+/// `Typed` / `And` / `Or` / `Not` walk with a `_ => false` tail would miss the
+/// prop under `TrackedSetFiltered`, `ChosenDamageSource`, `PlayerMatching {
+/// ControlsCount { filter } }`, or any of the six `TargetFilter`-boxing props
+/// (`Targets`, `TargetsOnly`, `SharesQuality`, `DistinctFrom`,
+/// `DifferentNameFrom`, `CanEnchant`) — each of which would keep the bare
+/// `find_legal_targets` door and reproduce the CR 603.3d removal above.
+///
+/// What remains local is a pure LEAF-VALUE test ("is this prop the
+/// defending-player anaphor?"), including the two prop-level combinators
+/// (`AnyOf` / `Not`) that can wrap it. Its `_ => false` is a value verdict on a
+/// prop that carries no `defender` axis, not a containment claim about nesting.
+fn filter_needs_trigger_source(filter: &TargetFilter) -> bool {
+    fn prop_needs(prop: &FilterProp) -> bool {
+        match prop {
+            FilterProp::Attacking {
+                defender: Some(ControllerRef::DefendingPlayer),
+            }
+            | FilterProp::AttackedThisTurn {
+                defender: Some(ControllerRef::DefendingPlayer),
+            } => true,
+            FilterProp::AnyOf { props } => props.iter().any(prop_needs),
+            FilterProp::Not { prop } => prop_needs(prop),
+            _ => false,
+        }
+    }
+
+    crate::game::filter::filter_contains(
+        filter,
+        &|inner| matches!(inner, TargetFilter::Typed(typed) if typed.properties.iter().any(prop_needs)),
+    )
 }
 
 // CR 102.1 + CR 608.2c: "that player controls" filters lowered to
@@ -3392,7 +3627,16 @@ fn mass_all_target_filter(effect: &Effect) -> Option<&TargetFilter> {
             target,
             ..
         }
-        | Effect::DoublePTAll { target, .. } => Some(target),
+        | Effect::DoublePTAll { target, .. }
+        // CR 508.1d + CR 109.4: the mass forced-attack population (Gideon Jura's
+        // "creatures that player controls"). Listed here — not just excluded from
+        // `target_filter()` — so its `ControllerRef::TargetOpponent` still
+        // surfaces the COMPANION PLAYER slot the ability genuinely targets.
+        | Effect::ForceAttack {
+            scope: EffectScope::All,
+            target,
+            ..
+        } => Some(target),
         _ => None,
     }
 }
@@ -3877,6 +4121,19 @@ pub(crate) fn collect_player_targets(
     ability: &ResolvedAbility,
     target: &TargetFilter,
 ) -> Vec<PlayerId> {
+    // CR 608.2c: a definite player anaphor may name one exact slot in the
+    // flattened resolving chain after an intervening object target. Resolve
+    // that slot before inspecting this node's propagated local targets, which
+    // may contain only the most-recent object slot.
+    if let TargetFilter::ParentTargetSlot { index } = target {
+        return crate::game::targeting::resolve_parent_slot_from_root(state, ability, *index)
+            .and_then(|target| match target {
+                TargetRef::Player(player) => Some(player),
+                TargetRef::Object(_) => None,
+            })
+            .into_iter()
+            .collect();
+    }
     let from_targets: Vec<PlayerId> = ability
         .targets
         .iter()
@@ -3940,6 +4197,8 @@ pub(crate) fn collect_player_targets(
                 // CR 102.1 + CR 109.4: the active player, resolvable directly
                 // (unlike the fail-closed DefendingPlayer arm above).
                 Some(ControllerRef::ActivePlayer) => p.id == state.active_player,
+                // CR 109.4 + CR 611.2: a snapshotted id, resolvable directly.
+                Some(ControllerRef::SpecificPlayer { id }) => p.id == *id,
                 None => true,
             })
             .map(|p| p.id)
@@ -4214,6 +4473,43 @@ fn filter_target_slot_filter(filter: &TargetFilter) -> Option<TargetFilter> {
     }
 }
 
+/// The first target-slot filter reachable through a [`CardTypeSetSource`]
+/// population.
+///
+/// Only the object-filter and journal-filter arms carry a `TargetFilter` that
+/// could name a target slot; the zone / linked-exile / tracked-set arms are
+/// fixed-vocabulary. `AnyOf` recurses so a union member's slot is not dropped.
+///
+/// Deliberately UNCITED. This is a structural query over the AST — which arms
+/// hold a filter — not a rule implementation. It previously cited CR 109.2,
+/// which says a bare type description means a permanent on the battlefield;
+/// that rule has nothing to say about target-slot extraction, and a citation
+/// that does not support its code is worse than none because it reads as
+/// evidence the behavior was checked against the rules.
+fn characteristic_source_target_slot_filter(source: &CardTypeSetSource) -> Option<TargetFilter> {
+    // FIRST match wins, preserving the previous `find_map` semantics: the walker
+    // visits members in declaration order, and later members do not overwrite an
+    // earlier hit. Truncation needs no conservative branch here — this returns a
+    // slot to wire, and inventing one would be worse than finding none.
+    let mut found: Option<TargetFilter> = None;
+    source.try_for_each_member(crate::types::ability::UNION_DEPTH_BUDGET, &mut |leaf| {
+        if found.is_some() {
+            return;
+        }
+        found = match leaf {
+            CardTypeSetSource::Objects { filter } => filter_target_slot_filter(filter),
+            CardTypeSetSource::TurnJournal { filter, .. } => {
+                filter.as_ref().and_then(filter_target_slot_filter)
+            }
+            CardTypeSetSource::Zone { .. }
+            | CardTypeSetSource::ExiledBySource
+            | CardTypeSetSource::TrackedSet { .. }
+            | CardTypeSetSource::AnyOf { .. } => None,
+        };
+    });
+    found
+}
+
 fn filter_prop_target_slot_filter(
     prop: &crate::types::ability::FilterProp,
 ) -> Option<TargetFilter> {
@@ -4277,10 +4573,15 @@ fn quantity_ref_target_slot_spec(qty: &QuantityRef) -> Option<TargetFilter> {
         QuantityRef::Power {
             scope: ObjectScope::Target,
         }
+        | QuantityRef::BasePower {
+            scope: ObjectScope::Target,
+        }
         | QuantityRef::Toughness {
             scope: ObjectScope::Target,
         } => Some(TargetFilter::Typed(TypedFilter::creature())),
-        QuantityRef::Power { .. } | QuantityRef::Toughness { .. } => None,
+        QuantityRef::Power { .. }
+        | QuantityRef::BasePower { .. }
+        | QuantityRef::Toughness { .. } => None,
         // CR 202.3 + CR 115.1: the ref carries its own slot filter.
         QuantityRef::TargetObjectManaValue { filter } => Some((**filter).clone()),
         // CR 701.9 + CR 115.1: cards a single targeted opponent discarded this
@@ -4337,24 +4638,17 @@ fn quantity_ref_target_slot_spec(qty: &QuantityRef) -> Option<TargetFilter> {
         | QuantityRef::ZoneChangeAggregateThisTurn { filter, .. }
         | QuantityRef::CounterAddedThisTurn { target: filter, .. }
         | QuantityRef::TokensCreatedThisTurn { filter, .. }
-        | QuantityRef::DistinctColorsAmongPermanents { filter }
         | QuantityRef::DistinctCounterKindsAmong { filter } => filter_target_slot_filter(filter),
         QuantityRef::SpellsCastThisTurn { filter, .. }
+        | QuantityRef::SpellsCastBeforeTriggeringSpell { filter, .. }
         | QuantityRef::SpellsCastThisGame { filter, .. } => {
             filter.as_ref().and_then(filter_target_slot_filter)
         }
-        QuantityRef::DistinctCardTypes { source } => match source {
-            CardTypeSetSource::Objects { filter } => filter_target_slot_filter(filter),
-            CardTypeSetSource::Zone { .. }
-            | CardTypeSetSource::ExiledBySource
-            | CardTypeSetSource::TrackedSet { .. } => None,
-        },
-        QuantityRef::DistinctSubtypes { source, .. } => match source {
-            CardTypeSetSource::Objects { filter } => filter_target_slot_filter(filter),
-            CardTypeSetSource::Zone { .. }
-            | CardTypeSetSource::ExiledBySource
-            | CardTypeSetSource::TrackedSet { .. } => None,
-        },
+        QuantityRef::DistinctCardTypes { source }
+        | QuantityRef::DistinctSubtypes { source, .. }
+        | QuantityRef::DistinctColorsAmong { source } => {
+            characteristic_source_target_slot_filter(source)
+        }
         QuantityRef::ManaSpentToCast { metric, .. } => match metric {
             CastManaSpentMetric::FromSource { source_filter } => {
                 filter_target_slot_filter(source_filter)
@@ -4469,7 +4763,8 @@ fn collect_target_slot_specs(
         }
         filters.push(target);
         for filter in filters {
-            if matches!(filter, TargetFilter::SelfRef | TargetFilter::ParentTarget) {
+            // Keep per-slot metadata aligned with the surfaced cast-time slots.
+            if filter.is_context_ref() {
                 continue;
             }
             let id = TargetInstanceId(*next_instance);
@@ -4518,21 +4813,23 @@ fn collect_target_slot_specs(
             });
         }
     } else if let Effect::Attach { attachment, target } = &ability.effect {
-        collect_attach_attachment_target_slot_specs(
-            state,
-            ability,
-            attachment,
-            specs,
-            next_instance,
-        );
-        if attach_host_filter_needs_target_slot(target) {
-            let id = TargetInstanceId(*next_instance);
-            *next_instance += 1;
-            specs.push(TargetSlotSpec {
-                filter: target.clone(),
-                optional: ability.optional_targeting,
-                instance: id,
-            });
+        if ability.target_choice_timing == TargetChoiceTiming::Stack {
+            collect_attach_attachment_target_slot_specs(
+                state,
+                ability,
+                attachment,
+                specs,
+                next_instance,
+            );
+            if attach_host_filter_needs_target_slot(target) {
+                let id = TargetInstanceId(*next_instance);
+                *next_instance += 1;
+                specs.push(TargetSlotSpec {
+                    filter: target.clone(),
+                    optional: ability.optional_targeting,
+                    instance: id,
+                });
+            }
         }
     } else if let Effect::CreateDamageReplacement {
         recipient_object_filter,
@@ -5537,6 +5834,7 @@ fn legal_targets_for_selected_slot(
                 &enchant_filter,
                 *pid,
                 Some(aura_controller),
+                Some(aura_id),
             ),
         });
     }
@@ -5612,23 +5910,17 @@ fn damage_any_target_legal_targets(
     )
 }
 
-/// CR 603.12: Check if a sub-ability represents a reflexive trigger whose targeting
-/// should be deferred to resolution time. Reflexive trigger conditions (WhenYouDo,
-/// QuantityCheck on CountersOnSelf) indicate the sub-ability fires as a separate
-/// triggered ability during resolution — targets are chosen then, not at stack time.
+/// CR 603.12 + CR 608.2d: Whether a chained sub-ability chooses its targets while
+/// resolving rather than as its parent goes on the stack. Ordinary conditional,
+/// optional, and additional-cost-paid clauses retain their announced targets
+/// (CR 601.2c / CR 603.3d).
 fn defers_conditional_target_selection(sub: &ResolvedAbility) -> bool {
-    matches!(
-        &sub.condition,
-        Some(AbilityCondition::WhenYouDo)
-            | Some(AbilityCondition::QuantityCheck { .. })
-            | Some(AbilityCondition::PreviousEffectAmount { .. })
-            | Some(AbilityCondition::AdditionalCostPaidInstead)
-    ) || sub.target_choice_timing == TargetChoiceTiming::Resolution
-        // CR 608.2d + CR 601.2c: "You may" sub-instructions (Nahiri, the
-        // Lithomancer +2 attach) choose whether to perform the action at
-        // resolution; their targets are announced only if the controller
-        // accepts, not when the loyalty ability is activated.
-        || sub.optional
+    matches!(&sub.condition, Some(AbilityCondition::WhenYouDo))
+        || matches!(
+            &sub.condition,
+            Some(AbilityCondition::AdditionalCostPaidInstead) if !sub.context.additional_cost_paid
+        )
+        || sub.target_choice_timing == TargetChoiceTiming::Resolution
 }
 
 fn defers_sub_ability_target_selection(effect: &Effect) -> bool {
@@ -5939,6 +6231,52 @@ fn build_target_selection_progress_for_ability(
             current_slot + 1,
             skipped_slots,
         );
+    }
+
+    // CR 115.10a: "Just because an object or player is being affected by a spell or
+    // ability doesn't make that object or player a target … Unless that object or
+    // player is identified by the word 'target'…". The `SpecificPlayer` half of a
+    // per-opponent target fanout (`collect_per_opponent_target_fanout_specs`) is a
+    // BINDER: it is pinned to one player by construction so the following object
+    // slot's `ControllerRef::TargetPlayer` scope resolves ("that player's
+    // graveyard"). The opponent is affected but never identified by "target" —
+    // Diluvian Primordial's "target" attaches to the card. CR 115.1d: only the card
+    // slot is an announced target. Announce the pinned player on the controller's
+    // behalf and advance, so the first prompt they see is the real choice.
+    //
+    // Same conjunction `legal_targets_for_selected_slot` already uses to identify a
+    // binder (fanout predicate + `SpecificPlayer` filter) — not a looser
+    // filter-shape test, so an ordinary pinned-player slot on a non-fanout ability
+    // still prompts.
+    //
+    // CR 115.6: `!slot.optional` — declining an optional slot is a real choice the
+    // controller owns ("may allow zero targets to be chosen"), so an optional slot
+    // is never a non-choice even with a singleton legal set.
+    // CR 601.2c + CR 115.1: `chooser.is_none()` — a slot announced by another player
+    // is not the controller's to auto-resolve.
+    if is_per_opponent_target_fanout(ability) && !slot.optional && slot.chooser.is_none() {
+        if let Some(TargetSlotSpec {
+            filter: TargetFilter::SpecificPlayer { id },
+            ..
+        }) = specs.get(current_slot)
+        {
+            // `TargetRef` is NOT `Copy`, so `== [pinned]` would MOVE `pinned` into
+            // the array literal and make the `push` below E0382. `from_ref`
+            // borrows instead, and allocates nothing.
+            let pinned = TargetRef::Player(*id);
+            if current_legal_targets == std::slice::from_ref(&pinned) {
+                let mut bound_slots = selected_slots;
+                bound_slots.push(Some(pinned));
+                return build_target_selection_progress_for_ability(
+                    state,
+                    ability,
+                    target_slots,
+                    constraints,
+                    current_slot + 1,
+                    bound_slots,
+                );
+            }
+        }
     }
 
     Ok(TargetSelectionProgress {
@@ -6351,43 +6689,45 @@ fn assign_targets_recursive(
         return Ok(());
     }
 
-    if let Effect::Attach { attachment, target } = &ability.effect {
-        let attachment = attachment.clone();
-        let target = target.clone();
-        assign_attach_attachment_declared_targets(
-            state,
-            ability,
-            &attachment,
-            &target,
-            targets,
-            next_target,
-        )?;
-        if attach_host_filter_needs_target_slot(&target) {
-            if let Some(target) = targets.get(*next_target) {
-                ability.targets.push(target.clone());
-                *next_target += 1;
-            } else if !ability.optional_targeting {
-                return Err(EngineError::InvalidAction(
-                    "Missing required target".to_string(),
-                ));
-            }
-        }
-        if defers_sub_ability_target_selection(&ability.effect) {
-            assign_targets_after_deferred_effect(
+    if ability.target_choice_timing == TargetChoiceTiming::Stack {
+        if let Effect::Attach { attachment, target } = &ability.effect {
+            let attachment = attachment.clone();
+            let target = target.clone();
+            assign_attach_attachment_declared_targets(
                 state,
-                ability.sub_ability.as_deref_mut(),
+                ability,
+                &attachment,
+                &target,
                 targets,
                 next_target,
             )?;
-            return Ok(());
-        }
-        if let Some(sub_ability) = ability.sub_ability.as_mut() {
-            if defers_conditional_target_selection(sub_ability) {
+            if attach_host_filter_needs_target_slot(&target) {
+                if let Some(target) = targets.get(*next_target) {
+                    ability.targets.push(target.clone());
+                    *next_target += 1;
+                } else if !ability.optional_targeting {
+                    return Err(EngineError::InvalidAction(
+                        "Missing required target".to_string(),
+                    ));
+                }
+            }
+            if defers_sub_ability_target_selection(&ability.effect) {
+                assign_targets_after_deferred_effect(
+                    state,
+                    ability.sub_ability.as_deref_mut(),
+                    targets,
+                    next_target,
+                )?;
                 return Ok(());
             }
-            assign_targets_recursive(state, sub_ability, targets, next_target)?;
+            if let Some(sub_ability) = ability.sub_ability.as_mut() {
+                if defers_conditional_target_selection(sub_ability) {
+                    return Ok(());
+                }
+                assign_targets_recursive(state, sub_ability, targets, next_target)?;
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     if let Effect::Fight { subject, target } = &ability.effect {
@@ -6709,49 +7049,51 @@ fn assign_selected_slots_recursive(
         return Ok(());
     }
 
-    if let Effect::Attach { attachment, target } = &ability.effect {
-        let attachment = attachment.clone();
-        let target = target.clone();
-        assign_attach_attachment_selected_slots(
-            state,
-            ability,
-            &attachment,
-            selected_slots,
-            next_slot,
-        )?;
-        if attach_host_filter_needs_target_slot(&target) {
-            let Some(selected_slot) = selected_slots.get(*next_slot) else {
-                return Err(EngineError::InvalidAction(
-                    "Missing target selection".to_string(),
-                ));
-            };
-            match selected_slot {
-                Some(target) => ability.targets.push(target.clone()),
-                None if ability.optional_targeting => {}
-                None => {
-                    return Err(EngineError::InvalidAction(
-                        "Missing required target".to_string(),
-                    ));
-                }
-            }
-            *next_slot += 1;
-        }
-        if defers_sub_ability_target_selection(&ability.effect) {
-            assign_selected_slots_after_deferred_effect(
+    if ability.target_choice_timing == TargetChoiceTiming::Stack {
+        if let Effect::Attach { attachment, target } = &ability.effect {
+            let attachment = attachment.clone();
+            let target = target.clone();
+            assign_attach_attachment_selected_slots(
                 state,
-                ability.sub_ability.as_deref_mut(),
+                ability,
+                &attachment,
                 selected_slots,
                 next_slot,
             )?;
-            return Ok(());
-        }
-        if let Some(sub_ability) = ability.sub_ability.as_mut() {
-            if defers_conditional_target_selection(sub_ability) {
+            if attach_host_filter_needs_target_slot(&target) {
+                let Some(selected_slot) = selected_slots.get(*next_slot) else {
+                    return Err(EngineError::InvalidAction(
+                        "Missing target selection".to_string(),
+                    ));
+                };
+                match selected_slot {
+                    Some(target) => ability.targets.push(target.clone()),
+                    None if ability.optional_targeting => {}
+                    None => {
+                        return Err(EngineError::InvalidAction(
+                            "Missing required target".to_string(),
+                        ));
+                    }
+                }
+                *next_slot += 1;
+            }
+            if defers_sub_ability_target_selection(&ability.effect) {
+                assign_selected_slots_after_deferred_effect(
+                    state,
+                    ability.sub_ability.as_deref_mut(),
+                    selected_slots,
+                    next_slot,
+                )?;
                 return Ok(());
             }
-            assign_selected_slots_recursive(state, sub_ability, selected_slots, next_slot)?;
+            if let Some(sub_ability) = ability.sub_ability.as_mut() {
+                if defers_conditional_target_selection(sub_ability) {
+                    return Ok(());
+                }
+                assign_selected_slots_recursive(state, sub_ability, selected_slots, next_slot)?;
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     if let Effect::Fight { subject, target } = &ability.effect {
@@ -6761,7 +7103,10 @@ fn assign_selected_slots_recursive(
         }
         filters.push(target);
         for filter in filters {
-            if matches!(filter, TargetFilter::SelfRef | TargetFilter::ParentTarget) {
+            // Mirror `collect_target_slots` and `assign_targets_recursive`:
+            // context-reference fighters resolve from the ability chain, so they
+            // consume no interactive target-selection slot.
+            if filter.is_context_ref() {
                 continue;
             }
             let Some(selected_slot) = selected_slots.get(*next_slot) else {
@@ -7162,11 +7507,13 @@ fn chain_has_target_sink(ability: &ResolvedAbility) -> bool {
         return !matches!(target, TargetFilter::SelfRef | TargetFilter::ParentTarget);
     }
 
-    if let Effect::Attach { attachment, target } = &ability.effect {
-        if attach_side_needs_target_slot(attachment, true)
-            || attach_side_needs_target_slot(target, false)
-        {
-            return true;
+    if ability.target_choice_timing == TargetChoiceTiming::Stack {
+        if let Effect::Attach { attachment, target } = &ability.effect {
+            if attach_side_needs_target_slot(attachment, true)
+                || attach_side_needs_target_slot(target, false)
+            {
+                return true;
+            }
         }
     }
 
@@ -7263,15 +7610,38 @@ fn chain_has_target_sink_after_deferred_effect(sub_ability: Option<&ResolvedAbil
 
 /// CR 115.7a: "each target can be changed only to another legal target." A
 /// multi-slot node's replacement targets are submitted positionally, but
-/// `legal_new_targets_for_stack_ability` can only return a FLAT union pool
+/// `legal_new_targets_for_stack_entry` can only return a FLAT union pool
 /// (one `Vec<TargetRef>`, no slot structure), so the union alone would let a
 /// count-source-legal player be assigned into the recipient slot. This is the
 /// seam where slot identity IS available: re-validate each submitted target
 /// against the filter of the slot it actually lands in.
 ///
-/// Returns `Some(slot_index)` for the first positionally-illegal submission.
-/// `None` = the submission is slot-legal, or this node declares no per-slot
-/// structure this function knows about.
+/// Takes the prompt's `current_targets` and **exempts positions whose submission
+/// is unchanged**: CR 115.7d ("the player may leave any number of the targets
+/// unchanged, even if those targets would be illegal") licenses this outright for
+/// the "choose new targets" scope. CR 115.7a does not grant an equivalent licence
+/// — its unchanged-target allowance is conditional ("if a target can't be changed
+/// to another legal target") — but it does not need to: it constrains only targets
+/// that ARE changed, so a slot already holding its own submission was never
+/// changed and "changed only to another legal target" has nothing to bite on.
+/// The exemption is therefore correct without a scope parameter, by licence under
+/// 115.7d and by non-application under 115.7a.
+///
+/// CR 115.7d's SECOND sentence — new targets "must not cause any unchanged targets
+/// to become illegal" — is vacuous under today's model and is deliberately not
+/// enforced here: `validate_targets_for_ability` evaluates each slot's filter
+/// against the state and the ability, never against a sibling slot's choice, so no
+/// submission can invalidate a neighbour. A future filter that reads sibling slots
+/// must revisit this.
+///
+/// Consumed by `engine::apply_retarget` AND by
+/// `ai_support::candidates::retarget_actions`, so the reducer and the AI
+/// generator cannot disagree about which submissions are legal.
+///
+/// Returns `Some(slot_index)` for the first positionally-illegal CHANGED
+/// submission. `None` = the submission is slot-legal, every illegal position was
+/// left unchanged, or this node declares no per-slot structure this function
+/// knows about.
 ///
 /// SCOPE: today this recognizes any node `mana_multi_role` admits — both the
 /// two-surfaced-slot `Both` and the one-surfaced-slot context-ref recipient
@@ -7283,23 +7653,58 @@ fn chain_has_target_sink_after_deferred_effect(sub_ability: Option<&ResolvedAbil
 pub fn retarget_slot_violation(
     state: &GameState,
     ability: &ResolvedAbility,
+    current_targets: &[TargetRef],
     new_targets: &[TargetRef],
 ) -> Option<usize> {
     let role = mana_multi_role(&ability.effect)?;
     role.surfaced_filters()
         .zip(new_targets.iter())
-        .position(|((_slot, filter), submitted)| {
-            targeting::validate_targets_for_ability(
+        .enumerate()
+        .find_map(|(slot, ((_slot, filter), submitted))| {
+            // CR 115.7d: "the player may leave any number of the targets
+            // unchanged, even if those targets would be illegal." CR 115.7a says
+            // the same thing for the other scope from the other direction: a
+            // target is "changed only to another legal target", and a slot
+            // already holding its own submission was not changed at all. So a
+            // position whose submission equals its current target is exempt
+            // under BOTH retarget scopes, which is why this authority needs no
+            // scope parameter.
+            //
+            // `apply_retarget`'s pool-membership stage already exempts exactly
+            // these positions (its `All` arm's `continue` on
+            // `current_targets.get(idx) == Some(target)`); before this, the
+            // per-slot stage re-rejected them, so the one submission CR 115.7d
+            // guarantees — leave everything unchanged — was refused for every
+            // node `mana_multi_role` admits whose current target had become
+            // slot-illegal. The forced seam
+            // (`change_targets::forced_retarget_targets`) has always conjoined
+            // "changes" with "legal", and its doc already claims parity with
+            // this function; this is that same conjunction, here.
+            //
+            // Index `current_targets` rather than zipping it: a third `.zip`
+            // would truncate the scan and silently skip validation for any
+            // position beyond `current_targets.len()`, where `get` correctly
+            // yields `None` (no current target cannot be "unchanged").
+            let changes = current_targets.get(slot) != Some(submitted);
+            let illegal = targeting::validate_targets_for_ability(
                 state,
                 std::slice::from_ref(submitted),
                 filter,
                 ability,
             )
-            .is_empty()
+            .is_empty();
+            (changes && illegal).then_some(slot)
         })
 }
 
 fn minimum_targets_in_chain(state: &GameState, ability: &ResolvedAbility) -> usize {
+    // CR 601.2c + CR 603.3d: only resolution-time choices avoid reserving slots
+    // from an earlier multi-target sibling. Ordinary conditional and paid-cost
+    // continuations still announce their targets while the ability is stacked.
+    if defers_conditional_target_selection(ability) {
+        return 0;
+    }
+
     let attach_targets = if let Effect::Attach { attachment, target } = &ability.effect {
         if ability.optional_targeting {
             0
@@ -7664,6 +8069,268 @@ fn build_mode_sequences(
 mod tests {
     use super::*;
     use crate::game::zones::create_object;
+    use crate::types::ability::{CombatRelation, CombatRelationSubject};
+
+    fn typed_with(props: Vec<FilterProp>) -> TargetFilter {
+        TargetFilter::Typed(TypedFilter {
+            type_filters: vec![TypeFilter::Creature],
+            properties: props,
+            ..Default::default()
+        })
+    }
+
+    fn attacking(defender: ControllerRef) -> FilterProp {
+        FilterProp::Attacking {
+            defender: Some(defender),
+        }
+    }
+
+    /// V18 — `filter_needs_trigger_source` is PRECISE: it routes the CR 508.5
+    /// defending-player anaphor to the context-carrying enumeration door and
+    /// leaves every other value on the existing bare door.
+    ///
+    /// This is the zero-blast-radius proof. `filter::source_controller_ref_player`
+    /// resolves `Opponent` via `source.controller`, `EnchantedPlayer` via
+    /// `source.attached_to`, and `SourceChosenPlayer` via the source object —
+    /// none of them reads `trigger_source` — so leaving the existing corpus
+    /// producers on the bare door is behaviour-preserving by construction, not
+    /// by luck. Only `DefendingPlayer` reaches
+    /// `combat::defending_player_cr508_5`, whose binding rule requires a
+    /// `trigger_source` to consult the attack entries at all.
+    #[test]
+    fn filter_needs_trigger_source_routes_only_the_defending_player_anaphor() {
+        // Positive: the new value, bare and under every recursive shape.
+        let bare = typed_with(vec![attacking(ControllerRef::DefendingPlayer)]);
+        assert!(filter_needs_trigger_source(&bare));
+        assert!(filter_needs_trigger_source(&TargetFilter::Or {
+            filters: vec![typed_with(vec![]), bare.clone()],
+        }));
+        assert!(filter_needs_trigger_source(&TargetFilter::And {
+            filters: vec![typed_with(vec![]), bare.clone()],
+        }));
+        assert!(filter_needs_trigger_source(&TargetFilter::Not {
+            filter: Box::new(bare.clone()),
+        }));
+        assert!(filter_needs_trigger_source(&typed_with(vec![
+            FilterProp::AnyOf {
+                props: vec![FilterProp::Token, attacking(ControllerRef::DefendingPlayer)],
+            }
+        ])));
+        assert!(filter_needs_trigger_source(&typed_with(vec![
+            FilterProp::Not {
+                prop: Box::new(attacking(ControllerRef::DefendingPlayer)),
+            }
+        ])));
+        // Sibling prop that shares the same `attacking_defender_matches` door.
+        assert!(filter_needs_trigger_source(&typed_with(vec![
+            FilterProp::AttackedThisTurn {
+                defender: Some(ControllerRef::DefendingPlayer),
+            }
+        ])));
+
+        // Negative: every `Attacking`/`AttackedThisTurn` value that exists in the
+        // corpus today must stay on the bare door, unchanged.
+        for prop in [
+            FilterProp::Attacking { defender: None },
+            attacking(ControllerRef::You),
+            attacking(ControllerRef::Opponent),
+            attacking(ControllerRef::SourceChosenPlayer),
+            attacking(ControllerRef::EnchantedPlayer),
+            FilterProp::AttackedThisTurn { defender: None },
+            FilterProp::AttackedThisTurn {
+                defender: Some(ControllerRef::You),
+            },
+            FilterProp::CombatRelation {
+                relation: CombatRelation::BlockingOrBlockedBy,
+                subject: CombatRelationSubject::Source,
+            },
+        ] {
+            assert!(
+                !filter_needs_trigger_source(&typed_with(vec![prop.clone()])),
+                "{prop:?} does not consume trigger_source and must stay on the bare door"
+            );
+        }
+
+        // And the predicate composes into the existing routing disjunction.
+        assert!(target_filter_needs_ability_context(&bare));
+    }
+
+    /// V18b — the traversal is DELEGATED, so the anaphor is found at every
+    /// nesting depth `filter::filter_contains` knows about, not only at the top
+    /// level where the three unlocked cards happen to put it today.
+    ///
+    /// Revert-failing: restore the hand-rolled `Typed`/`And`/`Or`/`Not` match
+    /// with a `_ => false` tail and every row below flips to `false` — each one
+    /// then keeps the bare `find_legal_targets` door with `trigger_source:
+    /// None`, which is the empty-slot / CR 603.3d removal this predicate exists
+    /// to prevent.
+    #[test]
+    fn filter_needs_trigger_source_descends_every_nesting_variant() {
+        use crate::types::ability::PlayerRelation;
+
+        let bare = typed_with(vec![attacking(ControllerRef::DefendingPlayer)]);
+        let controls_bare = PlayerFilter::ControlsCount {
+            relation: PlayerRelation::All,
+            filter: bare.clone(),
+            comparator: Comparator::GE,
+            count: Box::new(QuantityExpr::Fixed { value: 1 }),
+        };
+
+        // The six `TargetFilter`-boxing props, plus the two player-axis
+        // crossings. Each is a nesting site `filter_prop_contains` /
+        // `player_filter_contains` enumerate exhaustively and the hand-rolled
+        // walk skipped entirely.
+        for prop in [
+            FilterProp::Targets {
+                filter: Box::new(bare.clone()),
+            },
+            FilterProp::TargetsOnly {
+                filter: Box::new(bare.clone()),
+            },
+            FilterProp::CanEnchant {
+                target: Box::new(bare.clone()),
+            },
+            FilterProp::DistinctFrom {
+                reference: Box::new(bare.clone()),
+            },
+            FilterProp::DifferentNameFrom {
+                filter: Box::new(bare.clone()),
+            },
+            FilterProp::SharesQuality {
+                quality: SharedQuality::CreatureType,
+                reference: Some(Box::new(bare.clone())),
+                relation: SharedQualityRelation::default(),
+            },
+            FilterProp::ControllerMatches {
+                player: Box::new(controls_bare.clone()),
+            },
+        ] {
+            assert!(
+                filter_needs_trigger_source(&typed_with(vec![prop.clone()])),
+                "{prop:?} nests a defending-player anaphor and must route to the \
+                 ability-context door"
+            );
+        }
+
+        // Filter-level nesting variants outside `Typed`/`And`/`Or`/`Not`.
+        assert!(filter_needs_trigger_source(
+            &TargetFilter::TrackedSetFiltered {
+                id: TrackedSetId(1),
+                filter: Box::new(bare.clone()),
+                caused_by: None,
+            }
+        ));
+        assert!(filter_needs_trigger_source(
+            &TargetFilter::ChosenDamageSource {
+                filter: Some(Box::new(bare.clone())),
+            }
+        ));
+        assert!(filter_needs_trigger_source(&TargetFilter::PlayerMatching {
+            player: Box::new(controls_bare),
+        }));
+
+        // Negative control at the same depths: nesting alone does not route.
+        assert!(!filter_needs_trigger_source(
+            &TargetFilter::ChosenDamageSource {
+                filter: Some(Box::new(typed_with(vec![attacking(
+                    ControllerRef::Opponent
+                )]))),
+            }
+        ));
+    }
+
+    /// V19 — TRIPWIRE. `TypedFilter { controller: Some(DefendingPlayer) }`
+    /// (Greatsword of Tyr class) has the IDENTICAL slot-build door bug, and is
+    /// deliberately NOT covered here. The deferral is measured, not open-ended:
+    /// 97 corpus cards put that shape in a triggered ability's TARGET slot
+    /// (versus 3 for the shape fixed here) — see the table on
+    /// `filter_needs_trigger_source`. Widening the predicate re-routes all 97
+    /// enumerations at once and needs its own multi-attacker fixtures.
+    ///
+    /// A future pass that widens the predicate must delete this assertion on
+    /// purpose — that is the point. It exists so the omission reads as a
+    /// decision, not an oversight.
+    #[test]
+    fn filter_needs_trigger_source_does_not_widen_to_defending_player_controller() {
+        let controller_scoped = TargetFilter::Typed(TypedFilter {
+            type_filters: vec![TypeFilter::Creature],
+            controller: Some(ControllerRef::DefendingPlayer),
+            ..Default::default()
+        });
+        assert!(
+            !filter_needs_trigger_source(&controller_scoped),
+            "deliberately out of scope; see the doc comment on filter_needs_trigger_source"
+        );
+    }
+
+    /// CR 700.2a / CR 700.2e: `modal_chooser_candidates` is the one authority
+    /// both spell announcement and trigger construction read.
+    ///
+    /// Announcement is single-valued and takes `.first()`, so this row proves
+    /// the head of the returned order is byte-identical to the historic
+    /// `resolve_modal_chooser` result on both branches, and that the tail — the
+    /// part only trigger construction consumes — really is the complete
+    /// admitted set rather than that same single value. A regression that
+    /// truncates the extraction back to one candidate fails the three-player
+    /// length assertion while leaving both head assertions green.
+    #[test]
+    fn modal_chooser_candidates_are_the_complete_admitted_set_in_apnap_order() {
+        let mut state = GameState::new(crate::types::format::FormatConfig::free_for_all(), 3, 42);
+        state.active_player = PlayerId(0);
+        let source = create_object(
+            &mut state,
+            crate::types::identifiers::CardId(1),
+            PlayerId(0),
+            "Modal chooser source".to_string(),
+            Zone::Battlefield,
+        );
+
+        let mut modal = ModalChoice {
+            min_choices: 1,
+            max_choices: 1,
+            mode_count: 2,
+            ..Default::default()
+        };
+
+        // CR 700.2a: the controller branch never consults `matches_player_scope`
+        // and never admits anyone else, in any seat count.
+        modal.chooser = PlayerFilter::Controller;
+        assert_eq!(
+            modal_chooser_candidates(&state, &modal, PlayerId(1), source),
+            vec![PlayerId(1)],
+            "the controller branch is the controller alone"
+        );
+
+        // CR 700.2e: "an opponent chooses —" with two opponents is a real
+        // choice, and APNAP order decides which one announcement would take.
+        modal.chooser = PlayerFilter::Opponent;
+        let candidates = modal_chooser_candidates(&state, &modal, PlayerId(0), source);
+        assert_eq!(
+            candidates,
+            vec![PlayerId(1), PlayerId(2)],
+            "every opponent is admitted, in APNAP order"
+        );
+        assert_eq!(
+            candidates.first().copied(),
+            Some(PlayerId(1)),
+            "announcement's single-valued head is the first APNAP opponent"
+        );
+
+        // Two-player: the same authority collapses to the unambiguous opponent.
+        let mut two = GameState::new_two_player(42);
+        two.active_player = PlayerId(0);
+        let two_source = create_object(
+            &mut two,
+            crate::types::identifiers::CardId(1),
+            PlayerId(0),
+            "Modal chooser source".to_string(),
+            Zone::Battlefield,
+        );
+        assert_eq!(
+            modal_chooser_candidates(&two, &modal, PlayerId(0), two_source),
+            vec![PlayerId(1)]
+        );
+    }
 
     /// Matrix rows 5 + 6 — the slot/spec mirror must agree in COUNT **and**
     /// ORDER, and the context-ref skip must agree between the two sites.
@@ -8075,7 +8742,7 @@ mod tests {
     }
 
     /// Matrix row 8b — CR 115.7a: "each target can be changed only to another
-    /// legal target." A flat `legal_new_targets_for_stack_ability` union pool
+    /// legal target." A flat `legal_new_targets_for_stack_entry` union pool
     /// cannot express per-slot legality, so `retarget_slot_violation` re-checks
     /// each submission against the filter of the slot it actually lands in.
     #[test]
@@ -8107,11 +8774,17 @@ mod tests {
         assert_eq!(role.surfaced_filters().count(), 2);
 
         // Positive: a slot-legal submission is accepted. Without this the
-        // negative below could pass because EVERYTHING is rejected.
+        // negative below could pass because EVERYTHING is rejected. Both slots
+        // genuinely CHANGE against the current targets passed here, so this case
+        // proves legality rather than the CR 115.7d unchanged-position exemption.
         assert_eq!(
             retarget_slot_violation(
                 &state,
                 &ability,
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(0)),
+                ],
                 &[
                     TargetRef::Player(PlayerId(0)),
                     TargetRef::Player(PlayerId(1)),
@@ -8122,11 +8795,17 @@ mod tests {
         );
 
         // Negative: P0 is in the flat union pool (legal for the recipient slot)
-        // but illegal in the COUNT SOURCE slot it was submitted into.
+        // but illegal in the COUNT SOURCE slot it was submitted into. Slot 1
+        // genuinely changes (P1 -> P0) against the current targets, so the
+        // exemption does not apply and the violation must be reported.
         assert_eq!(
             retarget_slot_violation(
                 &state,
                 &ability,
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(1)),
+                ],
                 &[
                     TargetRef::Player(PlayerId(1)),
                     TargetRef::Player(PlayerId(0)),
@@ -8135,6 +8814,82 @@ mod tests {
             Some(1),
             "CR 115.7a: P0 is not an opponent, so it is illegal in slot 1 even though \
              the flat union pool contains it"
+        );
+    }
+
+    /// Matrix row 2d — CR 115.7d: "the player may leave any number of the
+    /// targets unchanged, even if those targets would be illegal." A submission
+    /// that changes nothing must never be rejected for slot legality, even when
+    /// its current target is illegal for the slot it sits in. CR 115.7a licenses
+    /// the same exemption for the "change the target(s)" scope: a slot already
+    /// holding its own submission was not changed at all.
+    #[test]
+    fn retarget_slot_violation_exempts_an_unchanged_illegal_target() {
+        use crate::types::ability::ManaTargetRole;
+
+        let mut state = GameState::new_two_player(24);
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Retarget Mana Source".to_string(),
+            Zone::Battlefield,
+        );
+
+        // Recipient: any player. Count source: an OPPONENT of P0 (i.e. P1 only).
+        // P0 is therefore legal for slot 0 and ILLEGAL for slot 1.
+        let role = ManaTargetRole::Both {
+            recipient: TargetFilter::Player,
+            count_source: TargetFilter::Typed(
+                TypedFilter::default().controller(ControllerRef::Opponent),
+            ),
+        };
+        let ability = mana_ability_with_role(role.clone(), source);
+
+        // Reach guard: the node is admitted and has two discriminable slots.
+        assert!(mana_multi_role(&ability.effect).is_some());
+        assert_eq!(role.surfaced_filters().count(), 2);
+
+        // Reach guard: the function still DISCRIMINATES. Slot 1 genuinely
+        // changes P1 -> P0 and is illegal there, so a violation is still
+        // reported. Without this, the exemption assertion below could pass in a
+        // world where this authority stopped rejecting anything at all.
+        assert_eq!(
+            retarget_slot_violation(
+                &state,
+                &ability,
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(1)),
+                ],
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(0)),
+                ],
+            ),
+            Some(1),
+            "reach guard: a CHANGED slot-illegal submission is still a violation"
+        );
+
+        // CR 115.7d: slot 1 holds P0, which is illegal for the opponent-only
+        // count-source slot — but the submission leaves it unchanged, so there
+        // is no violation to report.
+        assert_eq!(
+            retarget_slot_violation(
+                &state,
+                &ability,
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(0)),
+                ],
+                &[
+                    TargetRef::Player(PlayerId(1)),
+                    TargetRef::Player(PlayerId(0)),
+                ],
+            ),
+            None,
+            "CR 115.7d: an unchanged position is exempt from slot legality even \
+             though P0 is illegal in slot 1"
         );
     }
 
@@ -8634,6 +9389,56 @@ mod tests {
         );
     }
 
+    /// CR 115.1 + CR 603.7c: delayed plural returns become `ChangeZoneAll`
+    /// with a tracked-set filter, but their snapshotted referent is still not a
+    /// chosen target. It must survive validation while it is in exile.
+    #[test]
+    fn validate_targets_in_chain_preserves_delayed_tracked_set_snapshot_off_battlefield() {
+        let format = FormatConfig::duel_commander();
+        let mut state = GameState::new(format, 2, 2);
+        let victim = create_object(
+            &mut state,
+            CardId(0),
+            PlayerId(1),
+            "Grizzly Bears".to_string(),
+            Zone::Exile,
+        );
+        let set_id = TrackedSetId(1);
+        state.tracked_object_sets.insert(set_id, vec![victim]);
+
+        let ability = ResolvedAbility::new(
+            Effect::ChangeZoneAll {
+                origin: Some(Zone::Exile),
+                destination: Zone::Battlefield,
+                target: TargetFilter::TrackedSetFiltered {
+                    id: set_id,
+                    filter: Box::new(TargetFilter::ParentTarget),
+                    caused_by: None,
+                },
+                enters_under: None,
+                enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                enters_attacking: false,
+                enter_with_counters: vec![],
+                face_down_profile: None,
+                library_position: None,
+                random_order: false,
+            },
+            vec![TargetRef::Object(victim)],
+            ObjectId(99),
+            PlayerId(0),
+        );
+
+        let validated = validate_targets_in_chain(&state, &ability);
+        assert_eq!(validated.targets, ability.targets);
+        assert!(
+            !crate::game::targeting::check_fizzle(
+                &flatten_targets_in_chain(&ability),
+                &flatten_targets_in_chain(&validated),
+            ),
+            "a delayed tracked-set return must not fizzle before its mass resolver runs"
+        );
+    }
+
     /// CR 608.2b (phase-rs/phase#5449 review): an `Effect::Attach` node whose
     /// `attachment`/`target` are both context-refs (SelfRef/ParentTarget —
     /// neither needs its own target slot) must not have its `.targets` wiped
@@ -8992,6 +9797,7 @@ mod tests {
         sub.player_scope = Some(crate::types::ability::PlayerFilter::Opponent);
         sub.optional = true;
         sub.description = Some("override description".to_string());
+        sub.distribute = Some(crate::types::game_state::DistributionUnit::Damage);
 
         let swapped = apply_instead_swap(&parent, &sub);
 
@@ -9007,6 +9813,11 @@ mod tests {
         );
         assert!(swapped.optional, "swap must preserve sub.optional");
         assert_eq!(swapped.description.as_deref(), Some("override description"));
+        assert_eq!(
+            swapped.distribute,
+            Some(crate::types::game_state::DistributionUnit::Damage),
+            "swap must preserve the sub-ability's unassigned distribution unit"
+        );
         // Identity / runtime-context fields come from parent.
         assert_eq!(
             swapped.controller,
@@ -9121,6 +9932,25 @@ mod tests {
     }
 
     #[test]
+    fn build_resolved_from_def_preserves_unassigned_distribution_unit() {
+        let mut def = AbilityDefinition::new(
+            AbilityKind::Database,
+            Effect::DealDamage {
+                amount: QuantityExpr::Fixed { value: 4 },
+                target: TargetFilter::Any,
+                damage_source: None,
+                excess: None,
+            },
+        );
+        def.distribute = Some(crate::types::game_state::DistributionUnit::Damage);
+
+        let resolved = build_resolved_from_def(&def, ObjectId(1), PlayerId(0));
+
+        assert_eq!(resolved.distribute, def.distribute);
+        assert!(resolved.distribution.is_none());
+    }
+
+    #[test]
     fn build_resolved_from_def_preserves_unless_pay_modifier() {
         let modifier = UnlessPayModifier {
             cost: AbilityCost::PayLife {
@@ -9194,6 +10024,198 @@ mod tests {
         assert!(
             matches!(discard_node.effect, Effect::Discard { .. }),
             "Third link should be mode 2 (Discard) — printed last"
+        );
+    }
+
+    /// CR 700.2d: the mode-root stamp is the OCCURRENCE ORDINAL, not the printed
+    /// mode index. "If a particular mode is chosen multiple times, the spell is
+    /// treated as if that mode appeared that many times in sequence" — so a
+    /// repeated mode is two independent instructions and must carry two distinct
+    /// ordinals even though both live at the same printed index.
+    ///
+    /// DISCRIMINATION: key the stamp on `idx` instead of `enumerate()`'s counter
+    /// and the `[1, 1]` arm reads `Some(1), Some(1)` — the two occurrences
+    /// collapse into one instruction, which is exactly what a mode-boundary
+    /// consumer must not see. The `[0, 1, 2]` arm cannot distinguish the two
+    /// keyings (index == ordinal there), which is why the repeat arm is here.
+    #[test]
+    fn build_chained_resolved_stamps_occurrence_ordinals_not_printed_indices() {
+        let mode = |effect| AbilityDefinition::new(AbilityKind::Spell, effect);
+        let abilities = vec![
+            mode(Effect::Destroy {
+                target: TargetFilter::Any,
+                cant_regenerate: false,
+            }),
+            mode(Effect::Draw {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+            }),
+            mode(Effect::GainLife {
+                amount: QuantityExpr::Fixed { value: 1 },
+                player: TargetFilter::Controller,
+            }),
+        ];
+
+        let distinct =
+            build_chained_resolved(&abilities, &[0, 1, 2], ObjectId(1), PlayerId(0)).unwrap();
+        let second = distinct.sub_ability.as_deref().expect("mode 1 follows");
+        let third = second.sub_ability.as_deref().expect("mode 2 follows");
+        assert_eq!(
+            (
+                distinct.modal_instruction_ordinal,
+                second.modal_instruction_ordinal,
+                third.modal_instruction_ordinal,
+            ),
+            (Some(0), Some(1), Some(2)),
+            "CR 700.2: every mode root is stamped, including the first"
+        );
+
+        // CR 700.2d: Eldrazi Confluence's `allow_repeat_modes` shape.
+        let repeated =
+            build_chained_resolved(&abilities, &[1, 1], ObjectId(1), PlayerId(0)).unwrap();
+        let repeated_second = repeated
+            .sub_ability
+            .as_deref()
+            .expect("the repeated mode occurs twice in sequence");
+        assert!(
+            matches!(repeated.effect, Effect::Draw { .. })
+                && matches!(repeated_second.effect, Effect::Draw { .. }),
+            "reach-guard: both occurrences must really be printed mode 1, or the \
+             distinct-ordinal assertion below is about the wrong nodes"
+        );
+        assert_eq!(
+            (
+                repeated.modal_instruction_ordinal,
+                repeated_second.modal_instruction_ordinal,
+            ),
+            (Some(0), Some(1)),
+            "CR 700.2d: two occurrences of ONE printed mode are two instructions. \
+             Keying on the printed index would give (Some(1), Some(1))"
+        );
+
+        // CR 700.2: the modes are the bulleted options, so "choose up to one"
+        // with zero chosen has no instructions at all — it builds a bare
+        // `GenericEffect` root, which is not a mode root.
+        let none = build_chained_resolved(&abilities, &[], ObjectId(1), PlayerId(0)).unwrap();
+        assert_eq!(none.modal_instruction_ordinal, None);
+    }
+
+    /// PROVENANCE PIN for `ResolvedAbility::modal_instruction_ordinal`: exactly
+    /// ONE non-test writer in the whole engine crate.
+    ///
+    /// The field's meaning ("this node begins a new CR 700.2 instruction") is only
+    /// sound while `build_chained_resolved` — the one function that linearizes
+    /// selected modes into a chain — is its only author. A second writer would let
+    /// a non-mode-root claim a mode boundary and reset the chain-local tracked-set
+    /// identity mid-instruction.
+    ///
+    /// Classification is by WRITE, not by name occurrence: the identifier also
+    /// appears at every exhaustive `ResolvedAbility` literal as `: None` (a
+    /// default, not a write) and at each of the eight exhaustive destructures.
+    ///
+    /// Test regions are excluded by the `#[cfg(test)] mod` boundary, not by
+    /// filename — a filename-keyed scan of this crate has produced a wrong census
+    /// before (13 "src" sites that were all inside `#[cfg(test)] mod tests`).
+    #[test]
+    fn modal_instruction_ordinal_has_exactly_one_non_test_writer() {
+        // Assembled so this test's own source cannot be counted.
+        let needle = format!("modal_instruction_{}", "ordinal");
+        let write_forms = [format!("{needle} = "), format!("{needle}: Some(")];
+        // POSITIVE CONTROL: `build_chained_resolved`'s OWN other write, five lines
+        // from the one under census, in the same non-test region of the same file.
+        // If the walk or the `#[cfg(test)]` cut ever stops reaching that function,
+        // this reads 0 and the "exactly 1 writer" assertion below would be
+        // counterfeit. Counted per file rather than crate-wide: the needle is
+        // written 17 times across the crate, a number that drifts with unrelated
+        // work, and a crate-wide pin would be a maintenance tax that measures
+        // nothing this row cares about.
+        let control = format!("sub_link = SubAbilityLink::{}", "SequentialSibling");
+        let control_file = "ability_utils.rs";
+
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        let mut stack = vec![src_root];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}")) {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        assert!(files.len() > 100, "reach-guard: the walk found the crate");
+
+        let mut writers: Vec<String> = Vec::new();
+        let mut uncut_writers = 0usize;
+        let mut control_hits = 0usize;
+        for path in &files {
+            let text = std::fs::read_to_string(path).expect("read source");
+            // Comment halves removed by the shared authority, so a needle written
+            // in prose is neither counted nor able to hide a deleted writer.
+            let code = crate::source_census::code_lines(&text);
+            let lines: Vec<&str> = code.lines().collect();
+            // Cut at the FIRST `#[cfg(test)]` THAT IS FOLLOWED BY `mod`, not at
+            // the first `#[cfg(test)]` full stop. This crate also `#[cfg(test)]`-
+            // guards individual `use` and `fn` items (`ability_utils.rs` has four
+            // before its test module), and an earlier draft of this scan located
+            // the first marker and then merely CHECKED whether it introduced a
+            // module — which made the cut silently degrade to "no cut at all" in
+            // exactly the files that need it. Measured: it counted this PR's own
+            // `effects/mod.rs` unit-test writers as production writers.
+            let end = lines
+                .iter()
+                .enumerate()
+                .position(|(i, line)| {
+                    line.trim_start().starts_with("#[cfg(test)]")
+                        && lines[i + 1..]
+                            .iter()
+                            .find(|l| !l.trim().is_empty())
+                            .is_some_and(|l| l.trim_start().starts_with("mod "))
+                })
+                .unwrap_or(lines.len());
+            let rel = path.display().to_string();
+            for (i, line) in lines.iter().enumerate() {
+                if write_forms.iter().any(|f| line.contains(f.as_str())) {
+                    uncut_writers += 1;
+                    if i < end {
+                        writers.push(format!("{rel}: {}", line.trim()));
+                    }
+                }
+                if i < end && rel.ends_with(control_file) {
+                    control_hits += line.matches(control.as_str()).count();
+                }
+            }
+        }
+
+        // NEGATIVE CONTROL for the region cut itself: the same scan WITHOUT the
+        // `#[cfg(test)] mod` cut must find strictly more writers. Without this
+        // arm a broken cut is invisible whenever no test happens to write the
+        // field — and then the day one does, this row reds for the wrong reason.
+        assert!(
+            uncut_writers > writers.len(),
+            "NEGATIVE CONTROL: the `#[cfg(test)] mod` cut must actually be \
+             excluding test-module writers. uncut={uncut_writers} cut={}",
+            writers.len()
+        );
+        assert_eq!(
+            control_hits, 1,
+            "POSITIVE CONTROL: `build_chained_resolved`'s `SequentialSibling` write \
+             must be visible to this scan, or a zero writer count is counterfeit. \
+             control_hits={control_hits}"
+        );
+        assert_eq!(
+            writers.len(),
+            1,
+            "CR 700.2: `modal_instruction_ordinal` must have exactly one non-test \
+             writer (`build_chained_resolved`). writers: {writers:#?}"
+        );
+        assert!(
+            writers[0].contains("ability_utils.rs"),
+            "the one writer must be `build_chained_resolved`, got {:?}",
+            writers[0]
         );
     }
 
@@ -9898,6 +10920,22 @@ mod tests {
                 .targets
                 .is_empty());
         }
+
+        let mut optional_stack_timing = chain(SubAbilityLink::ContinuationStep);
+        optional_stack_timing
+            .sub_ability
+            .as_deref_mut()
+            .and_then(|change_zone| change_zone.sub_ability.as_deref_mut())
+            .and_then(|shuffle| shuffle.sub_ability.as_deref_mut())
+            .expect("counter continuation must exist")
+            .optional = true;
+        let slots = build_target_slots(&state, &optional_stack_timing)
+            .expect("optional stack-time target traversal should build");
+        assert_eq!(slots.len(), 1);
+        assert!(slots[0]
+            .legal_targets
+            .contains(&TargetRef::Object(creature)));
+        assert_eq!(minimum_targets_in_chain(&state, &optional_stack_timing), 1);
     }
 
     /// CR 608.2c + CR 115.1: Arcum Dagsson / #4678 — "Target artifact creature's
@@ -10866,6 +11904,291 @@ mod tests {
     }
 
     #[test]
+    fn great_aerie_resolves_every_optional_target_combination() {
+        for (choose_yours, choose_opponents, expected_damage) in [
+            (false, false, [0, 0]),
+            (true, false, [0, 0]),
+            (false, true, [0, 0]),
+            (true, true, [3, 2]),
+        ] {
+            let mut state = GameState::new(FormatConfig::standard(), 2, 42);
+            let source = create_object(
+                &mut state,
+                CardId(1),
+                PlayerId(0),
+                "The Great Aerie".to_string(),
+                Zone::Battlefield,
+            );
+            let yours = create_creature(&mut state, PlayerId(0), CardId(2), "Your Creature");
+            let opponents =
+                create_creature(&mut state, PlayerId(1), CardId(3), "Opponent Creature");
+            for (id, toughness) in [(yours, 2), (opponents, 3)] {
+                let creature = state.objects.get_mut(&id).expect("test creature");
+                creature.power = Some(1);
+                creature.toughness = Some(toughness);
+                creature.base_power = Some(1);
+                creature.base_toughness = Some(toughness);
+            }
+            let parsed = crate::parser::oracle::parse_oracle_text(
+                "Whenever chaos ensues, choose up to one target creature you control and up to one target creature an opponent controls. Each of those creatures deals damage equal to its toughness to the other.",
+                "The Great Aerie",
+                &[],
+                &["Plane".to_string()],
+                &["Tarkir".to_string()],
+            );
+            let definition = parsed
+                .triggers
+                .iter()
+                .find(|trigger| {
+                    matches!(
+                        trigger.mode,
+                        crate::types::triggers::TriggerMode::ChaosEnsues
+                    )
+                })
+                .and_then(|trigger| trigger.execute.as_deref())
+                .expect("Great Aerie chaos trigger");
+            let mut ability = build_resolved_from_def(definition, source, PlayerId(0));
+            let slots = build_target_slots(&state, &ability).expect("two optional target slots");
+
+            assert_eq!(slots.len(), 2);
+            assert!(slots.iter().all(|slot| slot.optional));
+            let progress = begin_target_selection_for_ability(&state, &ability, &slots, &[])
+                .expect("selection starts");
+            let first = choose_yours.then_some(TargetRef::Object(yours));
+            let TargetSelectionAdvance::InProgress(progress) =
+                choose_target_for_ability(&state, &ability, &slots, &[], &progress, first)
+                    .expect("first optional slot resolves")
+            else {
+                panic!("second optional slot remains");
+            };
+            let second = choose_opponents.then_some(TargetRef::Object(opponents));
+            let TargetSelectionAdvance::Complete(selected) =
+                choose_target_for_ability(&state, &ability, &slots, &[], &progress, second)
+                    .expect("second optional slot resolves")
+            else {
+                panic!("two optional slots complete selection");
+            };
+
+            assign_selected_slots_in_chain(&state, &mut ability, &selected)
+                .expect("optional pair assigns without inventing targets");
+            let mut events = Vec::new();
+            crate::game::effects::resolve_ability_chain(&mut state, &ability, &mut events, 0)
+                .expect("Great Aerie target combination must resolve");
+            assert_eq!(
+                [
+                    state.objects[&yours].damage_marked,
+                    state.objects[&opponents].damage_marked,
+                ],
+                expected_damage,
+                "pairwise damage mismatch for choices ({choose_yours}, {choose_opponents})"
+            );
+        }
+    }
+
+    #[test]
+    fn grim_contest_resolves_mandatory_pairwise_damage() {
+        let mut state = GameState::new(FormatConfig::standard(), 2, 42);
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Grim Contest".to_string(),
+            Zone::Stack,
+        );
+        let yours = create_creature(&mut state, PlayerId(0), CardId(2), "Your Creature");
+        let opponents = create_creature(&mut state, PlayerId(1), CardId(3), "Opponent Creature");
+        for (id, toughness) in [(yours, 2), (opponents, 4)] {
+            let creature = state.objects.get_mut(&id).expect("test creature");
+            creature.power = Some(1);
+            creature.toughness = Some(toughness);
+            creature.base_power = Some(1);
+            creature.base_toughness = Some(toughness);
+        }
+        let parsed = crate::parser::oracle::parse_oracle_text(
+            "Choose target creature you control and target creature an opponent controls. Each of those creatures deals damage equal to its toughness to the other.",
+            "Grim Contest",
+            &[],
+            &["Sorcery".to_string()],
+            &[],
+        );
+        let definition = parsed
+            .abilities
+            .first()
+            .expect("Grim Contest spell ability");
+        let mut ability = build_resolved_from_def(definition, source, PlayerId(0));
+        let slots = build_target_slots(&state, &ability).expect("two mandatory target slots");
+        assert_eq!(slots.len(), 2);
+        assert!(slots.iter().all(|slot| !slot.optional));
+
+        let progress = begin_target_selection_for_ability(&state, &ability, &slots, &[])
+            .expect("selection starts");
+        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
+            &state,
+            &ability,
+            &slots,
+            &[],
+            &progress,
+            Some(TargetRef::Object(yours)),
+        )
+        .expect("first mandatory target resolves") else {
+            panic!("second mandatory slot remains");
+        };
+        let TargetSelectionAdvance::Complete(selected) = choose_target_for_ability(
+            &state,
+            &ability,
+            &slots,
+            &[],
+            &progress,
+            Some(TargetRef::Object(opponents)),
+        )
+        .expect("second mandatory target resolves") else {
+            panic!("mandatory pair completes selection");
+        };
+
+        assign_selected_slots_in_chain(&state, &mut ability, &selected)
+            .expect("mandatory pair assigns");
+        let mut events = Vec::new();
+        crate::game::effects::resolve_ability_chain(&mut state, &ability, &mut events, 0)
+            .expect("Grim Contest resolves");
+        assert_eq!(state.objects[&yours].damage_marked, 4);
+        assert_eq!(state.objects[&opponents].damage_marked, 2);
+    }
+
+    #[test]
+    fn pairwise_damage_uses_nearest_two_target_producers() {
+        let mut state = GameState::new(FormatConfig::standard(), 2, 42);
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Pairwise Source".to_string(),
+            Zone::Battlefield,
+        );
+        let unrelated = create_creature(&mut state, PlayerId(0), CardId(2), "Unrelated");
+        let first = create_creature(&mut state, PlayerId(0), CardId(3), "First");
+        let second = create_creature(&mut state, PlayerId(1), CardId(4), "Second");
+
+        let damage = ResolvedAbility::new(
+            Effect::EachSourceDealsDamage {
+                sources: TargetFilter::ParentTarget,
+                amount: QuantityExpr::Fixed { value: 1 },
+                recipient: EachDamageRecipient::OtherBatchSource {
+                    source_filters: [
+                        Box::new(TargetFilter::Typed(
+                            TypedFilter::creature().controller(ControllerRef::You),
+                        )),
+                        Box::new(TargetFilter::Typed(
+                            TypedFilter::creature().controller(ControllerRef::Opponent),
+                        )),
+                    ],
+                },
+            },
+            Vec::new(),
+            source,
+            PlayerId(0),
+        );
+        let mut second_target = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::Typed(
+                    TypedFilter::creature().controller(ControllerRef::Opponent),
+                ),
+            },
+            Vec::new(),
+            source,
+            PlayerId(0),
+        );
+        second_target.sub_ability = Some(Box::new(damage));
+        let mut first_target = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::Typed(TypedFilter::creature().controller(ControllerRef::You)),
+            },
+            Vec::new(),
+            source,
+            PlayerId(0),
+        );
+        first_target.sub_ability = Some(Box::new(second_target));
+        let mut ability = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::Typed(TypedFilter::creature()),
+            },
+            Vec::new(),
+            source,
+            PlayerId(0),
+        );
+        ability.sub_ability = Some(Box::new(first_target));
+
+        let mut omitted_first = ability.clone();
+        omitted_first.targets = vec![TargetRef::Object(unrelated)];
+        omitted_first
+            .sub_ability
+            .as_deref_mut()
+            .expect("first pair slot")
+            .sub_ability
+            .as_deref_mut()
+            .expect("second pair slot")
+            .targets = vec![TargetRef::Object(second)];
+        stamp_other_batch_source_targets(&mut omitted_first);
+        let omitted_pairwise = omitted_first
+            .sub_ability
+            .as_deref()
+            .and_then(|a| a.sub_ability.as_deref())
+            .and_then(|a| a.sub_ability.as_deref())
+            .expect("pairwise damage node");
+        assert_eq!(
+            omitted_pairwise.targets,
+            vec![TargetRef::Object(second)],
+            "an omitted immediate slot must not be filled by an older target"
+        );
+
+        assign_targets_in_chain(
+            &state,
+            &mut ability,
+            &[
+                TargetRef::Object(unrelated),
+                TargetRef::Object(first),
+                TargetRef::Object(second),
+            ],
+        )
+        .expect("three declared targets assign");
+        let pairwise = ability
+            .sub_ability
+            .as_deref()
+            .and_then(|a| a.sub_ability.as_deref())
+            .and_then(|a| a.sub_ability.as_deref())
+            .expect("pairwise damage node");
+        assert_eq!(
+            pairwise.targets,
+            vec![TargetRef::Object(first), TargetRef::Object(second)],
+            "an unrelated older target must not enter the immediate pair"
+        );
+
+        let mut invalidated = state.clone();
+        let mut invalid_events = Vec::new();
+        crate::game::zones::move_to_zone(
+            &mut invalidated,
+            first,
+            Zone::Graveyard,
+            &mut invalid_events,
+        );
+        crate::game::effects::resolve_ability_chain(
+            &mut invalidated,
+            &ability,
+            &mut invalid_events,
+            0,
+        )
+        .expect("invalidated pair resolves as a no-op");
+        assert_eq!(invalidated.objects[&first].damage_marked, 0);
+        assert_eq!(invalidated.objects[&second].damage_marked, 0);
+
+        let mut events = Vec::new();
+        crate::game::effects::resolve_ability_chain(&mut state, &ability, &mut events, 0)
+            .expect("pairwise chain resolves");
+        assert_eq!(state.objects[&unrelated].damage_marked, 0);
+        assert_eq!(state.objects[&first].damage_marked, 1);
+        assert_eq!(state.objects[&second].damage_marked, 1);
+    }
+
+    #[test]
     fn choose_target_for_ability_skip_completes_optional_multi_target_tail() {
         let mut state = GameState::new(FormatConfig::standard(), 2, 42);
         let source = create_creature(&mut state, PlayerId(0), CardId(1), "Source");
@@ -11492,23 +12815,15 @@ mod tests {
             .legal_targets
             .contains(&TargetRef::Object(caster_creature)));
 
+        // CR 115.10a: the pinned binder is announced by the engine, so the walk
+        // opens on the first object slot with the binder already bound.
         let progress =
             begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(progress.current_slot, 1);
         assert_eq!(
-            progress.current_legal_targets,
-            vec![TargetRef::Player(PlayerId(1))]
+            progress.selected_slots,
+            vec![Some(TargetRef::Player(PlayerId(1)))]
         );
-        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
-            &state,
-            &ability,
-            &slots,
-            &[],
-            &progress,
-            Some(TargetRef::Player(PlayerId(1))),
-        )
-        .expect("forced first player target should be accepted") else {
-            panic!("expected first object slot");
-        };
         assert_eq!(
             progress.current_legal_targets,
             vec![TargetRef::Object(opponent_one_creature)]
@@ -11557,17 +12872,11 @@ mod tests {
 
         let progress =
             begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
-        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
-            &state,
-            &ability,
-            &slots,
-            &[],
-            &progress,
-            Some(TargetRef::Player(PlayerId(1))),
-        )
-        .expect("hidden player constraint should bypass player targeting protection") else {
-            panic!("expected first object slot");
-        };
+        assert_eq!(
+            progress.selected_slots,
+            vec![Some(TargetRef::Player(PlayerId(1)))],
+            "the auto-announced binder still bypasses player targeting protection"
+        );
         assert_eq!(
             progress.current_legal_targets,
             vec![TargetRef::Object(opponent_creature)]
@@ -11613,17 +12922,6 @@ mod tests {
 
         let progress =
             begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
-        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
-            &state,
-            &ability,
-            &slots,
-            &[],
-            &progress,
-            Some(TargetRef::Player(PlayerId(1))),
-        )
-        .expect("hidden player slot should be accepted") else {
-            panic!("expected object slot");
-        };
         assert_eq!(
             progress.current_legal_targets,
             vec![TargetRef::Object(unprotected_enchantment)]
@@ -11768,31 +13066,9 @@ mod tests {
             &slots,
             &[],
             &progress,
-            Some(TargetRef::Player(PlayerId(1))),
-        )
-        .expect("first hidden player slot should be accepted") else {
-            panic!("expected first object slot");
-        };
-        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
-            &state,
-            &ability,
-            &slots,
-            &[],
-            &progress,
             Some(TargetRef::Object(opponent_one_creature)),
         )
         .expect("first object slot should be accepted") else {
-            panic!("expected second hidden player slot");
-        };
-        let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
-            &state,
-            &ability,
-            &slots,
-            &[],
-            &progress,
-            Some(TargetRef::Player(PlayerId(2))),
-        )
-        .expect("second hidden player slot should be accepted") else {
             panic!("expected second object slot");
         };
         let TargetSelectionAdvance::InProgress(progress) = choose_target_for_ability(
@@ -11813,6 +13089,202 @@ mod tests {
                 .current_legal_targets
                 .contains(&TargetRef::Player(PlayerId(1))),
             "trailing non-fanout target slot should fall through to normal target recompute"
+        );
+    }
+
+    /// Shared board for the two `chooser` rows: a MANDATORY per-opponent fanout
+    /// with exactly one opponent, who controls exactly one legal permanent. The
+    /// two rows are separate `#[test]` functions with their own verdicts and
+    /// differ only in the binder slot's `chooser`.
+    fn per_opponent_binder_chooser_fixture() -> (
+        GameState,
+        ResolvedAbility,
+        Vec<TargetSelectionSlot>,
+        ObjectId,
+    ) {
+        let mut state = GameState::new_two_player(42);
+        let opponent_creature = create_creature(&mut state, PlayerId(1), CardId(1), "Opp One");
+        let ability = per_opponent_gain_control_ability();
+        let slots = build_target_slots(&state, &ability).expect("target slots should build");
+        (state, ability, slots, opponent_creature)
+    }
+
+    /// CR 601.2c + CR 115.1: a slot another player announces is never the
+    /// controller's to auto-resolve, even when it is a structurally pinned
+    /// per-opponent binder. Paired negative for
+    /// `binder_slot_without_a_chooser_is_autofilled`.
+    #[test]
+    fn binder_slot_with_a_foreign_chooser_is_not_autofilled() {
+        let (state, ability, mut slots, _) = per_opponent_binder_chooser_fixture();
+        assert!(is_per_opponent_target_fanout(&ability));
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].legal_targets, vec![TargetRef::Player(PlayerId(1))]);
+        assert!(
+            !slots[0].optional,
+            "the fixture must satisfy every conjunct except `chooser`"
+        );
+
+        slots[0].chooser = Some(PlayerId(1));
+        let progress =
+            begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(
+            progress.current_slot, 0,
+            "a chooser-stamped binder remains an announced step for that player"
+        );
+        assert_eq!(
+            progress.current_legal_targets,
+            vec![TargetRef::Player(PlayerId(1))]
+        );
+    }
+
+    /// CR 115.10a: the same fixture with no foreign chooser — the pinned
+    /// opponent is announced by the engine and the walk opens on the object
+    /// slot. Sibling positive for
+    /// `binder_slot_with_a_foreign_chooser_is_not_autofilled`.
+    #[test]
+    fn binder_slot_without_a_chooser_is_autofilled() {
+        let (state, ability, slots, opponent_creature) = per_opponent_binder_chooser_fixture();
+        assert_eq!(slots.len(), 2);
+        assert!(slots[0].chooser.is_none());
+        assert_eq!(slots[0].legal_targets, vec![TargetRef::Player(PlayerId(1))]);
+
+        let progress =
+            begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(
+            progress.current_slot, 1,
+            "the pinned binder is announced on the controller's behalf"
+        );
+        assert_eq!(
+            progress.selected_slots,
+            vec![Some(TargetRef::Player(PlayerId(1)))]
+        );
+        assert_eq!(
+            progress.current_legal_targets,
+            vec![TargetRef::Object(opponent_creature)]
+        );
+    }
+
+    /// CR 603.3d: a REQUIRED binder with no legal player still removes the
+    /// ability from the stack. The auto-fill block is deliberately ordered
+    /// after the empty-legal-set block, so this path is byte-identical to its
+    /// pre-auto-fill behavior.
+    #[test]
+    fn binder_with_no_legal_player_still_reports_no_legal_combinations() {
+        let mut state = GameState::new_two_player(42);
+        create_creature(&mut state, PlayerId(1), CardId(1), "Opp One");
+        let ability = per_opponent_gain_control_ability();
+
+        let mut slots = build_target_slots(&state, &ability).expect("target slots should build");
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].legal_targets, vec![TargetRef::Player(PlayerId(1))]);
+        assert!(!slots[0].optional);
+
+        // CR 800.4: the sole opponent leaves the game after the slots were
+        // built. The fanout then yields no spec at all, and the stale required
+        // binder slot has no legal player left.
+        state
+            .players
+            .iter_mut()
+            .find(|player| player.id == PlayerId(1))
+            .expect("opponent seat")
+            .is_eliminated = true;
+        slots[0].legal_targets.clear();
+
+        let error = begin_target_selection_for_ability(&state, &ability, &slots, &[])
+            .expect_err("a required binder with no legal player must not be auto-filled");
+        assert!(
+            matches!(&error, EngineError::ActionNotAllowed(message)
+                if message == "No legal target combinations available"),
+            "expected the CR 603.3d no-legal-combination error, got {error:?}"
+        );
+    }
+
+    /// CR 115.10a does NOT apply to an ordinary singleton target: "destroy
+    /// target creature" identifies the creature by the word "target", so the
+    /// controller still announces it even when exactly one is legal. Negative
+    /// control for the class boundary — the general "any mandatory singleton
+    /// auto-fills" rule is explicitly not implemented.
+    #[test]
+    fn a_lone_legal_creature_for_destroy_target_creature_still_prompts() {
+        let mut state = GameState::new_two_player(42);
+        let lone_creature = create_creature(&mut state, PlayerId(1), CardId(1), "Lone Creature");
+        let ability = ResolvedAbility::new(
+            Effect::Destroy {
+                target: TargetFilter::Typed(TypedFilter::creature()),
+                cant_regenerate: false,
+            },
+            vec![],
+            ObjectId(900),
+            PlayerId(0),
+        );
+        assert!(!is_per_opponent_target_fanout(&ability));
+
+        let slots = build_target_slots(&state, &ability).expect("target slots should build");
+        assert_eq!(slots.len(), 1);
+        assert!(!slots[0].optional);
+        assert!(slots[0].chooser.is_none());
+        let progress =
+            begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(
+            progress.current_slot, 0,
+            "the word `target` attaches to the creature, so the controller announces it"
+        );
+        assert_eq!(
+            progress.current_legal_targets,
+            vec![TargetRef::Object(lone_creature)]
+        );
+
+        // Reach guard: the same shape with a genuine choice also prompts at
+        // slot 0, so the singleton assertion above is not the only branch.
+        let second_creature =
+            create_creature(&mut state, PlayerId(1), CardId(2), "Second Creature");
+        let slots = build_target_slots(&state, &ability).expect("target slots should build");
+        let progress =
+            begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(progress.current_slot, 0);
+        assert!(progress
+            .current_legal_targets
+            .contains(&TargetRef::Object(second_creature)));
+    }
+
+    /// CR 115.10a is scoped to the per-opponent fanout BINDER, not to every
+    /// pinned-player slot. A mandatory `SpecificPlayer` slot on a NON-fanout
+    /// ability is a real announced target and still prompts — this is the row
+    /// that separates the adopted `is_per_opponent_target_fanout` gate from a
+    /// filter-shape-only predicate.
+    #[test]
+    fn mandatory_specific_player_slot_on_a_non_fanout_ability_still_prompts() {
+        let state = GameState::new(FormatConfig::standard(), 3, 42);
+        let pinned = PlayerId(1);
+        let ability = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::SpecificPlayer { id: pinned },
+            },
+            vec![],
+            ObjectId(900),
+            PlayerId(0),
+        );
+        assert!(!ability.optional_targeting);
+        assert!(ability.multi_target.is_none());
+        assert!(!is_per_opponent_target_fanout(&ability));
+
+        // Reach guard: the fixture satisfies every conjunct of the auto-fill
+        // guard EXCEPT the fanout gate — mandatory, unchoosered, singleton.
+        let slots = build_target_slots(&state, &ability).expect("target slots should build");
+        assert_eq!(slots.len(), 1);
+        assert!(!slots[0].optional);
+        assert!(slots[0].chooser.is_none());
+        assert_eq!(slots[0].legal_targets, vec![TargetRef::Player(pinned)]);
+
+        let progress =
+            begin_target_selection_for_ability(&state, &ability, &slots, &[]).expect("selection");
+        assert_eq!(
+            progress.current_slot, 0,
+            "a pinned-player slot outside the fanout class is still announced by the controller"
+        );
+        assert_eq!(
+            progress.current_legal_targets,
+            vec![TargetRef::Player(pinned)]
         );
     }
 
@@ -13242,6 +14714,7 @@ mod tests {
                 target: TargetFilter::Player,
                 enters_under: None,
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                enters_attacking: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
                 library_position: None,
@@ -13264,6 +14737,45 @@ mod tests {
         assert!(slots[0]
             .legal_targets
             .contains(&TargetRef::Player(PlayerId(1))));
+    }
+
+    /// CR 115.1 + CR 608.2b: a ChangeZoneAll player filter is a declared
+    /// player target, unlike an internal delayed ParentTarget filter. It must
+    /// be revalidated and cannot keep an eliminated player alive as a target.
+    #[test]
+    fn validate_targets_in_chain_drops_eliminated_change_zone_all_player_target() {
+        let mut state = GameState::new_two_player(42);
+        state.players[1].is_eliminated = true;
+        let ability = ResolvedAbility::new(
+            Effect::ChangeZoneAll {
+                origin: Some(Zone::Graveyard),
+                destination: Zone::Exile,
+                target: TargetFilter::Player,
+                enters_under: None,
+                enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                enters_attacking: false,
+                enter_with_counters: vec![],
+                face_down_profile: None,
+                library_position: None,
+                random_order: false,
+            },
+            vec![TargetRef::Player(PlayerId(1))],
+            ObjectId(900),
+            PlayerId(0),
+        );
+
+        let validated = validate_targets_in_chain(&state, &ability);
+        assert!(
+            validated.targets.is_empty(),
+            "an eliminated player must not survive ChangeZoneAll target revalidation"
+        );
+        assert!(
+            crate::game::targeting::check_fizzle(
+                &flatten_targets_in_chain(&ability),
+                &flatten_targets_in_chain(&validated),
+            ),
+            "a ChangeZoneAll ability whose sole player target is gone must fizzle"
+        );
     }
 
     /// CR 109.4 + CR 115.1 + CR 506.2: Karazikar regression guard.
@@ -14501,6 +16013,7 @@ mod tests {
 
         let ability = ResolvedAbility::new(
             Effect::CreateDamageReplacement {
+                redirect_lifetime: crate::types::ability::RedirectionLifetime::OneOpportunity,
                 source_filter: Some(TargetFilter::SelfRef),
                 combat_scope: None,
                 target_filter: None,
@@ -14559,6 +16072,7 @@ mod tests {
 
         let ability = ResolvedAbility::new(
             Effect::CreateDamageReplacement {
+                redirect_lifetime: crate::types::ability::RedirectionLifetime::OneOpportunity,
                 source_filter: Some(TargetFilter::ChosenDamageSource { filter: None }),
                 combat_scope: None,
                 target_filter: None,
@@ -14611,6 +16125,7 @@ mod tests {
 
         let ability = ResolvedAbility::new(
             Effect::CreateDamageReplacement {
+                redirect_lifetime: crate::types::ability::RedirectionLifetime::OneOpportunity,
                 source_filter: Some(TargetFilter::SelfRef),
                 combat_scope: None,
                 target_filter: None,

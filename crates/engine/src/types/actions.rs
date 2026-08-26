@@ -5,7 +5,8 @@ use super::counter::CounterType;
 use super::game_state::{
     AutoMayChoice, AutoPassRequest, CastPaymentMode, CombatDamageAssignmentMode,
     CompanionDeclaration, CounterCostChoice, CounterMoveChoice, CounterRemoveChoice,
-    MayTriggerAutoChoiceKey, PriorityPassingMode, ShardChoice, YieldScope, YieldTarget,
+    MayTriggerAutoChoiceScope, MayTriggerAutoChoiceSelector, PriorityPassingMode, ShardChoice,
+    YieldScope, YieldTarget,
 };
 use super::identifiers::{CardId, ObjectId};
 use super::keywords::Keyword;
@@ -309,6 +310,11 @@ pub enum GameAction {
     ChooseReplacement {
         index: usize,
     },
+    /// CR 614.12a: choose which eligible opponent controls an entering
+    /// permanent. This is distinct from CR 616 replacement ordering.
+    ChooseEntryController {
+        opponent: PlayerId,
+    },
     /// CR 603.3b: Player submits the chosen order for their pending triggers.
     /// `order` is a permutation of indices into the `OrderTriggers.triggers`
     /// vec the player was prompted with; index 0 = first placed (bottom of
@@ -551,6 +557,8 @@ pub enum GameAction {
     },
     DecideOptionalEffectAndRemember {
         choice: AutoMayChoice,
+        #[serde(default)]
+        scope: MayTriggerAutoChoiceScope,
     },
     /// CR 118.12: Pay or decline an "unless pays" cost (e.g., Mana Leak, No More Lies).
     PayUnlessCost {
@@ -679,7 +687,7 @@ pub enum GameAction {
     ChooseLegend {
         keep: ObjectId,
     },
-    /// CR 310.10 + CR 704.5w + CR 704.5x: Choose which player becomes the
+    /// CR 310.11 + CR 704.5w + CR 704.5x: Choose which player becomes the
     /// battle's new protector when the SBA pauses with a `BattleProtectorChoice`.
     ChooseBattleProtector {
         protector: PlayerId,
@@ -887,9 +895,21 @@ pub enum GameAction {
     /// CR 732.2a: the proposer (the loop's determinate winner, holding priority)
     /// declares the loop shortcut. `count` is the repeat count — Phase 3 only produces
     /// [`IterationCount::UntilLethal`]. `template` pins the per-iteration choices for a
-    /// choice-bearing loop; it MUST be `None` in Phase 3 (the B3 consumer that reads it
-    /// is Phase 4 — the field is present now so Phase 4 adds no dispatch-signature
-    /// change).
+    /// choice-bearing loop, and `Some` IS accepted and consumed: the declare handler binds
+    /// `template.owner` to the engine-issued `offer.proposer` (CR 603.5 — a proposer may pin only
+    /// their own choices) and, for a non-empty schema, requires
+    /// `decision_template::{predictability_gate, validate_pins}` to pass before the pins drive the
+    /// cycle; any failure rejects the declaration and hands back to manual play. That owner binding
+    /// plus pin validation IS L2 (unconditionality by construction) enforced AT THE WIRE: an
+    /// accepted template cannot carry a choice its proposer never pinned or was not entitled to
+    /// pin, so the sequence the table accepts is the sequence that runs — which is why accepting
+    /// `Some` costs the CR 732.2a argument nothing.
+    ///
+    /// The CURRENT FRONTEND always sends `null` (`LoopShortcutModal`, pinned by that modal's T2
+    /// test) — that is a client-side policy, NOT this action's contract. Engine-side per-iteration
+    /// pin CAPTURE is what remains outstanding, as part of the "Shortcut-system rules-correctness
+    /// completion" follow-up in `.deferred-backlog.md` (see
+    /// `analysis::loop_check::ShortcutResponse`'s deficiency note).
     DeclareShortcut {
         count: crate::analysis::decision_template::IterationCount,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -924,15 +944,41 @@ pub enum GameAction {
     /// display them verbatim and echo them back; dispatch revalidates `group`
     /// against live state and never trusts either echoed value.
     ///
-    /// Appended at the END of this enum on purpose: `GameActionKind` derives
-    /// `PartialOrd, Ord`, so a mid-enum insertion would renumber later
-    /// discriminants and shift `cmp_stable` ordering (AI candidate ordering and
-    /// replay determinism).
+    /// Kept after the existing action variants so their derived
+    /// `GameActionKind` ordering remains stable for deterministic replay.
     EndContinuousEffect {
         group: crate::types::game_state::EndEffectGroupId,
         source_name: String,
         cost: crate::types::mana::ManaCost,
     },
+    /// Begins the table-consent protocol for the forthcoming Resolve All batch.
+    /// Phase 1 only records unanimous consent; it deliberately does not drive
+    /// priority or resolve the batch.
+    BeginResolveAll {
+        max_resolutions: u32,
+    },
+    /// Answers the currently queued Resolve All consent prompt. `epoch` makes
+    /// delayed transport submissions fail closed rather than answering a newer
+    /// proposal.
+    RespondResolveAllConsent {
+        epoch: u64,
+        decision: ResolveAllConsentDecision,
+    },
+    /// Withdraws a representative's prior Resolve All consent while the exact
+    /// epoch remains active. This is intentionally available from Ready as
+    /// well as while another representative is queued.
+    RevokeResolveAllConsent {
+        epoch: u64,
+        representative: PlayerId,
+    },
+}
+
+/// One representative's explicit Resolve All decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum ResolveAllConsentDecision {
+    Grant,
+    Decline,
 }
 
 /// CR 117.3d: The mutation a `GameAction::SetPriorityYield` performs on the
@@ -956,12 +1002,14 @@ pub enum PriorityYieldOp {
 
 /// CR 603.5: The mutation a `GameAction::SetMayTriggerAutoChoice` performs on the
 /// acting player's stored "don't ask again" auto-choices for optional ("may")
-/// triggers. `Remove` echoes a stored key verbatim; `ClearAll` drops every stored
+/// triggers. `Remove` echoes a stored selector verbatim; `ClearAll` drops every stored
 /// auto-choice belonging to the acting player.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum MayTriggerAutoChoiceOp {
-    Remove { key: MayTriggerAutoChoiceKey },
+    Remove {
+        selector: MayTriggerAutoChoiceSelector,
+    },
     ClearAll,
 }
 
@@ -990,6 +1038,16 @@ pub enum LearnOption {
 /// any payload that predates the toggle.
 fn default_true() -> bool {
     true
+}
+
+/// Default and maximum debug-spawn batch sizes. The ceiling is deliberately
+/// small relative to the server's 10,000-object snapshot ceiling: debug spawns
+/// can still be multiplied by ordinary token replacement effects.
+pub const MAX_DEBUG_CREATE_COUNT: u32 = 100;
+
+/// Serde default for debug create counts: legacy payloads create one object.
+fn default_debug_create_count() -> u32 {
+    1
 }
 
 /// Direct game-state manipulation actions for debugging, testing, and remediation.
@@ -1021,6 +1079,11 @@ pub enum DebugAction {
         card_name: String,
         owner: PlayerId,
         zone: Zone,
+        /// Number of card objects to create. The WASM card-database bridge
+        /// currently supports one-at-a-time materialization only, because an
+        /// entry can pause for a replacement or ETB choice.
+        #[serde(default = "default_debug_create_count")]
+        count: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attach_to: Option<AttachTarget>,
         /// When `true`, route a `Battlefield` spawn through the real ETB pipeline
@@ -1166,6 +1229,10 @@ pub enum DebugAction {
     /// pass are skipped — mirrors `MoveToZone { simulate: false }`.
     CreateToken {
         request: DebugTokenRequest,
+        /// Number of tokens proposed in one creation event. This intentionally
+        /// reaches the normal replacement pipeline as one batch.
+        #[serde(default = "default_debug_create_count")]
+        count: u32,
         #[serde(default = "default_true")]
         run_etb: bool,
     },
@@ -1174,6 +1241,9 @@ pub enum DebugAction {
     CreateTokenCopy {
         source_id: ObjectId,
         owner: PlayerId,
+        /// Number of token copies created by the normal copy-token resolver.
+        #[serde(default = "default_debug_create_count")]
+        count: u32,
         /// Apply the existing `RemoveSupertype(Legendary)` copy modification
         /// while synthesizing the token.
         #[serde(default)]
@@ -1224,6 +1294,35 @@ impl DebugTokenRequest {
 }
 
 impl DebugAction {
+    /// A zero-count create request is an authorized, state-preserving no-op.
+    /// The action boundary recognizes it before lifecycle/finalization work so
+    /// UI count controls can submit zero without invalidating replays.
+    pub fn is_zero_count_create(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateCard { count: 0, .. }
+                | Self::CreateToken { count: 0, .. }
+                | Self::CreateTokenCopy { count: 0, .. }
+        )
+    }
+
+    /// Rejects hostile or accidental debug spawn batches before they allocate
+    /// objects. Zero is legal and is handled as a no-op by the action boundary.
+    pub fn validate_create_count(&self) -> Result<(), String> {
+        let count = match self {
+            Self::CreateCard { count, .. }
+            | Self::CreateToken { count, .. }
+            | Self::CreateTokenCopy { count, .. } => *count,
+            _ => return Ok(()),
+        };
+        if count > MAX_DEBUG_CREATE_COUNT {
+            return Err(format!(
+                "Debug create count {count} exceeds the maximum {MAX_DEBUG_CREATE_COUNT}"
+            ));
+        }
+        Ok(())
+    }
+
     /// Human-readable description of this debug action, used by the sandbox
     /// audit log so all players see what an authorized debugger did. Engine
     /// owns the wording so the FE remains a pure display layer.
@@ -1270,6 +1369,7 @@ impl DebugAction {
                 card_name,
                 owner,
                 zone,
+                count,
                 attach_to,
                 run_etb,
                 nonlegendary,
@@ -1284,8 +1384,9 @@ impl DebugAction {
                 let etb_suffix = if *run_etb { "" } else { " (no ETB)" };
                 let nonlegendary_suffix = if *nonlegendary { " (nonlegendary)" } else { "" };
                 format!(
-                    "CreateCard ({} for {} in {:?}{}{}{})",
+                    "CreateCard ({} ×{} for {} in {:?}{}{}{})",
                     card_name,
+                    count,
                     player_label(*owner),
                     zone,
                     attach_suffix,
@@ -1421,7 +1522,11 @@ impl DebugAction {
                 player_label(*active_player)
             ),
             DebugAction::RunStateBasedActions => "RunStateBasedActions".to_string(),
-            DebugAction::CreateToken { request, run_etb } => {
+            DebugAction::CreateToken {
+                request,
+                count,
+                run_etb,
+            } => {
                 let counters = if request.enter_with_counters().is_empty() {
                     String::new()
                 } else {
@@ -1452,8 +1557,9 @@ impl DebugAction {
                     } => characteristics.display_name.clone(),
                 };
                 format!(
-                    "CreateToken ({} for {}{}{})",
+                    "CreateToken ({} ×{} for {}{}{})",
                     token_label,
+                    count,
                     player_label(request.owner()),
                     counters,
                     etb_suffix
@@ -1462,10 +1568,12 @@ impl DebugAction {
             DebugAction::CreateTokenCopy {
                 source_id,
                 owner,
+                count,
                 nonlegendary,
             } => format!(
-                "CreateTokenCopy ({} for {}{})",
+                "CreateTokenCopy ({} ×{} for {}{})",
                 obj(*source_id),
+                count,
                 player_label(*owner),
                 if *nonlegendary { " (nonlegendary)" } else { "" },
             ),
@@ -1615,6 +1723,7 @@ impl GameAction {
             | GameAction::SelectTargets { .. }
             | GameAction::ChooseTarget { .. }
             | GameAction::ChooseReplacement { .. }
+            | GameAction::ChooseEntryController { .. }
             | GameAction::OrderTriggers { .. }
             | GameAction::CancelCast
             | GameAction::BackToManaPayment
@@ -1697,6 +1806,9 @@ impl GameAction {
             | GameAction::RespondToShortcut { .. }
             | GameAction::DeclineShortcut
             | GameAction::PrecastCopyShortcut { .. }
+            | GameAction::BeginResolveAll { .. }
+            | GameAction::RespondResolveAllConsent { .. }
+            | GameAction::RevokeResolveAllConsent { .. }
             // CR 116.2c: the payload names a continuous-effect GROUP, not a
             // permanent — a global action with no source object (frontend
             // Pattern A). The Licid that installed the effect is not addressed

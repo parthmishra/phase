@@ -3,7 +3,7 @@
 //! Covers:
 //! - Defense-counter ETB (CR 310.4b)
 //! - Zero-defense SBA (CR 704.5v + CR 310.7)
-//! - Protector choice/getter (CR 310.11a + CR 310.8e)
+//! - Protector choice/getter (CR 310.11a + CR 310.8a)
 //! - Attack target routing — defending player = protector (CR 508.5 + CR 310.8d)
 //! - Protector cannot attack own battle (CR 310.8b)
 
@@ -104,6 +104,7 @@ fn siege_victory_cast_during_resolution_enters_transformed() {
             casting_restrictions: Vec::new(),
             casting_options: Vec::new(),
             layout_kind: None,
+            parse_warnings: vec![],
         });
     }
 
@@ -166,14 +167,14 @@ fn zero_defense_battle_goes_to_graveyard_via_sba() {
     );
 }
 
-/// CR 310.8e + CR 310.11a: The `protector()` getter returns the chosen opponent.
+/// CR 310.8 + CR 310.8a: The `protector()` getter returns the chosen opponent.
 #[test]
 fn protector_getter_returns_chosen_player() {
     let (runner, battle) = prime_siege(P0, P1, "Protected Siege", 3);
     assert_eq!(runner.state().objects[&battle].protector(), Some(P1));
 }
 
-/// CR 310.8e: Non-battle permanents always return None from `protector()`.
+/// CR 310.8: Non-battle permanents always return None from `protector()`.
 #[test]
 fn non_battle_has_no_protector() {
     let mut scenario = GameScenario::new();
@@ -242,7 +243,7 @@ fn battle_attack_defending_player_is_protector() {
 #[test]
 fn battle_protector_auto_applies_with_single_candidate_2p() {
     let (mut runner, battle) = prime_siege(P0, P0, "Self-Protected Siege", 3);
-    // Baseline: protector == controller (illegal per CR 310.8b / 310.11a).
+    // Baseline: protector == controller (illegal per CR 310.11a).
     assert_eq!(runner.state().objects[&battle].protector(), Some(P0));
 
     let mut events = Vec::new();
@@ -413,7 +414,7 @@ fn battle_protector_choice_excludes_a_phased_out_opponent_and_still_offers_the_r
 /// boundary, and at `1` the engine writes the protector ITSELF and publishes nothing: no
 /// `WaitingFor`, no events. That is invisible to every `candidates` assertion the R4-family
 /// shape prescribes, so it needs its own arm. The auto-applied seat is not wrong — it is
-/// the sole surviving legal opponent, which CR 310.10 / CR 310.11a make the only
+/// the sole surviving legal opponent, which CR 310.10 + CR 310.11a make the only
 /// appropriate player. What this arm guards is the SILENT DISAPPEARANCE of the prompt.
 ///
 /// BOTH halves are required: (a) alone would pass on a board where the SBA never ran at

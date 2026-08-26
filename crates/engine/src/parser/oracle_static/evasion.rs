@@ -13,50 +13,6 @@ pub(crate) fn parse_min_blockers_phrase(input: &str) -> OracleResult<'_, u32> {
     Ok((rest, n))
 }
 
-pub(crate) fn parse_source_power_block_restriction(text: &str) -> Option<StaticDefinition> {
-    let lower = text.to_lowercase();
-    let (rest, _) = tag::<_, _, OracleError<'_>>("creatures with power less than ")
-        .parse(lower.as_str())
-        .ok()?;
-    let (rest, _) = alt((
-        tag::<_, _, OracleError<'_>>("~'s power"),
-        tag("this creature's power"),
-    ))
-    .parse(rest)
-    .ok()?;
-    let (rest, _) = tag::<_, _, OracleError<'_>>(" can't block ")
-        .parse(rest)
-        .ok()?;
-    let (rest, _) = tag::<_, _, OracleError<'_>>("creatures you control")
-        .parse(rest)
-        .ok()?;
-    let (rest, _) = opt(tag::<_, _, OracleError<'_>>(".")).parse(rest).ok()?;
-    if !rest.trim().is_empty() {
-        return None;
-    }
-
-    Some(
-        StaticDefinition::new(StaticMode::CantBeBlockedBy {
-            filter: TargetFilter::Typed(TypedFilter::creature().properties(vec![
-                FilterProp::PtComparison {
-                    stat: PtStat::Power,
-                    scope: PtValueScope::Current,
-                    comparator: Comparator::LT,
-                    value: QuantityExpr::Ref {
-                        qty: QuantityRef::Power {
-                            scope: ObjectScope::Source,
-                        },
-                    },
-                },
-            ])),
-        })
-        .affected(TargetFilter::Typed(
-            TypedFilter::creature().controller(ControllerRef::You),
-        ))
-        .description(text.to_string()),
-    )
-}
-
 /// CR 509.1b: classify the remainder after "can't be blocked except by " into a
 /// typed `BlockExceptionKind`. A leading count phrase ("N or more creatures")
 /// is a minimum-blocker constraint; everything else is a per-blocker quality
@@ -349,7 +305,7 @@ fn parse_compound_subject_rule_static_inner(
         predicates
             .into_iter()
             .map(|(predicate, defended)| {
-                lower_rule_static(predicate, affected.clone(), text).attack_defended(defended)
+                lower_rule_static(predicate, None, affected.clone(), text).attack_defended(defended)
             })
             .collect(),
     )
@@ -1039,7 +995,7 @@ pub(crate) fn try_split_and_must_attack_block(text: &str) -> Option<Vec<StaticDe
     }
     for (predicate, defended) in tail_predicates {
         let mut companion =
-            lower_rule_static(predicate, affected.clone(), text).attack_defended(defended);
+            lower_rule_static(predicate, None, affected.clone(), text).attack_defended(defended);
         if let Some(condition) = condition.clone() {
             companion = companion.condition(condition);
         }
@@ -2325,7 +2281,7 @@ pub(crate) fn parse_subject_rule_static(text: &str) -> Option<StaticDefinition> 
             unless.lower.trim_end_matches('.'),
         ) {
             let predicate = parse_rule_static_predicate(base.original)?;
-            let mut def = lower_rule_static(predicate, affected, text);
+            let mut def = lower_rule_static(predicate, None, affected, text);
             def.condition = Some(StaticCondition::Not {
                 condition: Box::new(control),
             });
@@ -2337,7 +2293,9 @@ pub(crate) fn parse_subject_rule_static(text: &str) -> Option<StaticDefinition> 
         parse_combat_rule_static_predicate_with_defended_nom(predicate_text)
     {
         if rest.trim().is_empty() {
-            return Some(lower_rule_static(predicate, affected, text).attack_defended(defended));
+            return Some(
+                lower_rule_static(predicate, None, affected, text).attack_defended(defended),
+            );
         }
     }
 
@@ -2346,12 +2304,12 @@ pub(crate) fn parse_subject_rule_static(text: &str) -> Option<StaticDefinition> 
     if matches!(predicate, RuleStaticPredicate::CantUntap) {
         let pred_lower = predicate_text.to_lowercase();
         if let Some(condition) = extract_cant_untap_condition(&pred_lower) {
-            let mut def = lower_rule_static(predicate, affected, text);
+            let mut def = lower_rule_static(predicate, None, affected, text);
             def.condition = Some(condition);
             return Some(def);
         }
     }
-    Some(lower_rule_static(predicate, affected, text))
+    Some(lower_rule_static(predicate, None, affected, text))
 }
 
 /// CR 509.1b + CR 609.4 + CR 702.14c + CR 702.14d:
@@ -2441,10 +2399,41 @@ pub(crate) fn parse_subject_combat_rule_static(text: &str) -> Option<StaticDefin
         &lower,
         parse_combat_rule_static_predicate_with_defended_nom,
     )?;
+    // CR 509.1b: the optional OBJECT of a blocking prohibition — "<subject>
+    // can't block <object>" (Gornog, the Red Reaper; Bower Passage; Hinterland
+    // Drake). The blocker-side mirror of `defended` (CR 508.1b) on the attack
+    // side, consumed here so the object composes with this function's shared
+    // subject scoping and trailing-condition handling below rather than needing
+    // a parallel arm that would reach neither.
+    let (rest, block_object, object_is_source) = match predicate {
+        RuleStaticPredicate::CantBlock => match opt(preceded(
+            tag::<_, _, OracleError<'_>>(" "),
+            alt((
+                nom_target::parse_self_reference,
+                super::shared::parse_block_object_filter,
+            )),
+        ))
+        .parse(rest)
+        {
+            // `it`, `this creature`, `this permanent`, and `~` name the static's
+            // source. The restriction is therefore attacker-side:
+            // the source can't be blocked by the parsed subject filter.
+            Ok((after, Some(TargetFilter::SelfRef))) => (after, None, true),
+            Ok((after, Some(object))) => (after, Some(object), false),
+            _ => (rest, None, false),
+        },
+        _ => (rest, None, false),
+    };
     let (rest, _) = opt(tag::<_, _, OracleError<'_>>(".")).parse(rest).ok()?;
     let subject = text[..subject_lower.len()].trim();
     let affected = parse_rule_static_subject_filter(subject)?;
-    let mut def = lower_rule_static(predicate, affected, text).attack_defended(defended);
+    let mut def = if object_is_source {
+        StaticDefinition::new(StaticMode::CantBeBlockedBy { filter: affected })
+            .affected(TargetFilter::SelfRef)
+            .description(text.to_string())
+    } else {
+        lower_rule_static(predicate, block_object, affected, text).attack_defended(defended)
+    };
     let trailing = rest.trim();
     if trailing.is_empty() {
         return Some(def);
@@ -2457,6 +2446,135 @@ pub(crate) fn parse_subject_combat_rule_static(text: &str) -> Option<StaticDefin
         return Some(def);
     }
     None
+}
+
+/// CR 102.2 / CR 102.3 + CR 508.1b / CR 508.1d: the required defending player
+/// class after "attacks ". Currently "a[n] opponent[ with the most life [among
+/// your opponents]]". CR 102.2 (two-player) / CR 102.3 (team multiplayer) scope
+/// the candidate set to opponents. This lowers to a static attack REQUIREMENT (CR
+/// 508.1d), re-evaluated each declare-attackers step; when the class holds more
+/// than one legal defender (e.g. a most-life tie) CR 508.1b — the active player
+/// announcing which player each attacker attacks — is where the player picks among
+/// the tied legal defenders. NOT CR 608.2d: that rule governs choices offered
+/// while resolving a spell or ability, not this continuous static requirement.
+/// Structured as sequential combinators so a future "a[n] player" (relation `All`)
+/// arm slots in without disturbing the opponent path. Reuses the shared
+/// `parse_opponent_most_life_restriction` selector rather than re-deriving the
+/// `PlayerAttribute` shape.
+fn parse_required_defender_selector(input: &str) -> OracleResult<'_, PlayerFilter> {
+    let (input, _) = alt((tag::<_, _, OracleError<'_>>("an "), tag("a "))).parse(input)?;
+    let (input, _) = tag("opponent").parse(input)?;
+    // Optional "with the most life [among your opponents]" qualifier; fall back to
+    // the bare `Opponent` class when the qualifier is absent ("an opponent").
+    match super::oracle_effect::parse_opponent_most_life_restriction(input) {
+        Ok((rest, filter)) => Ok((rest, filter)),
+        Err(_) => Ok((input, PlayerFilter::Opponent)),
+    }
+}
+
+/// CR 508.1d: `attacks <player-class> each combat if able` — the required-attack
+/// predicate. Consumes the verb, the defender selector, and the recurring-combat
+/// suffix, returning the selected `PlayerFilter` for the required defender.
+fn parse_attacks_required_defender_nom(input: &str) -> OracleResult<'_, PlayerFilter> {
+    let (input, _) = tag::<_, _, OracleError<'_>>("attacks ").parse(input)?;
+    let (input, filter) = parse_required_defender_selector(input)?;
+    let (input, _) = alt((
+        tag::<_, _, OracleError<'_>>(" each combat if able"),
+        tag(" each turn if able"),
+    ))
+    .parse(input)?;
+    Ok((input, filter))
+}
+
+/// CR 508.1d + CR 508.1b + CR 604.1 / CR 604.2 + CR 102.2 / CR 102.3: "<subject>
+/// attacks <player-class> each combat if able [unless <condition>]" — a static
+/// attack requirement (CR 508.1d) whose defending player is a live-evaluated class
+/// (Galactus: "an opponent with the most life among your opponents"; CR 102.2 /
+/// CR 102.3 scope "opponent", CR 508.1b covers the active player's choice among
+/// tied legal defenders). Emits
+/// `MustAttackDefender { RequiredDefender::Matching { filter } }`, re-evaluated each
+/// declare-attackers step by the combat resolver.
+///
+/// The dispatcher receives the self-ref-normalized line WITHOUT the CR 207.2c /
+/// CR 207.2d ability-/flavor-word label stripped (Galactus's line arrives as
+/// "Insatiable Hunger — ~ attacks …"), so this wrapper tries the line as-is, then
+/// strips a leading flavor label via `strip_flavor_word_with_name` and retries
+/// ONCE on the body — mirroring the single-hop retry in
+/// `parse_static_line_multi_inner`. The strip is class-general (any leading
+/// flavor label preceding this static form) and safe: a false-positive strip
+/// yields a body that fails the strict subject / "attacks … each combat if able"
+/// match and returns `None`. The full Oracle line (label included) is preserved
+/// as the definition's description for display / round-trip.
+pub(crate) fn parse_forced_attack_defender_static(text: &str) -> Option<StaticDefinition> {
+    parse_forced_attack_defender_static_body(text).or_else(|| {
+        let (_label, body) = super::oracle_modal::strip_flavor_word_with_name(text)?;
+        parse_forced_attack_defender_static_body(&body).map(|def| def.description(text.to_string()))
+    })
+}
+
+fn parse_forced_attack_defender_static_body(text: &str) -> Option<StaticDefinition> {
+    let lower = text.to_lowercase();
+    let (subject_lower, filter, rest) =
+        nom_primitives::scan_preceded(&lower, parse_attacks_required_defender_nom)?;
+    let subject = text[..subject_lower.len()].trim();
+    let affected = parse_rule_static_subject_filter(subject)?;
+    let mut def = StaticDefinition::new(StaticMode::MustAttackDefender {
+        defender: RequiredDefender::Matching { filter },
+    })
+    .affected(affected)
+    .description(text.to_string());
+    // Consume an optional trailing period; any remaining tail MUST be a recognized
+    // `unless` gate (CR 604.1) — otherwise decline so an unrecognized rider cannot
+    // yield a half-parsed static (coverage stays honest / red).
+    let (rest, _) = opt(tag::<_, _, OracleError<'_>>(".")).parse(rest).ok()?;
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Some(def);
+    }
+    // The ONLY permitted tail is an `unless` clause, and it must begin RIGHT HERE.
+    // Requiring `rest` to start with `unless ` (rather than letting the whole-text
+    // `unless` scan below find it anywhere) is what stops an unmodelled rider
+    // between the recurring-combat suffix and `unless` from being silently
+    // swallowed — e.g. "... each combat if able <rider> unless <cond>" must decline,
+    // not parse as if the rider were absent.
+    tag::<_, _, OracleError<'_>>("unless ").parse(rest).ok()?;
+    let tp = TextPair::new(text, &lower);
+    let condition = super::shared::parse_unless_static_condition(&tp)?;
+    // Coverage-honesty gate (CR 604.1): only emit the forced-attack static when the
+    // `unless` gate is a FULLY-MODELED condition. `parse_unless_static_condition`
+    // wraps an unrecognized inner clause as `Not(Unrecognized)` — which (a) the
+    // coverage detector's TOP-LEVEL `Unrecognized` check misses, so the card is
+    // falsely reported supported, and (b) evaluates permanently false at runtime
+    // (`Unrecognized` is true; the wrapping `Not` negates it), silently disabling
+    // the whole requirement. Decline instead so the line stays honestly unsupported
+    // (coverage red) rather than shipping a broken static.
+    if static_condition_contains_unrecognized(&condition) {
+        return None;
+    }
+    def.condition = Some(condition);
+    Some(def)
+}
+
+/// True when `condition` contains an `Unrecognized` clause ANYWHERE in its tree
+/// (recursing through the `Not` / `And` / `Or` combinators). Used by the
+/// forced-attack parser to decline a not-fully-modeled `unless` gate: the
+/// coverage detector only flags a TOP-LEVEL `Unrecognized`, so a nested one
+/// (`Not(Unrecognized)`, the shape `parse_unless_static_condition` emits for an
+/// unknown clause) would otherwise mark the card supported while its requirement
+/// is permanently inert at runtime.
+fn static_condition_contains_unrecognized(condition: &StaticCondition) -> bool {
+    match condition {
+        StaticCondition::Unrecognized { .. } => true,
+        // The only sub-condition-embedding variants — recurse through them. If a NEW
+        // combinator variant that nests `StaticCondition` is added, extend this match;
+        // the leaf wildcard below would otherwise hide an unrecognized clause inside
+        // it. Every remaining variant is a leaf that cannot contain a nested clause.
+        StaticCondition::Not { condition } => static_condition_contains_unrecognized(condition),
+        StaticCondition::And { conditions } | StaticCondition::Or { conditions } => conditions
+            .iter()
+            .any(static_condition_contains_unrecognized),
+        _ => false,
+    }
 }
 
 /// CR 702.122a / 702.171a / 702.184c: nom parser for the crew/saddle/station

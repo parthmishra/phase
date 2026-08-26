@@ -317,6 +317,7 @@ fn finalized_root_matches(
                             card_id: event_card_id,
                             controller: event_controller,
                             object_id: event_object_id,
+                            ..
                         } if *event_card_id == *card_id
                             && *event_controller == *controller
                             && *event_object_id == *object_id
@@ -413,6 +414,12 @@ fn classify_parked_cost_move_root(state: &GameState) -> PaymentContinuationState
         | PendingCostMoveResume::ReplacementMayCost { .. }
         | PendingCostMoveResume::Foretell { .. }
         | PendingCostMoveResume::UnlessBouncePayment { .. }
+        | PendingCostMoveResume::CounterAdditionUnlessPayment { .. }
+        // CR 701.9b: a parked random unless-discard holds no pending cast and
+        // no mana-ability cursor — the game picks the cards with no player
+        // input — so like its counter-addition sibling it affiliates with no
+        // payment-continuation root.
+        | PendingCostMoveResume::RandomDiscardUnlessPayment(..)
         | PendingCostMoveResume::LoyaltyActivation { .. } => {
             PaymentContinuationState::NotAffiliated
         }
@@ -462,6 +469,7 @@ fn classify_deferred_life_root(
             ManaAbilityResume::Priority
             | ManaAbilityResume::CompanionToHand { .. }
             | ManaAbilityResume::EndContinuousEffect { .. }
+            | ManaAbilityResume::TurnFaceUp { .. }
             | ManaAbilityResume::UnlessPayment { .. }
             | ManaAbilityResume::EffectPayCost { .. } => PaymentContinuationState::NotAffiliated,
         },
@@ -552,9 +560,13 @@ fn record_root_from_resume(
         ManaAbilityResume::FinalizePendingManaPayment { player } => {
             Some(root_from_global(state, *player)?)
         }
+        // Special actions and effect payments are not a CAST's payment root:
+        // they carry their own typed continuation and never resume into a
+        // pending cast (CR 116.1 — a special action does not use the stack).
         ManaAbilityResume::Priority
         | ManaAbilityResume::CompanionToHand { .. }
         | ManaAbilityResume::EndContinuousEffect { .. }
+        | ManaAbilityResume::TurnFaceUp { .. }
         | ManaAbilityResume::UnlessPayment { .. }
         | ManaAbilityResume::EffectPayCost { .. } => None,
     };
@@ -657,6 +669,9 @@ fn pending_cost_move_contains_root(
         | Some(PendingCostMoveResume::Foretell { .. })
         | Some(PendingCostMoveResume::DelveManaPayment { .. })
         | Some(PendingCostMoveResume::UnlessBouncePayment { .. })
+        | Some(PendingCostMoveResume::CounterAdditionUnlessPayment { .. })
+        // CR 701.9b: holds no pending cast, so it can contain no root.
+        | Some(PendingCostMoveResume::RandomDiscardUnlessPayment(..))
         | Some(PendingCostMoveResume::LoyaltyActivation { .. })
         | None => false,
     }

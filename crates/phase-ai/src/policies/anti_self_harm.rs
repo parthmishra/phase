@@ -46,6 +46,7 @@ use super::effect_classify::{
 use super::registry::{
     DecisionKind, PolicyId, PolicyReason, PolicyVerdict, TacticalPolicy, CRITICAL_MAX,
 };
+use super::removal_lethality;
 use super::strategy_helpers::can_pay_ward_cost;
 use crate::features::DeckFeatures;
 #[cfg(test)]
@@ -392,8 +393,34 @@ fn score_pre_cast(ctx: &PolicyContext<'_>) -> f64 {
         penalty += ctx.penalties().wasted_cast_penalty;
     }
 
-    // Harmful creature-only spell (e.g. Murder) but no targetable opponent creatures.
-    if has_harmful_creature_only_target && !has_targetable_opponent_creature {
+    // Harmful creature-only spell (e.g. Murder) but no targetable opponent
+    // creatures. A MIXED spell carrying a useful wipe line (`DestroyAll`,
+    // CR 701.8) is NOT a whiff even when every opposing creature is
+    // hexproof/protected: the wipe is NON-targeted and hits the population
+    // (CR 115.10a), so consult the resolver-mirroring mass seam before
+    // charging the no-target penalty.
+    if has_harmful_creature_only_target
+        && !has_targetable_opponent_creature
+        && !ctx.has_opposing_mass_population()
+    {
+        penalty += ctx.penalties().wasted_cast_penalty;
+    }
+
+    // Harmful creature-only spell whose damage is provably non-lethal against
+    // EVERY legal target (CR 704.5g): committing a whiff burns the card. The
+    // existing `lethal_to_creature` branch above (is_useful_removal_target)
+    // only detects provable non-lethality for FIXED damage amounts; for a
+    // dynamic amount (Slash of Light's "number of creatures you control +
+    // number of Equipment you control") it fails open as `None` -> "useful",
+    // so it never fires. `can_kill_any_legal_target` resolves the amount live
+    // (CR 120.3 / CR 701) via the `removal_lethality` damage model and vetoes
+    // (soft) only the total whiff. Soft penalty (NOT a hard reject): it mirrors
+    // the sibling whiff branches, and synergy / prowess / storm-type
+    // spellslinger policies may still prefer to cast for cast-triggers.
+    if has_harmful_creature_only_target
+        && has_targetable_opponent_creature
+        && !removal_lethality::can_kill_any_legal_target(ctx)
+    {
         penalty += ctx.penalties().wasted_cast_penalty;
     }
 
@@ -623,8 +650,22 @@ fn target_reject_reason(ctx: &PolicyContext<'_>, target: &TargetRef) -> Option<P
             (prefers_self != is_self)
                 .then(|| PolicyReason::new("anti_self_harm_wrong_player_target"))
         }
-        TargetRef::Object(object_id) => target_is_sacrificed_source(ctx, *object_id)
-            .then(|| PolicyReason::new("anti_self_harm_sacrificed_source_target")),
+        TargetRef::Object(object_id) => {
+            if target_is_sacrificed_source(ctx, *object_id) {
+                return Some(PolicyReason::new("anti_self_harm_sacrificed_source_target"));
+            }
+
+            let source = ctx.source_object()?;
+            let target = ctx.state.objects.get(object_id)?;
+            (source
+                .card_types
+                .subtypes
+                .iter()
+                .any(|subtype| subtype == "Aura")
+                && matches!(aura_polarity(source), EffectPolarity::Beneficial)
+                && target.controller != ctx.ai_player)
+                .then(|| PolicyReason::new("anti_self_harm_beneficial_aura_opponent_target"))
+        }
     }
 }
 
@@ -799,48 +840,6 @@ fn score_target_object(ctx: &PolicyContext<'_>, object_id: ObjectId, beneficial:
                 }
             }
 
-            // Price the cost of an *affordable* ward (must pay an extra cost).
-            // An unaffordable ward is hard-rejected upstream by `tactical_gate`
-            // (CR 702.21a — the spell would just be countered), so this judgment
-            // layer never double-scores that case.
-            for keyword in &object.keywords {
-                if let Keyword::Ward(ward_cost) = keyword {
-                    if !can_pay_ward_cost(ctx, ward_cost, object) {
-                        break;
-                    }
-                    let severity = match ward_cost {
-                        WardCost::Mana(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
-                        WardCost::PayLife(amount) => (*amount as f64 / 3.0).min(2.0),
-                        WardCost::PayLifeEqualToPower => {
-                            (object.power.unwrap_or(0).max(0) as f64 / 3.0).min(2.0)
-                        }
-                        WardCost::DiscardCard => 1.5,
-                        WardCost::Sacrifice { count, .. } => *count as f64 * 2.0,
-                        WardCost::Waterbend(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
-                        // CR 702.21a: Compound costs sum severity of components.
-                        WardCost::Compound(costs) => costs
-                            .iter()
-                            .map(|c| match c {
-                                WardCost::Mana(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
-                                WardCost::PayLife(amount) => (*amount as f64 / 3.0).min(2.0),
-                                WardCost::PayLifeEqualToPower => {
-                                    (object.power.unwrap_or(0).max(0) as f64 / 3.0).min(2.0)
-                                }
-                                WardCost::DiscardCard => 1.5,
-                                WardCost::Sacrifice { count, .. } => *count as f64 * 2.0,
-                                WardCost::Waterbend(cost) => {
-                                    (cost.mana_value() as f64 / 2.0).min(2.0)
-                                }
-                                WardCost::Compound(_) => 2.0,
-                            })
-                            .sum::<f64>()
-                            .min(4.0),
-                    };
-                    score += ctx.penalties().ward_cost_penalty_base * severity;
-                    break;
-                }
-            }
-
             // Removal quality mismatch: penalize premium removal on cheap targets
             if let Some(source) = ctx.source_object() {
                 let spell_mv = source.mana_cost.mana_value();
@@ -909,6 +908,102 @@ fn score_target_object(ctx: &PolicyContext<'_>, object_id: ObjectId, beneficial:
             (object.mana_cost.mana_value() as f64).min(6.0)
         };
         score += controller_delta * noncreature_value;
+    }
+
+    // Price the cost of an *affordable* ward (must pay an extra cost). Applies to every
+    // permanent type, not just creatures — a Ward-bearing artifact/enchantment/planeswalker
+    // is exactly as real a target-choice cost as a Ward-bearing creature. An unaffordable ward
+    // is hard-rejected upstream by `tactical_gate` (CR 702.21a — the spell would just be
+    // countered), so this judgment layer never double-scores that case.
+    if !beneficial {
+        for keyword in &object.keywords {
+            if let Keyword::Ward(ward_cost) = keyword {
+                if !can_pay_ward_cost(ctx, ward_cost, object) {
+                    break;
+                }
+                let severity = match ward_cost {
+                    WardCost::Mana(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
+                    WardCost::PayLife(amount) => (*amount as f64 / 3.0).min(2.0),
+                    WardCost::PayLifeEqualToPower => {
+                        (object.power.unwrap_or(0).max(0) as f64 / 3.0).min(2.0)
+                    }
+                    WardCost::DiscardCard => 1.5,
+                    WardCost::Sacrifice { count, .. } => *count as f64 * 2.0,
+                    WardCost::Waterbend(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
+                    // CR 702.21a + CR 122.1 + CR 728.1: giving yourself
+                    // player counters has an explicit, kind-specific
+                    // valuation — no wildcard fallback, so a future
+                    // supported counter kind forces a deliberate
+                    // decision here. A lethal poison payment never
+                    // reaches this scoring at all — `can_pay_ward_cost`
+                    // above already rejects it (reframed as "can't
+                    // rationally pay"), so the Poison arm only ever sees
+                    // sub-lethal, ordinary-severity payments.
+                    WardCost::GetPlayerCounters {
+                        counter_kind: engine::types::player::PlayerCounterKind::Poison,
+                        count,
+                    } => *count as f64 * 3.0,
+                    // CR 728.1: each rad counter mills a card and, if that
+                    // card is nonland, costs 1 life. Real cost, not
+                    // harmless — approximated as PayLife's per-life
+                    // severity (amount/3.0) scaled by ~0.6 (typical
+                    // nonland fraction of a deck), i.e. ~0.2 per counter.
+                    WardCost::GetPlayerCounters {
+                        counter_kind: engine::types::player::PlayerCounterKind::Rad,
+                        count,
+                    } => (*count as f64 * 0.2).min(2.0),
+                    // Experience/ticket counters carry no loss-condition
+                    // or resource-drain risk — purely beneficial or
+                    // neutral to receive.
+                    WardCost::GetPlayerCounters {
+                        counter_kind: engine::types::player::PlayerCounterKind::Experience,
+                        ..
+                    } => 0.0,
+                    WardCost::GetPlayerCounters {
+                        counter_kind: engine::types::player::PlayerCounterKind::Ticket,
+                        ..
+                    } => 0.0,
+                    // CR 702.21a: Compound costs sum severity of components.
+                    // A Compound containing a lethal poison sub-cost is
+                    // also already rejected upstream by `can_pay_ward_cost`
+                    // (which requires every sub-cost payable), so this
+                    // fold only ever sees payable compounds.
+                    WardCost::Compound(costs) => costs
+                        .iter()
+                        .map(|c| match c {
+                            WardCost::Mana(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
+                            WardCost::PayLife(amount) => (*amount as f64 / 3.0).min(2.0),
+                            WardCost::PayLifeEqualToPower => {
+                                (object.power.unwrap_or(0).max(0) as f64 / 3.0).min(2.0)
+                            }
+                            WardCost::DiscardCard => 1.5,
+                            WardCost::Sacrifice { count, .. } => *count as f64 * 2.0,
+                            WardCost::Waterbend(cost) => (cost.mana_value() as f64 / 2.0).min(2.0),
+                            WardCost::GetPlayerCounters {
+                                counter_kind: engine::types::player::PlayerCounterKind::Poison,
+                                count,
+                            } => *count as f64 * 3.0,
+                            WardCost::GetPlayerCounters {
+                                counter_kind: engine::types::player::PlayerCounterKind::Rad,
+                                count,
+                            } => (*count as f64 * 0.2).min(2.0),
+                            WardCost::GetPlayerCounters {
+                                counter_kind: engine::types::player::PlayerCounterKind::Experience,
+                                ..
+                            } => 0.0,
+                            WardCost::GetPlayerCounters {
+                                counter_kind: engine::types::player::PlayerCounterKind::Ticket,
+                                ..
+                            } => 0.0,
+                            WardCost::Compound(_) => 2.0,
+                        })
+                        .sum::<f64>()
+                        .min(4.0),
+                };
+                score += ctx.penalties().ward_cost_penalty_base * severity;
+                break;
+            }
+        }
     }
 
     score
@@ -3059,9 +3154,31 @@ mod tests {
         );
         assert!(score_own > 0.0, "Own creature score should be positive");
         assert!(
-            score_opp < 0.0,
-            "Opponent creature score should be negative"
+            score_opp <= 0.0,
+            "Opponent creature score should not be positive"
         );
+
+        let (decision, candidate) = make_aura_target_selection_ctx(
+            &state,
+            aura_id,
+            vec![TargetRef::Object(own_id), TargetRef::Object(opp_id)],
+            Some(TargetRef::Object(opp_id)),
+        );
+        let ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        assert!(matches!(
+            AntiSelfHarmPolicy.verdict(&ctx),
+            PolicyVerdict::Reject { reason }
+                if reason.kind == "anti_self_harm_beneficial_aura_opponent_target"
+        ));
     }
 
     #[test]
@@ -3952,6 +4069,159 @@ mod tests {
             creature_score - token_score > 2.0,
             "Gap should be significant: creature={creature_score}, token={token_score}, gap={}",
             creature_score - token_score
+        );
+    }
+
+    #[test]
+    fn noncreature_ward_target_scores_lower_than_unwarded_equivalent() {
+        let mut state = make_state();
+
+        // Two identical artifacts (non-creature): one bare, one with a small, payable,
+        // nonlethal poison-counter Ward. Both owned by the opponent (PlayerId(1)) so removal
+        // targeting them is non-beneficial from the AI's (PlayerId(0)) perspective.
+        let bare_card_id = CardId(state.next_object_id);
+        let bare_artifact = create_object(
+            &mut state,
+            bare_card_id,
+            PlayerId(1),
+            "Prophetic Prism".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&bare_artifact)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(engine::types::card_type::CoreType::Artifact);
+
+        let warded_card_id = CardId(state.next_object_id);
+        let warded_artifact = create_object(
+            &mut state,
+            warded_card_id,
+            PlayerId(1),
+            "Warded Relic".to_string(),
+            Zone::Battlefield,
+        );
+        let warded_obj = state.objects.get_mut(&warded_artifact).unwrap();
+        warded_obj
+            .card_types
+            .core_types
+            .push(engine::types::card_type::CoreType::Artifact);
+        warded_obj
+            .keywords
+            .push(Keyword::Ward(WardCost::GetPlayerCounters {
+                counter_kind: engine::types::player::PlayerCounterKind::Poison,
+                count: 2,
+            }));
+
+        // Set up pending trigger with a removal (exile) effect, matching
+        // `trigger_target_prefers_creature_over_token` above.
+        state.pending_trigger = Some(Box::new(engine::game::triggers::PendingTrigger {
+            source_id: ObjectId(200),
+            controller: PlayerId(0),
+            condition: None,
+            ability: Box::new(ResolvedAbility::new(
+                Effect::ChangeZone {
+                    origin: None,
+                    destination: Zone::Exile,
+                    target: TargetFilter::Any,
+                    owner_library: false,
+                    enter_transformed: false,
+                    enters_under: None,
+                    enter_tapped: engine::types::zones::EtbTapState::Unspecified,
+                    enters_attacking: false,
+                    up_to: false,
+                    enter_with_counters: vec![],
+                    conditional_enter_with_counters: vec![],
+                    face_down_profile: None,
+                    enters_modified_if: None,
+                },
+                Vec::new(),
+                ObjectId(200),
+                PlayerId(0),
+            )),
+            timestamp: 1,
+            target_constraints: Vec::new(),
+            distribute: None,
+            trigger_event: None,
+            modal: None,
+            mode_abilities: vec![],
+            description: None,
+            may_trigger_origin: None,
+            subject_match_count: None,
+            die_result: None,
+            provenance: None,
+        }));
+
+        let config = AiConfig::default();
+        let legal_targets = vec![
+            TargetRef::Object(bare_artifact),
+            TargetRef::Object(warded_artifact),
+        ];
+        let decision = AiDecisionContext {
+            waiting_for: WaitingFor::TriggerTargetSelection {
+                player: PlayerId(0),
+                trigger_controller: None,
+                trigger_event: None,
+                trigger_events: Vec::new(),
+                target_slots: vec![TargetSelectionSlot {
+                    legal_targets: legal_targets.clone(),
+                    optional: false,
+                    chooser: None,
+                    effect_kind: EffectKind::NoOp,
+                    effect_detail: TargetEffectDetail::None,
+                }],
+                mode_labels: Vec::new(),
+                target_constraints: Vec::new(),
+                selection: Default::default(),
+                source_id: Some(ObjectId(200)),
+                description: None,
+            },
+            candidates: Vec::new(),
+        };
+
+        // Score targeting the bare artifact
+        let bare_candidate = CandidateAction {
+            action: GameAction::ChooseTarget {
+                target: Some(TargetRef::Object(bare_artifact)),
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Target),
+        };
+        let bare_ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &bare_candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        let bare_score = AntiSelfHarmPolicy.score(&bare_ctx);
+
+        // Score targeting the warded artifact
+        let warded_candidate = CandidateAction {
+            action: GameAction::ChooseTarget {
+                target: Some(TargetRef::Object(warded_artifact)),
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Target),
+        };
+        let warded_ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &warded_candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        let warded_score = AntiSelfHarmPolicy.score(&warded_ctx);
+
+        assert!(
+            bare_score > warded_score,
+            "Should prefer targeting the unwarded artifact ({bare_score}) over the poison-Ward artifact ({warded_score})"
         );
     }
 
@@ -5334,6 +5604,7 @@ mod tests {
             source_id,
             description: None,
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
 
         let config = AiConfig::default();
@@ -5390,6 +5661,7 @@ mod tests {
             source_id,
             description: None,
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
         assert!(matches!(
             optional_effect_accept_verdict(&state),
@@ -5412,6 +5684,7 @@ mod tests {
             source_id,
             description: None,
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
         assert!(matches!(
             optional_effect_accept_verdict(&state),
@@ -5434,6 +5707,7 @@ mod tests {
             source_id,
             description: None,
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
         assert!(matches!(
             optional_effect_accept_verdict(&state),
@@ -5467,11 +5741,190 @@ mod tests {
             source_id,
             description: None,
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         };
         assert!(matches!(
             optional_effect_accept_verdict(&state),
             PolicyVerdict::Reject { reason }
                 if reason.kind == "anti_self_harm_lethal_life_cost"
         ));
+    }
+
+    // Verbatim production shape of the Slash-of-Light gap: a targeted
+    // creature-only DealDamage whose amount is dynamic (ObjectCount-based, not
+    // a literal constant). `lethal_to_creature` returns `None` for a non-Fixed
+    // amount, so `is_useful_removal_target` fails open as "useful" and the
+    // sibling no-targetable-opponent-creature branch never fires. The
+    // `removal_lethality::can_kill_any_legal_target` gate must penalise
+    // committing this when 1 damage is non-lethal to every legal opponent
+    // creature.
+    #[test]
+    fn pre_cast_penalises_dynamic_damage_whiff_that_kills_no_opponent_creature() {
+        let mut state = make_state();
+        // AI's single creature makes "number of creatures you control" resolve
+        // to 1.
+        add_creature(&mut state, PlayerId(0), "My Bear", 2, 1);
+        // Opponent's 3/3 that 1 damage cannot kill (CR 704.5g).
+        add_creature(&mut state, PlayerId(1), "Opponent Bear", 3, 3);
+
+        let spell_id = create_object(
+            &mut state,
+            CardId(90_000),
+            PlayerId(0),
+            "Slash of Light".to_string(),
+            Zone::Hand,
+        );
+        let obj = state.objects.get_mut(&spell_id).unwrap();
+        let mut my_filter = TypedFilter::creature();
+        my_filter.controller = Some(ControllerRef::You);
+        let amount = QuantityExpr::Ref {
+            qty: QuantityRef::ObjectCount {
+                filter: TargetFilter::Typed(my_filter),
+            },
+        };
+        obj.abilities = Arc::new(vec![AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::DealDamage {
+                amount,
+                target: TargetFilter::Typed(TypedFilter::creature()),
+                damage_source: None,
+                excess: None,
+            },
+        )]);
+
+        let config = AiConfig::default();
+        let decision = AiDecisionContext {
+            waiting_for: WaitingFor::Priority {
+                player: PlayerId(0),
+            },
+            candidates: Vec::new(),
+        };
+        let candidate = CandidateAction {
+            action: GameAction::CastSpell {
+                object_id: spell_id,
+                card_id: CardId(90_000),
+                targets: Vec::new(),
+                payment_mode: CastPaymentMode::Auto,
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Spell),
+        };
+        let ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        let score = AntiSelfHarmPolicy.score(&ctx);
+        assert!(
+            score < -5.0,
+            "Casting a dynamic burn whose 1 damage kills no opponent creature \
+             should be penalised, got {score}"
+        );
+    }
+
+    /// Cast-commit seam regression: a MIXED spell coupling a creature-only
+    /// damage half with a `DestroyAll` wipe (CR 701.8) must NOT be charged the
+    /// -8 no-target penalty when its ONLY opposing creature is HEXPROOF.
+    /// Hexproof (`Keyword::Hexproof`) gates TARGETING only (CR 702.11b) — an
+    /// affected object is not a target — while the wipe is NON-targeted and
+    /// hits the battlefield POPULATION regardless (CR 115.10a). So
+    /// `has_targetable_opponent_creature` is false here, but
+    /// `removal_lethality::has_opposing_mass_population` is true, and
+    /// `score_pre_cast` must consult the mass seam before charging the
+    /// no-target penalty. Pre-fix, the ordering charged the -8 penalty — a
+    /// false positive for a spell whose wipe genuinely clears the hexproof
+    /// 3/3. The AI's OWN bear exists solely so the damage half is announceable
+    /// (CR 601.2c); this test pins the PENALTY question, not castability.
+    #[test]
+    fn pre_cast_does_not_penalise_mixed_wipe_when_only_population_is_hexproof() {
+        let mut state = make_state();
+        // AI's own creature makes the dynamic ObjectCount amount resolve to 1.
+        add_creature(&mut state, PlayerId(0), "My Bear", 2, 1);
+        // The ONLY opposing creature is hexproof (un-targetable, CR 702.11b)
+        // but is in the wipe's NON-targeted population (CR 115.10a).
+        let hexproof_bear = add_creature(&mut state, PlayerId(1), "Hexproof Bear", 3, 3);
+        state
+            .objects
+            .get_mut(&hexproof_bear)
+            .unwrap()
+            .keywords
+            .push(Keyword::Hexproof);
+
+        let spell_id = create_object(
+            &mut state,
+            CardId(90_001),
+            PlayerId(0),
+            "Hexproof-Proof Judgement".to_string(),
+            Zone::Hand,
+        );
+        let obj = state.objects.get_mut(&spell_id).unwrap();
+        let mut my_filter = TypedFilter::creature();
+        my_filter.controller = Some(ControllerRef::You);
+        let amount = QuantityExpr::Ref {
+            qty: QuantityRef::ObjectCount {
+                filter: TargetFilter::Typed(my_filter),
+            },
+        };
+        obj.abilities = Arc::new(vec![
+            AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::DealDamage {
+                    amount,
+                    target: TargetFilter::Typed(TypedFilter::creature()),
+                    damage_source: None,
+                    excess: None,
+                },
+            ),
+            // `None` is the serde default for `DestroyAll.target`; construct it
+            // explicitly so the resolver's `None` -> all-creatures population
+            // (destroy.rs `resolve_all`) is the point under test.
+            AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::DestroyAll {
+                    target: TargetFilter::None,
+                    cant_regenerate: false,
+                },
+            ),
+        ]);
+
+        let config = AiConfig::default();
+        let decision = AiDecisionContext {
+            waiting_for: WaitingFor::Priority {
+                player: PlayerId(0),
+            },
+            candidates: Vec::new(),
+        };
+        let candidate = CandidateAction {
+            action: GameAction::CastSpell {
+                object_id: spell_id,
+                card_id: CardId(90_001),
+                targets: Vec::new(),
+                payment_mode: CastPaymentMode::Auto,
+            },
+            metadata: ActionMetadata::for_actor(Some(PlayerId(0)), TacticalClass::Spell),
+        };
+        let ctx = PolicyContext {
+            state: &state,
+            decision: &decision,
+            candidate: &candidate,
+            ai_player: PlayerId(0),
+            config: &config,
+            context: &crate::context::AiContext::empty(&config.weights),
+            cast_facts: None,
+            search_depth: crate::policies::context::SearchDepth::Root,
+        };
+        let score = AntiSelfHarmPolicy.score(&ctx);
+        assert!(
+            score > -5.0,
+            "A mixed deal-1 + destroy-all vs a hexproof-only opposing board \
+             ({score:.3}) must NOT be charged the no-target penalty: the wipe is \
+             NON-targeted (CR 115.10a) and hits the hexproof 3/3's population \
+             (hexproof gates targeting only, CR 702.11b), so the mass seam \
+             rescues the mixed spell from the wasted-cast penalty"
+        );
     }
 }

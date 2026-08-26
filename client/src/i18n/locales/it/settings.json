@@ -70,6 +70,7 @@
     "showOpponentBoard": "Mostra il campo dell'avversario passando sull'HUD",
     "multiplayerBoardLayout": "Layout del campo multigiocatore",
     "multiplayerBoardLayoutOptions": {
+      "auto": "Automatico",
       "focused": "Avversario in focus",
       "split": "Tavolo diviso"
     },
@@ -170,9 +171,10 @@
     "lastSynced": "Ultima sincronizzazione {{time}}",
     "never": "mai",
     "conflictTitle": "Entrambe le copie hanno modifiche",
-    "conflictBody": "Questo dispositivo e il tuo account cloud contengono entrambi dati e non possiamo stabilire quale sia aggiornato. Scegli quale copia mantenere; l'altra verrà sostituita.",
+    "conflictBody": "Questo dispositivo e il tuo account cloud contengono entrambi dati e non possiamo stabilire quale sia aggiornata. Scegli una copia o conserva entrambe le raccolte di mazzi.",
     "keepCloud": "Usa il cloud",
     "keepLocal": "Mantieni questo dispositivo",
+    "keepBothDecks": "Mantieni entrambe le raccolte di mazzi",
     "savesNote": "I salvataggi delle partite e le cache restano su questo dispositivo.",
     "diffDecks": "Mazzi: {{added}} aggiunti, {{modified}} modificati, {{removed}} rimossi",
     "diffPrefs": "Le preferenze differiscono",

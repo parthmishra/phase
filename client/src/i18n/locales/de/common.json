@@ -5,11 +5,22 @@
     "close": "Schließen",
     "closeNamed": "{{name}} schließen"
   },
+  "quantityRef": {
+    "highestNumber": "die höchste Zahl",
+    "lowestNumber": "die niedrigste Zahl",
+    "chosenNumber": "die gewählte Zahl"
+  },
+  "scryOutcome": {
+    "title": "Spähen abgeschlossen",
+    "you": "Du",
+    "result": "{{player}} — {{top}} oben · {{bottom}} unten"
+  },
   "modal": {
     "defaultEyebrow": "Workspace-Werkzeug"
   },
   "pausedBanner": {
-    "message": "Spiel pausiert — {{reason}}"
+    "message": "Spiel pausiert — {{reason}}",
+    "resume": "Fortsetzen"
   },
   "fullscreen": {
     "enter": "Vollbild starten",
@@ -74,6 +85,11 @@
     "boardLayoutLegacy": "Legacy",
     "switchToSplitView": "Zur geteilten Tischansicht wechseln",
     "switchToLegacyView": "Zur fokussierten Legacy-Ansicht wechseln",
+    "multiplayerSplitLayoutNudge": {
+      "message": "Mit der geteilten Tischansicht siehst du alle Gegner gleichzeitig.",
+      "trySplit": "Geteilte Ansicht ausprobieren",
+      "dismiss": "Jetzt nicht"
+    },
     "helpShortcuts": "Hilfe & Tastenkürzel",
     "showAiHand": "KI-Hand anzeigen",
     "hideAiHand": "KI-Hand verbergen",
@@ -86,6 +102,7 @@
     "cardDataTitle": "Kartendaten: {{date}}"
   },
   "volume": {
+    "deviceBlocked": "Audio nicht verfügbar — der System-Audioserver antwortet nicht. App neu starten, um es erneut zu versuchen.",
     "mute": "Stummschalten",
     "unmute": "Stummschaltung aufheben",
     "volume": "Lautstärke"

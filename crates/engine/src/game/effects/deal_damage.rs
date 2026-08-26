@@ -28,6 +28,10 @@ use crate::types::proposed_event::ProposedEvent;
 #[derive(Clone, Copy)]
 pub(crate) struct DamageContext {
     pub(crate) source_id: ObjectId,
+    /// CR 400.7: The source incarnation observed before the damage event is
+    /// applied. This remains authoritative if the source changes zones while a
+    /// replacement effect pauses the event.
+    pub(crate) source_incarnation: Option<u64>,
     pub(crate) controller: PlayerId,
     pub(crate) source_is_creature: bool,
     pub(crate) has_deathtouch: bool,
@@ -150,11 +154,37 @@ fn resolve_effect_recipients(
             .into_iter()
             .collect();
     }
+    // CR 400.7 + CR 603.7c: a delayed damage effect whose pinned referent became
+    // a new object deals it no damage. This is a RAW read that never reaches
+    // `resolved_targets`, so the targeting chokepoint cannot see this pin.
+    //
+    // THE `is_empty()` GATE STAYS RAW, AND THAT IS LOAD-BEARING — it is the
+    // reason no early return is needed here. "Targets were declared" and
+    // "declared targets are still live" are different questions. Gating on the
+    // raw list means an all-stale ability still ENTERS this branch and returns
+    // an empty recipient list, an inert no-op. Substituting the gate itself
+    // would make it fall through to the `Controller` fallback below and deal
+    // the damage to a PLAYER instead — precisely the `searing blood` shape the
+    // Tier C exclusion list warns about (its 14 Controller/Owner-only cards are
+    // additionally denied pins upstream, so this can only ever fail safe).
     if !ability.targets.is_empty() {
         if skip_first_target && ability.targets.len() > 1 {
-            return ability.targets[1..].to_vec();
+            // The positional split runs on the RAW list and the pin filter is
+            // applied AFTER it — never the other way round. `[1..]` encodes slot
+            // identity (`[source_0, …, recipient]`), so filtering first could
+            // renumber a live recipient into the source position. This is the
+            // same constraint as §5.4(b)'s `ParentTargetSlot` carve-out, applied
+            // to this file's own positional convention.
+            return ability.targets[1..]
+                .iter()
+                .filter(|target| match target {
+                    TargetRef::Object(id) => ability.target_pin_is_current(*id, state),
+                    TargetRef::Player(_) => true,
+                })
+                .cloned()
+                .collect();
         }
-        return ability.targets.clone();
+        return ability.live_object_targets(state);
     }
     match target_filter {
         TargetFilter::Controller => vec![TargetRef::Player(ability.controller)],
@@ -168,6 +198,7 @@ impl DamageContext {
     pub(crate) fn from_source(state: &GameState, source_id: ObjectId) -> Option<Self> {
         state.objects.get(&source_id).map(|obj| Self {
             source_id,
+            source_incarnation: Some(obj.incarnation),
             controller: obj.controller,
             source_is_creature: obj.card_types.core_types.contains(&CoreType::Creature),
             // CR 613.1f + CR 702.2 + CR 702.15 + CR 702.80 + CR 702.90:
@@ -214,6 +245,7 @@ impl DamageContext {
     pub(crate) fn fallback(source_id: ObjectId, controller: PlayerId) -> Self {
         Self {
             source_id,
+            source_incarnation: None,
             controller,
             source_is_creature: false,
             has_deathtouch: false,
@@ -232,6 +264,7 @@ impl From<DamageContextSnapshot> for DamageContext {
     fn from(snapshot: DamageContextSnapshot) -> Self {
         Self {
             source_id: snapshot.source_id,
+            source_incarnation: snapshot.source_incarnation,
             controller: snapshot.controller,
             source_is_creature: snapshot.source_is_creature,
             has_deathtouch: snapshot.has_deathtouch,
@@ -252,6 +285,7 @@ impl From<&DamageContext> for DamageContextSnapshot {
     fn from(ctx: &DamageContext) -> Self {
         Self {
             source_id: ctx.source_id,
+            source_incarnation: ctx.source_incarnation,
             controller: ctx.controller,
             source_is_creature: ctx.source_is_creature,
             has_deathtouch: ctx.has_deathtouch,
@@ -568,14 +602,15 @@ pub(crate) fn apply_damage_after_replacement(
                 // counters. Route through the player-counter replacement pipeline
                 // so "players can't get poison counters" / poison-doublers apply;
                 // the actor is the source's controller.
-                if !player_counter::add_player_counter_with_replacement(
+                if player_counter::add_player_counter_with_replacement(
                     state,
                     ctx.controller,
                     *player_id,
                     PlayerCounterKind::Poison,
                     actual_amount,
                     events,
-                ) {
+                ) == player_counter::PlayerCounterAdditionOutcome::NeedsChoice
+                {
                     return DamageResult::NeedsChoice;
                 }
             } else {
@@ -583,7 +618,8 @@ pub(crate) fn apply_damage_after_replacement(
                 if super::life::apply_damage_life_loss(state, *player_id, actual_amount, events)
                     .is_err()
                 {
-                    // CR 614.7: Life loss replacement needs player choice.
+                    // CR 616.1: two or more co-applicable life-loss replacements — the
+                    // affected player must choose which applies first.
                     return DamageResult::NeedsChoice;
                 }
             }
@@ -596,14 +632,15 @@ pub(crate) fn apply_damage_after_replacement(
                 // when a creature deals combat damage to a player. Route through
                 // the player-counter replacement pipeline (prevention/doublers);
                 // the actor is the source's controller.
-                if !player_counter::add_player_counter_with_replacement(
+                if player_counter::add_player_counter_with_replacement(
                     state,
                     ctx.controller,
                     *player_id,
                     PlayerCounterKind::Poison,
                     ctx.combat_damage_poison,
                     events,
-                ) {
+                ) == player_counter::PlayerCounterAdditionOutcome::NeedsChoice
+                {
                     return DamageResult::NeedsChoice;
                 }
             }
@@ -734,12 +771,17 @@ pub(crate) fn apply_damage_after_replacement(
         // source as it was when the damage was dealt — the source may later
         // change type, leave the battlefield (CR 113.7a LKI), or be removed.
         let src = state.objects.get(&ctx.source_id);
+        // CR 400.7: Use the incarnation captured with the damage context, not
+        // a post-application live lookup. The latter can name a later object
+        // after a replacement pause or zone change.
+        let source_incarnation = ctx.source_incarnation;
         let mut record = DamageRecord {
             source_id: ctx.source_id,
             source_controller: ctx.controller,
             target: t.clone(),
             target_controller,
             target_incarnation,
+            source_incarnation,
             // CR 120.4a: the permanent was dealt only the lethal portion; the
             // excess is recorded against the controller by the redirect below.
             amount: primary_amount,
@@ -876,7 +918,8 @@ pub(crate) fn apply_damage_after_replacement(
             && lifelink_amount > 0
             && super::life::apply_life_gain(state, ctx.controller, lifelink_amount, events).is_err()
         {
-            // CR 614.7: Life-gain replacement needs a player choice. All damage has
+            // CR 616.1: two or more co-applicable life-gain replacements — the gaining
+            // player must choose which applies first. All damage has
             // already been dealt; only this final lifelink gain is deferred.
             return DamageResult::NeedsChoice;
         }
@@ -2445,20 +2488,59 @@ pub fn resolve_each_source_deals_damage(
         }
     };
 
-    // CR 608.2: the amount is uniform across every source — resolve it once.
-    let amt = resolve_quantity_with_targets(state, amount, ability).max(0) as u32;
+    // CR 608.2: the amount is uniform across every source — resolve it once —
+    // UNLESS the amount reads the per-source `BatchSource` scope (CR 120.1:
+    // "deals damage equal to its power" resolves per source object, never
+    // against the ability source).
+    let per_source = crate::game::quantity::quantity_expr_contains_scope(
+        amount,
+        crate::types::ability::ObjectScope::BatchSource,
+    );
+    let amt_uniform = if per_source {
+        0
+    } else {
+        resolve_quantity_with_targets(state, amount, ability).max(0) as u32
+    };
 
-    // CR 608.2 + CR 120.1: evaluate the source class against the battlefield at
-    // resolution (mirrors `resolve_all`). Each matching object is an independent
-    // source of its own damage.
-    let resolved_sources = crate::game::effects::resolved_object_filter(ability, sources);
-    let filter_ctx = filter::FilterContext::from_ability(ability);
-    let source_ids: Vec<ObjectId> = state
-        .battlefield
-        .iter()
-        .filter(|id| filter::matches_target_filter(state, **id, &resolved_sources, &filter_ctx))
-        .copied()
-        .collect();
+    // CR 608.2 + CR 120.1: ordinary source classes are evaluated against the
+    // battlefield. A pairwise targeted batch instead uses the exact announced
+    // objects stamped on this damage node; a missing target is absent, and an
+    // object whose incarnation is no longer current or which is no longer on
+    // the battlefield cannot deal damage.
+    let source_ids: Vec<ObjectId> = match recipient {
+        EachDamageRecipient::OtherBatchSource { source_filters } => ability
+            .targets
+            .iter()
+            .zip(source_filters)
+            .filter_map(|(target, source_filter)| {
+                let TargetRef::Object(id) = target else {
+                    return None;
+                };
+                (ability.target_pin_is_current(*id, state)
+                    && ability.selected_target_pin_is_current(*id, state)
+                    && !crate::game::targeting::validate_targets_for_ability(
+                        state,
+                        std::slice::from_ref(target),
+                        source_filter,
+                        ability,
+                    )
+                    .is_empty())
+                .then_some(*id)
+            })
+            .collect(),
+        EachDamageRecipient::Shared(_) | EachDamageRecipient::EachController => {
+            let resolved_sources = crate::game::effects::resolved_object_filter(ability, sources);
+            let filter_ctx = filter::FilterContext::from_ability(ability);
+            state
+                .battlefield
+                .iter()
+                .filter(|id| {
+                    filter::matches_target_filter(state, **id, &resolved_sources, &filter_ctx)
+                })
+                .copied()
+                .collect()
+        }
+    };
 
     // CR 115.1 / CR 608.2c: resolve the shared recipient ONCE (an announced target
     // or a hydrated context anaphor). An empty result (e.g. an "up to one" / fizzled
@@ -2467,7 +2549,9 @@ pub fn resolve_each_source_deals_damage(
         EachDamageRecipient::Shared(filter) => {
             resolve_effect_recipients(state, ability, filter, false)
         }
-        EachDamageRecipient::EachController => Vec::new(),
+        EachDamageRecipient::EachController | EachDamageRecipient::OtherBatchSource { .. } => {
+            Vec::new()
+        }
     };
 
     // Build every (source, context, recipient, amount) entry up front, before any
@@ -2475,27 +2559,55 @@ pub fn resolve_each_source_deals_damage(
     // recipient so combined lethal/excess is computed once all sources have
     // marked). Each source carries its OWN `DamageContext` (CR 120.1 identity).
     let mut entries: Vec<(ObjectId, DamageContext, TargetRef, u32)> = Vec::new();
-    if amt > 0 {
-        for &source_id in &source_ids {
-            let ctx = DamageContext::from_source(state, source_id)
-                .unwrap_or_else(|| DamageContext::fallback(source_id, ability.controller));
-            match recipient {
-                EachDamageRecipient::Shared(_) => {
-                    for recip in &shared_recipients {
-                        entries.push((source_id, ctx, recip.clone(), amt));
-                    }
-                }
-                // CR 109.4 + CR 120.3a: each source deals to the player that
-                // controls it.
-                EachDamageRecipient::EachController => {
-                    let controller = state
-                        .objects
-                        .get(&source_id)
-                        .map(|obj| obj.controller)
-                        .unwrap_or(ctx.controller);
-                    entries.push((source_id, ctx, TargetRef::Player(controller), amt));
+    for &source_id in &source_ids {
+        // CR 120.1 + CR 608.2h: each batch member deals its OWN characteristic;
+        // resolved per source (live object, LKI fallback via the new scope's
+        // resolve arms — the same instant semantics as the one-time uniform
+        // resolution, but read against each batch member). Zero/sourceless
+        // members deal nothing (skip) — entry-set-equivalent to the uniform
+        // path's `if amt > 0` gate.
+        let amt = if per_source {
+            crate::game::quantity::resolve_quantity_with_targets_and_damage_source(
+                state, amount, ability, source_id,
+            )
+            .max(0) as u32
+        } else {
+            amt_uniform
+        };
+        if amt == 0 {
+            continue;
+        }
+        let ctx = DamageContext::from_source(state, source_id)
+            .unwrap_or_else(|| DamageContext::fallback(source_id, ability.controller));
+        match recipient {
+            EachDamageRecipient::Shared(_) => {
+                for recip in &shared_recipients {
+                    entries.push((source_id, ctx, recip.clone(), amt));
                 }
             }
+            // CR 109.4 + CR 120.3a: each source deals to the player that
+            // controls it.
+            EachDamageRecipient::EachController => {
+                let controller = state
+                    .objects
+                    .get(&source_id)
+                    .map(|obj| obj.controller)
+                    .unwrap_or(ctx.controller);
+                entries.push((source_id, ctx, TargetRef::Player(controller), amt));
+            }
+            // CR 120.1 + CR 608.2c: the relation exists only for an exact
+            // two-object batch. With zero/one surviving choices there is no
+            // "other" object, so this source produces no damage entry.
+            EachDamageRecipient::OtherBatchSource { .. } if source_ids.len() == 2 => {
+                if let Some(other) = source_ids
+                    .iter()
+                    .copied()
+                    .find(|candidate| *candidate != source_id)
+                {
+                    entries.push((source_id, ctx, TargetRef::Object(other), amt));
+                }
+            }
+            EachDamageRecipient::OtherBatchSource { .. } => {}
         }
     }
 
@@ -3046,6 +3158,7 @@ mod tests {
             card_id: CardId(11),
             controller: PlayerId(0),
             object_id: spell,
+            cast_mana_value: None,
         });
 
         // The exile-until hit — Target, mana value 1.
@@ -3200,6 +3313,7 @@ mod tests {
             card_id: CardId(11),
             controller: PlayerId(0),
             object_id: spell,
+            cast_mana_value: None,
         });
 
         // Two exile-until hits — both bound as object targets on the parent, so the
@@ -4008,6 +4122,46 @@ mod tests {
         assert_eq!(
             state.damage_dealt_this_turn[0].target_incarnation,
             Some(state.objects[&target].incarnation)
+        );
+    }
+
+    #[test]
+    fn damage_record_keeps_the_context_source_incarnation() {
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Source".to_string(),
+            Zone::Battlefield,
+        );
+        let target = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Target".to_string(),
+            Zone::Battlefield,
+        );
+        let ctx = DamageContext::from_source(&state, source).unwrap();
+        let source_incarnation = ctx.source_incarnation;
+
+        // CR 400.7: a replacement pause can resume after the source has become
+        // a new object. The already-created damage context remains authoritative.
+        state.objects.get_mut(&source).unwrap().incarnation += 1;
+
+        let event = ProposedEvent::Damage {
+            source_id: source,
+            target: TargetRef::Object(target),
+            amount: 1,
+            is_combat: false,
+            applied: HashSet::new(),
+        };
+        let mut events = Vec::new();
+        apply_damage_after_replacement(&mut state, &ctx, event, false, &mut events);
+
+        assert_eq!(
+            state.damage_dealt_this_turn[0].source_incarnation, source_incarnation,
+            "damage records must retain the pre-pause source incarnation"
         );
     }
 

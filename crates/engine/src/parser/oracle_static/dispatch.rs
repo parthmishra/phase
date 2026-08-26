@@ -296,10 +296,12 @@ fn parse_untaps_during_each_other_players_untap_step(
     tp: &TextPair<'_>,
     description: &str,
 ) -> Option<StaticDefinition> {
-    // "Untap all <type> you control during each other player's untap step."
-    // Delegate the subject to `parse_type_phrase`, which handles the full range
-    // of type + controller phrases.
-    if let Some(rest) = nom_tag_tp(tp, "untap all ") {
+    // "Untap all/each <type> you control during each other player's untap
+    // step." — Seedborn Muse prints "all"; Prop Room and Ivorytusk Fortress
+    // print "each" for the same subject shape, so both tags share this arm.
+    // Delegate the subject to `parse_type_phrase`, which handles the full
+    // range of type + controller + property phrases.
+    if let Some(rest) = nom_tag_tp(tp, "untap all ").or_else(|| nom_tag_tp(tp, "untap each ")) {
         let (filter, remainder) = parse_type_phrase(rest.original);
         let remainder_lower = remainder.to_lowercase();
         let during_ok = nom_on_lower(
@@ -641,10 +643,12 @@ pub(crate) fn parse_damage_not_removed_during_cleanup(
 /// block this creature." — a can't-be-blocked-by restriction whose blocker
 /// filter gates on a power threshold that may be DYNAMIC (Kraken of the Straits:
 /// "Creatures with power less than the number of Islands you control can't block
-/// this creature."). Sibling of `parse_source_power_block_restriction` (which
-/// fixes the threshold to `~'s power` and targets `creatures you control`); this
-/// arm accepts any `parse_target` power-comparison filter — including a dynamic
-/// `ObjectCount` threshold — and targets the source itself. Without it the
+/// this creature."). Sibling of the general "<subject> can't block <object>"
+/// production in `parse_subject_combat_rule_static`, which owns every FILTERED
+/// object but declines a self-referential one; this arm covers exactly that
+/// declined case. It accepts any `parse_target` power-comparison filter —
+/// including a dynamic `ObjectCount` threshold — and targets the source
+/// itself, keeping `affected` tight. Without it the
 /// subject-first "creatures with power … can't block this creature" wording
 /// mis-dispatches to a bare `CantBlock { SelfRef }` (source can't block), which
 /// is the inverse of the intended restriction.
@@ -1486,6 +1490,18 @@ pub(crate) fn parse_static_line_inner(
         return Some(def);
     }
 
+    // CR 508.1d + CR 604.1: "<subject> attacks <player-class> each combat if able
+    // [unless ...]" — a static attack requirement whose required defender is a
+    // live-evaluated player class (Galactus: "an opponent with the most life among
+    // your opponents ... unless you control a creature named ..."). Richer than the
+    // bare scoped must-attack below: the selector form is disjoint (returns None
+    // without a defender phrase), and the wrapper's flavor-label strip is a
+    // retry-on-failure (never fires when the body already parses), so ordering
+    // before `try_parse_scoped_must_attack_block` is safe.
+    if let Some(def) = parse_forced_attack_defender_static(&text) {
+        return Some(def);
+    }
+
     // CR 508.1d / CR 509.1c: Subject-scoped "attack/block each combat if able" patterns.
     // These apply MustAttack/MustBlock to a class of creatures (not just self).
     // Compound forms ("attacks or blocks") produce multiple statics; return the first here.
@@ -2249,10 +2265,6 @@ pub(crate) fn parse_static_line_inner(
     // CR 702.122a / 702.171a / 702.184c: crew/saddle/station power-contribution
     // modifier (Reckoner Bankbuster, Giant Ox, Stoic Star-Captain).
     if let Some(def) = parse_crew_contribution_static(&text) {
-        return Some(def);
-    }
-
-    if let Some(def) = parse_source_power_block_restriction(&text) {
         return Some(def);
     }
 

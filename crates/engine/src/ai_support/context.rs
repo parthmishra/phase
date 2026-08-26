@@ -4,7 +4,10 @@ use crate::game::turn_control;
 use crate::types::actions::GameAction;
 use crate::types::player::PlayerId;
 
-use super::candidates::{candidate_actions_for_semantic_owner_with_probe, CandidateAction};
+use super::{
+    candidates::{candidate_actions_for_semantic_owner_with_probe, CandidateAction},
+    FilterPipeline,
+};
 
 #[derive(Debug, Clone)]
 pub struct AiDecisionContext {
@@ -32,18 +35,22 @@ impl AiDecisionContract {
     pub fn issue(state: &GameState, semantic_owner: PlayerId) -> Self {
         Self {
             semantic_owner,
-            authorized_actor: turn_control::authorized_submitter_for_player(state, semantic_owner),
+            authorized_actor: resolve_all_frozen_actor(state, semantic_owner).unwrap_or_else(
+                || turn_control::authorized_submitter_for_player(state, semantic_owner),
+            ),
             state_revision: state.state_revision,
             // The engine's candidate enumerator is the authoritative finite
-            // domain for this prompt. Some bounded continuation forms (combat,
-            // search, and multi-step selections) are intentionally completed
-            // by their dedicated reducer paths, so a generic clone-and-apply
-            // probe is not a sound way to remove them from the contract.
-            // Submission still performs the public action-boundary apply after
-            // exact-membership and owner checks.
+            // domain for this prompt. Combat and search continuations remain
+            // reducer-owned. Choices that can change either a pending spell's
+            // target requirements or its final mana obligation cross the reducer
+            // before issue. Submission still performs the public action-boundary
+            // apply after exact-membership and owner checks.
             candidates: {
                 let mut candidates =
                     candidate_actions_for_semantic_owner_with_probe(state, semantic_owner, None);
+                if decision_contract_requires_reducer_validation(state) {
+                    candidates = FilterPipeline::default_pipeline().apply(state, candidates);
+                }
                 candidates.sort_by(|left, right| left.action.cmp_stable(&right.action));
                 candidates
             },
@@ -55,13 +62,29 @@ impl AiDecisionContract {
     /// opaque proposal token (WASM/server), because a restored state resets its
     /// serialized revision.
     pub fn permits(&self, state: &GameState, actor: PlayerId, action: &GameAction) -> bool {
+        let semantic_owner_is_active = state
+            .waiting_for
+            .acting_players()
+            .contains(&self.semantic_owner)
+            || matches!(
+                action,
+                GameAction::RevokeResolveAllConsent { representative, .. }
+                    if *representative == self.semantic_owner
+            );
+        let authorized_actor = match action {
+            GameAction::RevokeResolveAllConsent {
+                epoch,
+                representative,
+            } => turn_control::resolve_all_granted_submitter(state, *epoch, *representative),
+            _ => Some(turn_control::authorized_submitter_for_player(
+                state,
+                self.semantic_owner,
+            )),
+        };
         self.state_revision == state.state_revision
-            && state
-                .waiting_for
-                .acting_players()
-                .contains(&self.semantic_owner)
+            && semantic_owner_is_active
             && self.authorized_actor == actor
-            && turn_control::authorized_submitter_for_player(state, self.semantic_owner) == actor
+            && authorized_actor == Some(actor)
             && self.contains_action(state, action)
     }
 
@@ -95,6 +118,48 @@ impl AiDecisionContract {
                 .any(|candidate| candidate_action_matches(&candidate.action, action)),
         }
     }
+}
+
+fn resolve_all_frozen_actor(state: &GameState, representative: PlayerId) -> Option<PlayerId> {
+    let epoch = match &state.waiting_for {
+        WaitingFor::ResolveAllConsent { epoch, .. } | WaitingFor::ResolveAllReady { epoch } => {
+            *epoch
+        }
+        _ => return None,
+    };
+    turn_control::resolve_all_granted_submitter(state, epoch, representative).or_else(|| {
+        state
+            .resolve_all_consent_run
+            .as_ref()
+            .filter(|run| run.epoch == epoch)
+            .and_then(|run| run.authorized_submitter_for(representative))
+    })
+}
+
+pub(crate) fn target_selection_requires_reducer_validation(state: &GameState) -> bool {
+    // CR 601.2c + CR 601.2e-h + CR 602.2b: selecting a target can complete
+    // target declaration and immediately check legality and pay the proposed
+    // spell or activation cost. A later optional slot can become auto-skippable
+    // only after this target is chosen, so the reducer is the sole authority for
+    // whether a particular candidate completes the transition.
+    matches!(&state.waiting_for, WaitingFor::TargetSelection { .. })
+}
+
+/// Whether a decision can alter the target requirements of an in-progress cast.
+///
+/// CR 601.2b-c: a kicker declaration precedes target selection and may replace
+/// the spell's target requirements. The capability contract must therefore
+/// simulate each such payment decision before issuing it; otherwise an AI can
+/// decline the only target-enabling kicker and receive a targetless cast.
+fn decision_contract_requires_reducer_validation(state: &GameState) -> bool {
+    target_selection_requires_reducer_validation(state)
+        || matches!(
+            &state.waiting_for,
+            WaitingFor::OptionalCostChoice {
+                pending_cast,
+                ..
+            } if pending_cast.deferred_target_selection
+        )
 }
 
 fn candidate_action_matches(issued: &GameAction, submitted: &GameAction) -> bool {

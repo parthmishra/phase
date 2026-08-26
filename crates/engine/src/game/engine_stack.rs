@@ -3,6 +3,7 @@ use crate::types::events::GameEvent;
 use crate::types::game_state::{
     GameState, TargetSelectionConstraint, TargetSelectionSlot, WaitingFor,
 };
+use crate::types::identifiers::ObjectId;
 use crate::types::player::PlayerId;
 
 use super::ability_utils::{
@@ -31,6 +32,8 @@ pub(super) fn finalize_trigger_target_selection(
     events: &mut Vec<GameEvent>,
 ) -> WaitingFor {
     let assigned_targets = flatten_targets_in_chain(&ability);
+    let crime_candidate =
+        casting::targets_commit_crime(state, &assigned_targets, trigger.controller);
     casting::emit_targeting_events(
         state,
         &assigned_targets,
@@ -101,6 +104,8 @@ pub(super) fn finalize_trigger_target_selection(
         priority::clear_priority_passes(state);
         return WaitingFor::Priority { player: controller };
     }
+
+    casting::commit_crime_after_stack_placement(state, crime_candidate, controller, events);
 
     priority::clear_priority_passes(state);
     // CR 113.2c + CR 603.2 + CR 603.3b: After the active trigger is on the
@@ -189,8 +194,13 @@ pub(super) fn handle_trigger_target_selection_select_targets(
         .take()
         .ok_or_else(|| EngineError::InvalidAction("No pending trigger".to_string()))?;
 
-    Ok(finalize_trigger_target_selection(
-        state, trigger, ability, events,
+    let produced = finalize_trigger_target_selection(state, trigger, ability, events);
+    // Round-20 seam 3: wrapping at the action seam — not per return inside
+    // `finalize_trigger_target_selection` — covers all five of its returns
+    // uniformly and keeps the `engine_modes` delegation, which runs inside
+    // trigger dispatch, from consuming the recipient.
+    Ok(triggers::finish_trigger_construction_action(
+        state, events, produced,
     ))
 }
 
@@ -346,8 +356,10 @@ pub(super) fn handle_trigger_target_selection_choose_target(
                 .take()
                 .ok_or_else(|| EngineError::InvalidAction("No pending trigger".to_string()))?;
 
-            Ok(finalize_trigger_target_selection(
-                state, trigger, ability, events,
+            let produced = finalize_trigger_target_selection(state, trigger, ability, events);
+            // Round-20 seam 3, step-by-step walk completion.
+            Ok(triggers::finish_trigger_construction_action(
+                state, events, produced,
             ))
         }
     }
@@ -389,10 +401,18 @@ pub(super) fn handle_multi_target_selection(
         )));
     }
 
+    let mut selected_ids = std::collections::HashSet::<ObjectId>::new();
     for id in selected {
         if !legal_targets.contains(id) {
             return Err(EngineError::InvalidAction(
                 "Selected target not in legal set".to_string(),
+            ));
+        }
+        // CR 115.3: The same target can't be chosen multiple times for one
+        // instance of the word "target" on a spell or ability.
+        if !selected_ids.insert(*id) {
+            return Err(EngineError::InvalidAction(
+                "Selected target more than once".to_string(),
             ));
         }
     }

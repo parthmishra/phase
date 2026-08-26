@@ -298,6 +298,14 @@ fn static_condition_to_restriction_condition(
         }),
         // Player-state leaves with an exact restriction evaluator.
         StaticCondition::HasCityBlessing => Some(ParsedCondition::HasCityBlessing),
+        // CR 702.179e: max speed is a player-state leaf in the same sense as the
+        // city's blessing — a designation read off the scoped player, with no
+        // filter or quantity to approximate. Both readings call
+        // `game::speed::has_max_speed`, so the restriction cannot drift from the
+        // static one this condition also feeds.
+        StaticCondition::HasMaxSpeed => Some(ParsedCondition::HasMaxSpeed),
+        // CR 702.195b: The enduring story designation is available to restrictions.
+        StaticCondition::HasEnduringStory => Some(ParsedCondition::HasEnduringStory),
         StaticCondition::OpponentPoisonAtLeast { count } => {
             Some(ParsedCondition::OpponentPoisonAtLeast { count })
         }
@@ -367,7 +375,6 @@ fn static_condition_to_restriction_condition(
         | StaticCondition::IsPresent { filter: None }
         | StaticCondition::ChosenColorIs { .. }
         | StaticCondition::ChosenLabelIs { .. }
-        | StaticCondition::HasMaxSpeed
         | StaticCondition::SpeedGE { .. }
         | StaticCondition::DayNightIs { .. }
         | StaticCondition::CastVariantPaid { .. }
@@ -375,7 +382,7 @@ fn static_condition_to_restriction_condition(
         | StaticCondition::DefendingPlayerControls { .. }
         | StaticCondition::SourceAttackingAlone
         | StaticCondition::SourceIsBlocking
-        | StaticCondition::IsMonarch
+        | StaticCondition::IsMonarch { .. }
         | StaticCondition::IsInitiative
         | StaticCondition::NoMonarch
         | StaticCondition::CompletedADungeon
@@ -405,6 +412,12 @@ fn static_condition_to_restriction_condition(
         | StaticCondition::TopOfLibraryMatches { .. }
         | StaticCondition::SourceIsPaired
         | StaticCondition::AdditionalCostPaid
+        // CR 508.6: "a player attacked you during their last turn" is a real
+        // game-state predicate (Avenge's cost reduction), but it is not a
+        // cast/activation restriction and has no `ParsedCondition` counterpart —
+        // it is evaluated via `layers::evaluate_condition` on the self-spell cost
+        // path, so lowering here returns `None`.
+        | StaticCondition::AnyPlayerAttackedYouLastTurn
         | StaticCondition::CastingAsVariant { .. } => None,
     }
 }

@@ -79,7 +79,75 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  * in-band and surface an actionable "refresh both windows" message instead
  * of silently corrupting state.
  *
+ * A host → guest mismatch is enforced in exactly ONE place:
+ * `P2PGuestAdapter.handleHostMessage` (`adapter/p2p-adapter.ts`).
+ * `validateMessage` below deliberately does NOT check it. A throw from there
+ * propagates out of `decodeWireMessage` into the `catch` in `peer.ts`, which
+ * warns and drops the frame — so the host's `game_setup` never reaches the
+ * adapter, the setup promise never settles and the guest hangs on the
+ * connecting screen with no layer able to tell the user. Only the adapter
+ * holds the state needed to perform the response.
+ *
+ * The guest → host direction has its own single site: guests stamp this version
+ * on `guest_deck` / `reconnect`, and `P2PHostAdapter`'s first-contact gate
+ * refuses a stamped mismatch. That field is optional and an absent one is
+ * admitted; see the gate for why.
+ *
  * Bumps to date:
+ *  30 — ManaRestriction.CannotCastSpellFromZone adds a serialized
+ *       GameState/ManaUnit restriction used by Karolina Dean. Older peers
+ *       cannot deserialize that externally tagged enum variant.
+ *  29 — WaitingFor.ChooseObjectsSelection publishes min and optional max
+ *       bounds. A v28 peer silently ignores the additive fields and offers
+ *       out-of-range selections, so refuse the capability mismatch during
+ *       host/guest first contact.
+ *  28 — PayCostKind::TapCreatures changed from { aggregate } to a required
+ *       { mode } (Fixed/VariableX/Aggregate) — the fix that also unlocks
+ *       the u32::MAX X-sentinel tap-cost form (Glacian, Powerstone Engineer
+ *       + 8 sibling cards, #7799). mode carries no serde default, so a
+ *       GameState snapshot paused mid-TapCreatures payment under the old
+ *       aggregate shape now fails to deserialize instead of risking a
+ *       silent fixed/aggregate misclassification. game_setup and
+ *       reconnect_ack both carry the full GameState, so this P2P track is
+ *       broken by the same change as the full-game PROTOCOL_VERSION track
+ *       (see crates/lobby-broker/src/protocol.rs entry 37) and must bump
+ *       in lockstep with it.
+ *  27 — WaitingFor.ChooseDungeon.options changed from DungeonId[] to
+ *       DungeonPreview[], and ChooseDungeonRoom dropped option_names, gained a
+ *       required dungeon_name, and changed options from number[] to
+ *       RoomPreview[], so each option carries the room's printed name and
+ *       room-ability text (CR 309.4b-c). A PARSE bump like 16, not a silent
+ *       capability loss like 24: none of the new fields carry a serde default,
+ *       so a v26 peer cannot deserialize a dungeon-choice snapshot at all.
+ *       DerivedViews.dungeon_rooms rides along in the same bump — it IS
+ *       optional and would parse on a v26 peer, but this client deleted its
+ *       dungeon_progress room-index derivation, so a v26 host would leave a
+ *       v27 guest with no dungeon badge.
+ *  26 — DerivedViews.current_target_kind publishes the engine's CR 115.1
+ *       classification of the live target announcement. The field is optional
+ *       and parses on a v24 peer, so the loss is silent: this client deleted
+ *       inferTargetNoun, so a v24 host would leave a v25 guest naming no
+ *       target at all. The handshake is the only place to refuse it.
+ *  23 — WaitingFor::AlternativeCastChoice.alternative_additional_cost_description
+ *       changed from a string to a typed Emerge-sacrifice descriptor. Older
+ *       clients would receive an object where their modal expects display text.
+ *  22 — LegalActionsWire.viewerInteraction carries attachmentViews: the engine's
+ *       membership list for each host's attachment fan. It parses on a v21 peer
+ *       as an empty map, so the loss is silent — a guest paired with a v21 host
+ *       would simply find every attachment fan gone.
+ *  21 — LegalActionsWire.viewerInteraction carries the loop-shortcut preview,
+ *       and the state snapshot carries WaitingFor::LoopShortcut.declaration.
+ *       Both are optional and parse on a v20 peer; the loss is silent, so the
+ *       handshake is the only place the pairing can be refused.
+ *  24 — DerivedViews.legend_candidate_identities carries the engine-authored
+ *       copy identity required to label legend-rule choices. The field is
+ *       additive but the client no longer infers this identity from raw state,
+ *       so accepting a v23 peer would silently remove every choice option.
+ *  20 — Serialized player-action completion provenance and modal continuations.
+ *  19 — Added an action_noop acknowledgement for accepted transport no-ops.
+ *  18 — DebugCardEntries added a serialized, private resolution frame for
+ *       multi-card sandbox battlefield entries that pause for replacement or
+ *       as-enters choices. Old peers cannot deserialize that GameState shape.
  *  16 — PayableResource::ManaGeneric changed from { per_x } to
  *       { base_cost: ManaCost } (#6410) — a GameState payload field type
  *       change, and base_cost intentionally carries no serde default (a
@@ -107,10 +175,15 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  *       sub-phase on WaitingFor::MulliganDecision; the MulliganBottomCards
  *       variant was removed
  */
-export const WIRE_PROTOCOL_VERSION = 17 as const;
+export const WIRE_PROTOCOL_VERSION = 30 as const;
 
 export type P2PMessage = P2PAuthorityWire & (
-  | { type: "guest_deck"; deckData: unknown; displayName?: string; reservationToken?: string }
+  // `wireProtocolVersion` is optional on both first-contact guest messages:
+  // guests on an older bundle cannot stamp it, and the host admits those.
+  // Typed `number` rather than `typeof WIRE_PROTOCOL_VERSION` on purpose —
+  // the literal type would narrow the host's "present and unequal" branch
+  // to `never`.
+  | { type: "guest_deck"; deckData: unknown; displayName?: string; reservationToken?: string; wireProtocolVersion?: number }
   | ({
       type: "game_setup";
       wireProtocolVersion: typeof WIRE_PROTOCOL_VERSION;
@@ -132,6 +205,7 @@ export type P2PMessage = P2PAuthorityWire & (
       logEntries?: GameLogEntry[];
     } & LegalActionsWire)
   | { type: "action_rejected"; reason: string }
+  | { type: "action_noop" }
   | { type: "mana_payment_preview"; requestId: number; sourceIds: ObjectId[] }
   | { type: "mana_payment_preview_rejected"; requestId: number; reason: string }
   | { type: "ping"; timestamp: number }
@@ -142,7 +216,7 @@ export type P2PMessage = P2PAuthorityWire & (
   /** Protected by a draft-installed match capability on the host. */
   | { type: "match_concede" }
   // Reconnect: guest presents prior token; host accepts (with fresh state) or rejects.
-  | { type: "reconnect"; playerToken: string; sessionKey?: P2PSessionKey }
+  | { type: "reconnect"; playerToken: string; sessionKey?: P2PSessionKey; wireProtocolVersion?: number }
   | ({
       type: "reconnect_ack";
       wireProtocolVersion: typeof WIRE_PROTOCOL_VERSION;
@@ -169,6 +243,9 @@ export type P2PMessage = P2PAuthorityWire & (
    * lease-bound; guests pin the first valid terminal id and never reconnect
    * after accepting the commitment for their filtered state. */
   | { type: "terminal_result"; result: P2PTerminalResult }
+  /** Native server AI became unable to advance the authoritative session.
+   * The host sends this only after the final state revision it depends on. */
+  | { type: "ai_driver_fault"; id: number; revision: number; message: string }
   // Lifecycle broadcasts (host → all remaining peers).
   | { type: "player_kicked"; playerId: number; reason: string }
   // Host chose "continue without them" OR guest self-conceded mid-game. Wire
@@ -193,6 +270,7 @@ const VALID_TYPES = new Set([
   "preview_mana_payment",
   "state_update",
   "action_rejected",
+  "action_noop",
   "mana_payment_preview",
   "mana_payment_preview_rejected",
   "ping",
@@ -207,6 +285,7 @@ const VALID_TYPES = new Set([
   "kick",
   "host_left",
   "terminal_result",
+  "ai_driver_fault",
   "player_kicked",
   "player_conceded",
   "player_disconnected",
@@ -226,14 +305,6 @@ export function validateMessage(raw: unknown): P2PMessage {
   const msg = raw as { type: string };
   if (!VALID_TYPES.has(msg.type)) {
     throw new Error(`Invalid message type: ${msg.type}`);
-  }
-  if (msg.type === "game_setup" || msg.type === "reconnect_ack") {
-    const versioned = raw as { wireProtocolVersion?: unknown };
-    if (versioned.wireProtocolVersion !== WIRE_PROTOCOL_VERSION) {
-      throw new Error(
-        `Wire protocol mismatch: host sent v${String(versioned.wireProtocolVersion)}, this client speaks v${WIRE_PROTOCOL_VERSION}`,
-      );
-    }
   }
   return raw as P2PMessage;
 }

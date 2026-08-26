@@ -523,6 +523,7 @@ fn register_transient_effect(
             .is_some_and(crate::game::ability_utils::filter_references_target_player)
             && matches!(ability.targets.first(), Some(TargetRef::Player(_)));
         for bound_filter in transient_bound_filters(
+            state,
             ability,
             application_filter,
             skip_companion_player_target,
@@ -728,24 +729,55 @@ fn register_transient_effect(
     }
 }
 
+// CR 400.7 + CR 603.7c: a delayed `GenericEffect` whose pinned referent became a
+// new object must not bind a transient continuous effect to that new object.
+// This is the `okoye, mighty and adored` / `garruk, curse breaker` /
+// `rediscover the way` shape — an untyped `StaticDefinition` carrying
+// `affected: ParentTarget` under a `GenericEffect` root.
+//
+// The substitution lives HERE rather than at the caller's
+// `!ability.targets.is_empty()` gate, and that split is deliberate. The gate
+// asks "were targets declared?"; substituting it would make an all-stale
+// ability fall through to the BROADCAST filter path, which installs the
+// continuous effect against a battlefield-wide population — a fallback binding
+// different objects. Keeping the gate raw and filtering here instead means an
+// all-stale ability still enters the targeted branch and produces ZERO bound
+// filters, so `install_transient` is never called. That is already a clean,
+// event-preserving no-op, so no early return is required.
 fn transient_bound_filters(
+    state: &GameState,
     ability: &ResolvedAbility,
     resolved_filter: Option<&TargetFilter>,
     skip_companion_player_target: bool,
     inherited_object_target: bool,
 ) -> Vec<TargetFilter> {
+    let live_targets = ability.live_object_targets(state);
+
     if inherited_object_target {
         let Some(filter) = resolved_filter else {
             return Vec::new();
         };
-        return crate::game::effects::effect_object_targets(filter, &ability.targets)
+        // Slot carve-out (§5.4b): this hands its list straight to
+        // `effect_object_targets`, which indexes `ParentTargetSlot`
+        // POSITIONALLY. A pin-filtered list would renumber the slots, so the
+        // raw list is passed for that shape only.
+        let pool: &[TargetRef] = if matches!(filter, TargetFilter::ParentTargetSlot { .. }) {
+            &ability.targets
+        } else {
+            &live_targets
+        };
+        return crate::game::effects::effect_object_targets(filter, pool)
             .into_iter()
             .map(|id| TargetFilter::SpecificObject { id })
             .collect();
     }
 
-    ability
-        .targets
+    // The `skip` is positional (it drops a companion player slot), but it skips
+    // from the FRONT of a list whose leading element is a player ref, and
+    // `live_object_targets` passes every `TargetRef::Player` through unfiltered.
+    // The skipped position therefore cannot be removed by the filter, so
+    // filtering before skipping is safe here.
+    live_targets
         .iter()
         .skip(usize::from(skip_companion_player_target))
         .map(|target| match target {
@@ -777,6 +809,41 @@ pub fn generic_effect_application_filter<'a>(
     } else {
         target_filter.or(static_affected)
     }
+}
+
+/// CR 508.1a + CR 608.2c + CR 611.2c: SINGLE AUTHORITY for "which static on this
+/// `GenericEffect` names the population `those creatures` freezes" — shared by the
+/// parser's population-publisher routing (`oracle_effect::lower`) and the runtime's
+/// publish arm (`effects::affected_objects_from_events`) so lowering can never mark
+/// a head a publisher that resolution then declines to publish.
+///
+/// Eligible modes are the ones whose population is FROZEN at resolution rather than
+/// re-evaluated live at each future check: a coercion requirement (`MustAttack` /
+/// `MustAttackDefender`, CR 508.1a/d) or a `Continuous` grant.
+///
+/// Selection is `find_map`, NOT `find`-then-ask: a chain may carry an earlier
+/// eligible static with no application filter (a `Continuous` coercion with neither
+/// an outer `target` nor an `affected`), and taking it would suppress a later
+/// application-bearing broadcast static — so neither routing nor publishing would
+/// see the actual population. Shape mirrors the `any`-quantified sibling
+/// `is_mass_coerce_static` (`oracle_effect/mod.rs`) rather than a first-wins scan.
+pub fn generic_effect_population_filter<'a>(
+    target_filter: Option<&'a TargetFilter>,
+    static_abilities: &'a [StaticDefinition],
+) -> Option<&'a TargetFilter> {
+    static_abilities
+        .iter()
+        .filter(|static_def| {
+            matches!(
+                static_def.mode,
+                crate::types::statics::StaticMode::MustAttack
+                    | crate::types::statics::StaticMode::MustAttackDefender { .. }
+                    | crate::types::statics::StaticMode::Continuous
+            )
+        })
+        .find_map(|static_def| {
+            generic_effect_application_filter(target_filter, static_def.affected.as_ref())
+        })
 }
 
 fn snapshot_transient_modifications(
@@ -1348,6 +1415,7 @@ mod tests {
             card_id: CardId(2),
             controller: PlayerId(0),
             object_id: cast_spell,
+            cast_mana_value: None,
         });
 
         let static_def = StaticDefinition::continuous()
@@ -1506,6 +1574,7 @@ mod tests {
             card_id: CardId(11),
             controller: PlayerId(0),
             object_id: cast_spell,
+            cast_mana_value: None,
         });
 
         let static_def = StaticDefinition::continuous()

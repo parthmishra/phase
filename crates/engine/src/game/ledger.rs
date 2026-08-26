@@ -95,6 +95,34 @@ pub fn record_ability_activation(
     )
 }
 
+/// CR 700.13: Record that the player has committed a crime this turn after
+/// the targeting action survives its complete announcement and is placed on
+/// the stack. Individual `CrimeCommitted` events are still emitted for every
+/// qualifying action; this durable record only backs the per-turn condition.
+pub fn record_crime_committed(
+    state: &mut GameState,
+    player: PlayerId,
+) -> Result<(), ResolvedLedgerEditReplayInvariantError> {
+    let expected_turn_count = state
+        .players
+        .iter()
+        .find(|candidate| candidate.id == player)
+        .ok_or(ResolvedLedgerEditReplayInvariantError::UnknownPlayer(
+            player,
+        ))?
+        .crimes_committed_this_turn;
+    if expected_turn_count > 0 {
+        return Ok(());
+    }
+    resolve_and_apply_ledger_edit(
+        state,
+        ResolvedLedgerEdit::CrimeCommitted {
+            player,
+            expected_turn_count,
+        },
+    )
+}
+
 /// CR 603.2c: Record a fully classified constrained-trigger fact.
 pub fn record_trigger_fired(
     state: &mut GameState,
@@ -295,6 +323,28 @@ pub fn apply_resolved_ledger_edit(
                 .activated_abilities_this_game
                 .insert(key, next_game_count);
         }
+        ResolvedLedgerEdit::CrimeCommitted {
+            player,
+            expected_turn_count,
+        } => {
+            let player_state = state
+                .players
+                .iter_mut()
+                .find(|candidate| candidate.id == *player)
+                .ok_or(ResolvedLedgerEditReplayInvariantError::UnknownPlayer(
+                    *player,
+                ))?;
+            if *expected_turn_count != 0
+                || player_state.crimes_committed_this_turn != *expected_turn_count
+            {
+                return Err(
+                    ResolvedLedgerEditReplayInvariantError::CrimeCommittedPreconditionMismatch,
+                );
+            }
+            player_state.crimes_committed_this_turn = expected_turn_count
+                .checked_add(1)
+                .ok_or(ResolvedLedgerEditReplayInvariantError::CounterOverflow)?;
+        }
         ResolvedLedgerEdit::CardsDrawn {
             player,
             drawn_object,
@@ -463,4 +513,58 @@ pub fn apply_resolved_ledger_edit(
 
 fn history_len(len: usize) -> Result<u32, ResolvedLedgerEditReplayInvariantError> {
     u32::try_from(len).map_err(|_| ResolvedLedgerEditReplayInvariantError::CounterOverflow)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::game_object::GameObject;
+    use crate::types::ability::{TriggerDefinition, TriggerDefinitionOccurrenceRef, TriggerEntry};
+    use crate::types::identifiers::ObjectId;
+    use crate::types::player::PlayerId;
+    use crate::types::resolved_commands::{ResolvedCommandOrdinal, RulesExecutionNodeRef};
+    use crate::types::triggers::TriggerMode;
+    use crate::types::zones::Zone;
+    use crate::types::CardId;
+
+    #[test]
+    fn max_times_replay_resolves_recipient_key() {
+        let object_id = ObjectId(1);
+        let mut state = GameState::new_two_player(42);
+        let mut object = GameObject::new(
+            object_id,
+            CardId(1),
+            PlayerId(0),
+            "Granted trigger".to_string(),
+            Zone::Battlefield,
+        );
+        let entry = TriggerEntry::new(
+            TriggerDefinitionOccurrenceRef::Printed {
+                base_set: object.trigger_base_set_instance,
+                printed_index: 0,
+            },
+            TriggerDefinition::new(TriggerMode::Attacks),
+        );
+        let trigger = object.trigger_definition_ref(&entry);
+        object.trigger_definitions.push(entry);
+        state.objects.insert(object_id, object);
+        state
+            .trigger_fire_counts_this_turn
+            .insert(trigger.clone(), 2);
+
+        let command = ResolvedLedgerEditCommand {
+            edit: ResolvedLedgerEdit::TriggerFired {
+                trigger: trigger.clone(),
+                edit: ResolvedTriggerLedgerEdit::MaxTimesPerTurn { expected_old: 2 },
+            },
+            cause: RulesExecutionNodeRef::Proposal(ResolvedCommandOrdinal(0)),
+        };
+
+        apply_resolved_ledger_edit(&mut state, &command).expect("legacy replay resolves grant key");
+        assert_eq!(
+            state.trigger_fire_counts_this_turn.get(&trigger).copied(),
+            Some(3)
+        );
+        assert_eq!(state.trigger_fire_counts_this_turn.len(), 1);
+    }
 }

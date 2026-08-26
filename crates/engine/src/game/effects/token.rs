@@ -27,7 +27,7 @@ use crate::types::keywords::{Keyword, WardCost};
 use crate::types::mana::{ManaColor, ManaCost};
 use crate::types::phase::Phase;
 use crate::types::player::PlayerId;
-use crate::types::proposed_event::{CopyTokenSpec, ProposedEvent, TokenSpec};
+use crate::types::proposed_event::{CopyTokenSpec, ProposedEvent, TokenHostRequest, TokenSpec};
 use crate::types::resolved_commands::{
     ResolvedCopyBodyModifications, ResolvedTokenBody, ResolvedTokenCreationCommand,
     ResolvedTokenCreationReplayInvariantError,
@@ -157,7 +157,7 @@ fn materialize_catalog_token_payload(
     materialized.source = TokenAbilitySource::CatalogRulesText;
     materialized.rules_text = Some(rules_text.to_string());
     let (static_definitions, modifications, unparsed_lines) =
-        catalog_rules_text_abilities(rules_text);
+        catalog_rules_text_abilities(rules_text, &preset.body.display_name);
     materialized.static_definitions = static_definitions;
     materialized.unparsed_rules_text_lines = unparsed_lines;
 
@@ -539,9 +539,16 @@ pub fn resolve(
     // CR 303.4 + CR 303.4i: Resolve the specified Aura/Role host once, at propose
     // time. ParentTarget reads the first Object target (the for-each loop's
     // per-iteration rebind binds it); Typed/event-context filters resolve via the
-    // shared target/event-context path. `None` for ordinary (unattached) tokens.
-    let attach_target: Option<AttachTarget> =
-        attach_to.and_then(|f| resolve_attach_host(state, ability, f));
+    // shared target/event-context path.
+    //
+    // The result keeps "the instruction named no host" apart from "it named one
+    // and nothing bound it": CR 303.4i denies the entry of an Aura token in the
+    // second case and says nothing about the first, and the seam that applies
+    // that verdict runs after the CR 614 replacement pipeline, far from here.
+    let host_request = TokenHostRequest::from_binding(
+        attach_to.is_some(),
+        attach_to.and_then(|f| resolve_attach_host(state, ability, f)),
+    );
 
     // CR 111.1 + CR 111.4: Resolve the token's characteristics into a
     // self-describing `TokenSpec`. Script-name parsing takes precedence;
@@ -579,7 +586,7 @@ pub fn resolve(
         enters_attacking,
         token_statics,
         resolved_etb_counters,
-        attach_target,
+        host_request,
         ability,
         state,
     );
@@ -655,7 +662,7 @@ fn build_token_spec(
     enters_attacking: bool,
     static_abilities: Vec<crate::types::ability::StaticDefinition>,
     enter_with_counters: Vec<(CounterType, u32)>,
-    attach_to: Option<AttachTarget>,
+    attach_to: TokenHostRequest,
     ability: &ResolvedAbility,
     state: &GameState,
 ) -> TokenSpec {
@@ -757,6 +764,60 @@ fn intrinsic_equip_abilities_from_token_statics(
 /// creation, etc.) through the same code path.
 ///
 /// `event` must be a `ProposedEvent::CreateToken`; other variants are no-ops.
+/// CR 303.4i: does the rule deny this entrant's battlefield entry?
+///
+/// > If an effect attempts to put an Aura onto the battlefield attached to
+/// > either an object or player it can't legally enchant or an object or player
+/// > that is undefined, … If the Aura is a token, it isn't created.
+///
+/// Asked per token and on the ACTUAL entrant, after the CR 614 replacement
+/// pipeline has settled its characteristics: a replacement effect may create
+/// something other than the Aura the instruction described, and CR 303.4i is a
+/// question about what is entering rather than about what was announced.
+///
+/// Both halves are answered by the authority that already owns them —
+/// [`attach::authority_is_aura`] for Aura-ness (CR 205.1a: a copy exception can
+/// add or remove the subtype, so it reads characteristics, not the effect's
+/// `types`), and [`attach::can_attach_to_object`] / [`attach::can_attach_to_player`]
+/// for "can't legally enchant". That second pair is the SAME verdict
+/// `attach::attach_to` consumes a few lines later, so the gate and the
+/// attachment can never disagree about one host.
+///
+/// [`attach::authority_is_aura`]: super::attach::authority_is_aura
+/// [`attach::can_attach_to_object`]: super::attach::can_attach_to_object
+/// [`attach::can_attach_to_player`]: super::attach::can_attach_to_player
+fn aura_token_entry_denied(state: &GameState, entrant: ObjectId, host: TokenHostRequest) -> bool {
+    // CR 303.4h: "If an effect attempts to put a permanent that isn't an Aura,
+    // Equipment, or Fortification onto the battlefield attached to an object or
+    // player, it enters the battlefield unattached." It is created either way,
+    // so CR 303.4i is not its rule.
+    if !super::attach::authority_is_aura(state, entrant, super::attach::AttachmentAuthority::Stored)
+    {
+        return false;
+    }
+    match host {
+        // CR 303.4f — an Aura entering with no effect-specified host has its
+        // controller choose one — is a different rule with a different
+        // disposition (a choice, not a denial). Its consult belongs to the entry
+        // pipeline (`zone_pipeline::entering_aura_hosts`), which the liminal and
+        // copy token seams reach and this one does not — a stated gap, not an
+        // oversight. Measured over the shipped pool: every Aura-typed token spec
+        // names a host, so no card reaches this arm today.
+        TokenHostRequest::NotRequested => false,
+        // CR 303.4i, "undefined": the instruction named a host and nothing bound
+        // it — the shape #7302 reported.
+        TokenHostRequest::Unbound => true,
+        // CR 303.4i, "can't legally enchant": the host is defined, so the
+        // question is legality, and legality is `attach`'s to answer.
+        TokenHostRequest::Bound(AttachTarget::Object(host_id)) => {
+            !super::attach::can_attach_to_object(state, entrant, host_id)
+        }
+        TokenHostRequest::Bound(AttachTarget::Player(host_player)) => {
+            !super::attach::can_attach_to_player(state, entrant, host_player)
+        }
+    }
+}
+
 pub fn apply_create_token_after_replacement(
     state: &mut GameState,
     event: ProposedEvent,
@@ -846,6 +907,28 @@ pub(crate) fn apply_create_token_after_replacement_with_created_ids(
             ObjectIncarnationRef::from_object(obj)
         });
 
+        // CR 303.4i: settle whether this entrant is created at all, BEFORE the
+        // CR 733 birth is journaled (the journal is append-only — a birth
+        // recorded here could not be retracted) and before anything the game can
+        // observe is emitted. Same decide/act split as the copy seam in
+        // `token_copy.rs` and the liminal seam in
+        // `commit_liminal_token_entry_with_post_actions`.
+        //
+        // Everything done so far for this token is silent: `zones::create_object`
+        // inserts and zones the object without an event, and
+        // `materialize_token_spec_body` only fills it in. `uncreate_unentered_
+        // aura_token` undoes exactly that pair, so a denied entry leaves no
+        // `TokenCreated`, no `ZoneChanged`, no birth record, no `created_ids`
+        // row, and nothing in any graveyard. The loop goes on to the next token
+        // of the count; the tail's `last_created_token_ids = created_ids` then
+        // publishes only the tokens that were actually created, so a later
+        // `TargetFilter::LastCreated` cannot read a denied one — or, when the
+        // whole batch is denied, an earlier unrelated batch.
+        if aura_token_entry_denied(state, obj_id, spec.attach_to) {
+            uncreate_unentered_aura_token(state, obj_id, owner);
+            continue;
+        }
+
         // CR 733: journal the settled creation, after the body borrow ends.
         // Counters, the attacking entry, and any later status change journal
         // through their OWN families, so this command covers the birth only.
@@ -907,7 +990,7 @@ pub(crate) fn apply_create_token_after_replacement_with_created_ids(
                     PendingCounterPostAction::FinalizeTokenEntry {
                         object_id: obj_id,
                         name: spec.characteristics.display_name.clone(),
-                        attach_to: spec.attach_to,
+                        attach_to: spec.attach_to.bound(),
                         sacrifice_at: spec.sacrifice_at.clone(),
                         source_id: spec.source_id,
                         controller: spec.controller,
@@ -954,21 +1037,21 @@ pub(crate) fn apply_create_token_after_replacement_with_created_ids(
         // `push_committed_token_entry_events` below — recording it here too double-counts.
         crate::game::restrictions::record_token_created(state, obj_id);
 
-        // CR 303.4 + CR 303.7: A Role/Aura token created "attached to" a host
-        // enters attached. If no legal host was bound, the token is created
-        // unattached and the SBA at CR 704.5m (an Aura not attached to an object
-        // or player is put into its owner's graveyard) removes it; for multiple
-        // same-controller Roles on one host, CR 704.5y keeps only the
-        // latest-timestamp Role. (CR 303.4i's strict "the token isn't created"
-        // outcome is approximated by this create-then-SBA path.) Single
-        // authority: effects::attach.
-        if let Some(host) = &spec.attach_to {
+        // CR 303.4: A Role/Aura token created "attached to" a host enters
+        // attached. The ACT half of the CR 303.4i split above: an Aura whose
+        // host is undefined or illegal never reaches this line, so this is an
+        // attachment that the gate has already found legal, not an attempt.
+        // CR 303.4h keeps the other class here — a non-Aura token named a host
+        // too, and if that host is illegal it simply enters unattached. For
+        // multiple same-controller Roles on one host, CR 704.5z keeps only the
+        // latest-timestamp Role. Single authority: effects::attach.
+        if let Some(host) = spec.attach_to.bound() {
             match host {
                 AttachTarget::Object(id) => {
-                    super::attach::attach_to(state, obj_id, *id);
+                    super::attach::attach_to(state, obj_id, id);
                 }
                 AttachTarget::Player(pid) => {
-                    super::attach::attach_to_player(state, obj_id, *pid);
+                    super::attach::attach_to_player(state, obj_id, pid);
                 }
             }
         }
@@ -1162,12 +1245,12 @@ pub fn apply_resolved_token_creation(
     // directly above, which runs before this snapshot exactly as the live paths
     // do. Storing the live record on the command would not close (i) or (ii)
     // either, for the same ordering reason, so it was not done.
-    let entry_record = state
+    let mut entry_record = state
         .objects
         .get(&object_id)
         .expect("the token was materialized above")
         .snapshot_for_zone_change(object_id, None, Zone::Battlefield);
-    crate::game::restrictions::record_zone_change(state, entry_record);
+    crate::game::restrictions::record_zone_change(state, &mut entry_record);
     // CR 111.1: replay must not hand the same id out again to a later allocation.
     state.next_object_id = state.next_object_id.max(command.resulting_next_object_id);
     // CR 613.7d: the birth drew an entry timestamp alongside the object id, and
@@ -1213,6 +1296,8 @@ pub(crate) fn materialize_token_spec_body(
         object.base_name = ch.display_name.clone();
         object.base_power = ch.power;
         object.base_toughness = ch.toughness;
+        object.layer_base_power = ch.power;
+        object.layer_base_toughness = ch.toughness;
         object.card_types = CardType {
             supertypes: ch.supertypes.clone(),
             core_types: ch.core_types.clone(),
@@ -1430,7 +1515,7 @@ fn liminal_copy_token_continuation_for_event(
     let entry = state.liminal_entries.get(entry_ref)?;
     let copy = entry.copy_resume.clone()?;
     Some(LiminalCopyTokenContinuation {
-        owner: entry.object.owner,
+        owner: entry.object.projected().owner,
         copy,
         enter_tapped: entry.enter_tapped,
         enter_with_counters: entry.enter_with_counters.clone(),
@@ -1521,6 +1606,42 @@ pub(crate) fn continue_liminal_copy_token_batch_after_counter_pause(
     )
 }
 
+/// CR 303.4g / CR 303.4i: undo a token battlefield entry the Aura-entry rules
+/// say was never created.
+///
+/// The ONLY unhosted-entry disposition the liminal seam has, because the only
+/// entrant that seam can hold is a [`crate::types::game_state::TokenProjection`]
+/// (CR 111.1). The rule's card-backed dispositions are phrased against a
+/// from-zone, so they live where a from-zone exists: the
+/// `ProposedEvent::ZoneChange` path in `zone_pipeline`, which re-proposes the
+/// owner's-graveyard placement as a fresh, replacement-consulted event.
+///
+/// The inverse of the `state.objects.insert` + `zones::add_to_zone` pair
+/// immediately above the CR 303.4f/g consult, and nothing more. In particular it
+/// does NOT roll back `state.next_object_id`: the id was drawn by
+/// `reserve_liminal_token_object` and is recorded as a high-water mark on every
+/// sibling token's CR 733 birth command (`resulting_next_object_id`), so
+/// rewinding the allocator would make a later replay reuse a burnt id.
+pub(crate) fn uncreate_unentered_aura_token(
+    state: &mut GameState,
+    object_id: ObjectId,
+    owner: PlayerId,
+) {
+    // The annotation has to sit on the mover line or the line directly above it
+    // (`scripts/zone_authority_census.py::census_file`), so the rationale is
+    // stated once here and the annotation itself is the one-liner below.
+    //
+    // This is the un-entry of a token that CR 303.4g or CR 303.4i says was never
+    // created, not a CR 400.7 zone change: there is no from-zone, no destination
+    // zone, and nothing may observe it — the whole point is that no `ZoneChanged`,
+    // `TokenCreated`, or CR 733 birth record is produced for an entry the rules
+    // deny. Routing it through `zone_pipeline` would manufacture exactly the
+    // observable event this arm exists to suppress.
+    // allow-raw-zone: undoes a CR 303.4g/CR 303.4i-denied token entry; not a CR 400.7 zone change, so no ZoneChanged may be emitted.
+    zones::remove_from_zone(state, object_id, Zone::Battlefield, owner);
+    state.objects.remove(&object_id);
+}
+
 pub(crate) fn commit_liminal_token_entry_with_post_actions(
     state: &mut GameState,
     event: ProposedEvent,
@@ -1537,6 +1658,23 @@ pub(crate) fn commit_liminal_token_entry_with_post_actions(
     else {
         return true;
     };
+    // CR 111.1: the entrant of a `ProposedEvent::TokenEntry` is a TOKEN
+    // projection — the marker that represents a permanent no card represents,
+    // and that therefore sits in no zone until this entry commits.
+    // `state.liminal_entries` also holds the card-backed CR 701.42 meld
+    // projection, whose components are real cards in exile and which enters
+    // through `ProposedEvent::ZoneChange` from that real prior zone. A
+    // `TokenEntry` naming one would name nothing this seam may act on, so the
+    // entry is left exactly where it is — the same no-op as an entry that has
+    // already been taken, and, unlike a raw graveyard placement, an outcome
+    // that puts no object anywhere.
+    if !state
+        .liminal_entries
+        .get(&entry_ref)
+        .is_some_and(|entry| entry.object.is_token_projection())
+    {
+        return true;
+    }
     let Some(mut entry) = state.liminal_entries.remove(&entry_ref) else {
         return true;
     };
@@ -1546,16 +1684,28 @@ pub(crate) fn commit_liminal_token_entry_with_post_actions(
         .chain(entry.enter_with_counters.iter())
         .cloned()
         .collect();
-    entry.object.tapped = enter_tapped.resolve(entry.object.tapped);
-    let owner = entry.object.owner;
+    entry
+        .object
+        .set_tapped(enter_tapped.resolve(entry.object.projected().tapped));
+    let owner = entry.object.projected().owner;
 
-    // CR 733: journal the settled copy-token birth at the single liminal insert
+    // CR 733: the settled copy-token birth journals at the single liminal insert
     // seam. `copy_resume` is `Some` for every production liminal entry of kind
     // Token (`token_copy.rs` is the only production constructor), so this covers
     // the whole liminal copy path. Counters, the attacking entry, and later
     // status changes journal through their OWN families — this command is the
     // birth only, exactly as the ordinary CR 111.1 birth is.
-    if let Some(copy) = entry.copy_resume.clone() {
+    //
+    // The command is BUILT here, before `state.objects.insert` consumes
+    // `entry.object`, but RECORDED below, after the CR 303.4f/g consult has
+    // settled whether this token is created at all. `ResolvedRulesJournal` is
+    // append-only — `record_token_creation` has no retraction anywhere in the
+    // tree, verified against `append_command`, which only pushes — so a birth
+    // recorded for a token CR 303.4g says "isn't created" could never be taken
+    // back. Recording after the consult but BEFORE the attach is also what keeps
+    // the journal replayable: `apply_resolved_attachment` rejects an attachment
+    // whose object does not exist yet, so the birth must own the lower ordinal.
+    let birth_command = entry.copy_resume.clone().map(|copy| {
         // CR 707.9b/9c: the liminal seam folds its immediate exceptions into the
         // copiable values BEFORE entry, so the body is complete here and replay
         // can reapply them from this record.
@@ -1570,35 +1720,176 @@ pub(crate) fn commit_liminal_token_entry_with_post_actions(
                 all_creature_types: state.all_creature_types.clone(),
             }
         };
-        let command = ResolvedTokenCreationCommand {
-            object: ObjectIncarnationRef::from_object(&entry.object),
+        ResolvedTokenCreationCommand {
+            object: ObjectIncarnationRef::from_object(entry.object.projected()),
             owner,
-            entry_timestamp: entry.object.timestamp,
+            entry_timestamp: entry.object.projected().timestamp,
             // CR 302.6: the entered-turn the liminal build already stamped, read
             // back off the object rather than re-read from the live turn.
             entry_turn: entry
                 .object
+                .projected()
                 .entered_battlefield_turn
                 .unwrap_or(state.turn_number),
             body: ResolvedTokenBody::Copy {
                 copy,
                 modifications,
             },
-            resulting_tapped: entry.object.tapped,
+            resulting_tapped: entry.object.projected().tapped,
             // `reserve_liminal_token_object` advanced the allocator to exactly
             // one past this id when it drew it, however many were drawn since.
             resulting_next_object_id: entry_ref.0 + 1,
             cause: state.current_or_begin_rules_execution_node(),
-        };
+        }
+    });
+
+    state
+        .objects
+        .insert(entry_ref, entry.object.into_projected());
+    // allow-raw-zone: liminal token birth has no from-zone move; TokenEntry already consults entry replacements (CR 111.2 + CR 614.12).
+    zones::add_to_zone(state, entry_ref, Zone::Battlefield, owner);
+
+    // CR 303.4f: an Aura entering the battlefield by any means other than
+    // resolving as an Aura spell, where the effect doesn't specify a host, has
+    // its controller choose what it enchants as it enters. A token that is a
+    // copy of an Aura (Yenna, Redtooth Regent; Court of Vantress copying a
+    // Curse) carries no effect-specified `attach_to` — `entry.attach_to.is_some()`
+    // means the effect DID name a host (Role tokens), so CR 303.4f doesn't apply.
+    // Mirrors the `attach_to.is_none()` gate on the ZoneChange entry path.
+    //
+    // Decided before the birth is journaled and applied after, so the CR 303.4g
+    // arm can withhold the birth entirely (see `birth_command` above).
+    //
+    // WHY THE CONSULT RUNS AFTER THE INSERT, and what that costs. The insert +
+    // `add_to_zone` pair above emits nothing — no `ZoneChanged`, no
+    // `TokenCreated`, no journal command, no `last_created_token_ids` row — and
+    // the `NotCreated` arm below rewinds both, so nothing the game can observe
+    // escapes on the denied path. It is a prerequisite, not a shortcut:
+    // `entering_aura_hosts` reads the entrant's zone off `state.objects` and
+    // reports `NotApplicable` for anything not on the battlefield. It also puts
+    // this seam in agreement with the OTHER token seam
+    // (`token_copy.rs`'s non-liminal loop, which likewise consults a token it has
+    // already created on the battlefield).
+    //
+    // The residual, stated rather than papered over: an enchant filter that
+    // COUNTS a population the entrant belongs to ("enchant creature you control if
+    // you control two or more enchantments") observes the entrant as present here
+    // and as absent at the pre-entry ZoneChange seam in `zone_pipeline`. Only
+    // counting predicates diverge — CR 303.4d self-exclusion is applied
+    // explicitly by `legal_aura_attachment_targets`, and `FilterProp::Another` is
+    // source-relative to the Aura itself, so both already exclude the entrant on
+    // either side. No card in the pool carries a counting enchant ability.
+    let hosts = if entry.attach_to.is_none() {
+        crate::game::zone_pipeline::entering_aura_hosts(state, entry_ref)
+    } else {
+        crate::game::zone_pipeline::EnteringAuraHosts::NotApplicable
+    };
+
+    // CR 303.4g: "If an Aura is entering the battlefield and there is no legal
+    // object or player for it to enchant, the Aura remains in its current zone,
+    // unless that zone is the stack. In that case, the Aura is put into its
+    // owner's graveyard instead of entering the battlefield. If the Aura is a
+    // token, it isn't created."
+    //
+    // The entry is denied — there is no arm that lets the entrant stay on the
+    // battlefield unattached for the CR 704.5m state-based action to sweep,
+    // because the rule says this entry never happens. Rewound before anything
+    // observes it: no CR 733 birth record (`birth_command` is still unrecorded
+    // here), no `TokenCreated`, no battlefield `ZoneChanged`, and no
+    // `last_created_token_ids` row.
+    if matches!(
+        &hosts,
+        crate::game::zone_pipeline::EnteringAuraHosts::Hosts { legal_targets, .. }
+            if legal_targets.is_empty()
+    ) {
+        // CR 303.4g + CR 111.1: "If the Aura is a token, it isn't created" is the
+        // ONLY disposition available here, and it is available by construction:
+        // this seam's entrant is a `LiminalEntrant::Token`, whose CR 111.1
+        // token-ness is a property of the type rather than an expectation about
+        // a flag. The rule's two card-backed dispositions are phrased against
+        // the zone the Aura is entering FROM, which is why they belong to — and
+        // only exist on — the `ProposedEvent::ZoneChange` path in
+        // `zone_pipeline`, where the owner's-graveyard placement is re-proposed
+        // as a fresh event so CR 614.6 graveyard→exile redirects (Rest in Peace,
+        // Leyline of the Void) still apply to it. Nothing is placed anywhere
+        // here, so there is no placement for a replacement to miss.
+        uncreate_unentered_aura_token(state, entry_ref, owner);
+        // CR 111.1 + CR 603.7: the anaphora slot still has to be republished, or
+        // the batch continuation (which reads it back to seed the next token's
+        // `created_ids`) would carry whatever an EARLIER, unrelated effect left
+        // there. `entry.created_ids` is this batch's list up to but excluding the
+        // token that was not created — exactly what `finalize_committed_liminal_
+        // token_entry_from_action` would have assigned before appending, minus
+        // the append.
+        state.last_created_token_ids = entry.created_ids.clone();
+        // Not a pause: the batch loop must go on to the next token in the count.
+        return true;
+    }
+
+    if let Some(command) = birth_command {
         state
             .resolved_rules_journal
             .record_token_creation(command)
             .expect("resolved copy-token creation must have a live journal cause");
     }
 
-    state.objects.insert(entry_ref, entry.object);
-    // allow-raw-zone: liminal token birth has no from-zone move; TokenEntry already consults entry replacements (CR 111.2 + CR 614.12).
-    zones::add_to_zone(state, entry_ref, Zone::Battlefield, owner);
+    match crate::game::zone_pipeline::apply_entering_aura_hosts(state, entry_ref, hosts) {
+        // `NoLegalHost` is unreachable here: the empty-`legal_targets` arm above
+        // returned for every entrant, card-backed included.
+        crate::game::zone_pipeline::EnteringAuraAttachment::NotApplicable
+        | crate::game::zone_pipeline::EnteringAuraAttachment::Attached
+        | crate::game::zone_pipeline::EnteringAuraAttachment::NoLegalHost => {}
+        crate::game::zone_pipeline::EnteringAuraAttachment::NeedsChoice {
+            controller: chooser,
+            legal_targets,
+        } => {
+            // CR 616.1 carrier: park the entry tail exactly like the
+            // enter-with-counters pause below, so the finalize step and any
+            // remaining batch continuation run after the host is chosen.
+            state.last_created_token_ids = entry.created_ids.clone();
+            let remaining_counters = counters_to_apply
+                .iter()
+                .filter(|(_, count)| *count > 0)
+                .map(|(counter_type, count)| PendingCounterAddition::Object {
+                    actor: owner,
+                    object_id: entry_ref,
+                    counter_type: counter_type.clone(),
+                    count: *count,
+                })
+                .collect();
+            let mut post_actions = vec![finalization];
+            post_actions.extend(post_actions_after_finalize);
+            super::counters::stash_pending_counter_additions(
+                state,
+                remaining_counters,
+                crate::types::game_state::PendingEffectResolved::with_post_actions_without_effect(
+                    if entry.copy_resume.is_some() {
+                        EffectKind::CopyTokenOf
+                    } else {
+                        EffectKind::Token
+                    },
+                    entry.source_id,
+                    post_actions,
+                ),
+            );
+            state.waiting_for = WaitingFor::ReturnAsAuraTarget {
+                player: chooser,
+                source_id: entry.source_id,
+                returned_id: entry_ref,
+                legal_targets,
+                pending_effect: Box::new(ResolvedAbility::new(
+                    Effect::Attach {
+                        attachment: TargetFilter::SelfRef,
+                        target: TargetFilter::Any,
+                    },
+                    Vec::new(),
+                    entry.source_id,
+                    chooser,
+                )),
+            };
+            return false;
+        }
+    }
 
     for (counter_index, (counter_type, counter_count)) in counters_to_apply.iter().enumerate() {
         if *counter_count > 0
@@ -1788,6 +2079,7 @@ pub(crate) fn finalize_committed_liminal_token_entry_from_action(
     // withheld its `TokenCreated` and wrote no `created_tokens_this_turn` row. Appending after the
     // assignment is the same position `created_ids.push(object_id)` produced.
     record_last_created_token(state, object_id);
+
     true
 }
 
@@ -2130,7 +2422,8 @@ pub(crate) fn spec_emits_only_etb_pair(spec: &TokenSpec) -> bool {
     spec.enter_with_counters.is_empty() // no CounterAdded event / AddCounter replacement
         && !spec.enters_attacking // no combat-state mutation (CR 508.4)
         && spec.sacrifice_at.is_none() // no delayed trigger (CR 603.7)
-        && spec.attach_to.is_none() // no host attachment mutation (CR 303.4)
+        // no host attachment mutation and no CR 303.4i entry verdict to reach
+        && !spec.attach_to.is_requested()
 }
 
 /// CR 603.6a + CR 111.1: The set of event keys a single produced token EMITS as
@@ -2637,7 +2930,7 @@ pub(crate) fn copy_probe_spec_for(
         sacrifice_at,
         source_id,
         controller,
-        attach_to: None,
+        attach_to: TokenHostRequest::NotRequested,
     }
 }
 
@@ -2718,9 +3011,12 @@ pub(crate) fn resolve_token_spec(
 
     let count = resolve_quantity_with_targets(state, count, ability).max(0) as u32;
     let token_owner = resolve_token_owner(state, ability, owner);
-    let attach_target = attach_to
-        .as_ref()
-        .and_then(|f| resolve_attach_host(state, ability, f));
+    let host_request = TokenHostRequest::from_binding(
+        attach_to.is_some(),
+        attach_to
+            .as_ref()
+            .and_then(|f| resolve_attach_host(state, ability, f)),
+    );
 
     let parsed = parse_token_script(name).or_else(|| {
         build_token_attrs_from_effect(
@@ -2745,7 +3041,7 @@ pub(crate) fn resolve_token_spec(
         *enters_attacking,
         static_abilities.clone(),
         resolved_etb_counters,
-        attach_target,
+        host_request,
         ability,
         state,
     );
@@ -2767,7 +3063,10 @@ pub(crate) fn resolve_token_spec(
 /// the chosen target out of `ability.targets`. Returns `None` when no legal
 /// host has been bound — the apply path then leaves the token unattached and
 /// the CR 704.5m SBA (an unattached Aura) moves the orphaned Aura to the
-/// graveyard.
+/// graveyard. That observed path is itself a divergence from CR 303.4i, which
+/// says an Aura token whose host is undefined is not created at all; the missing
+/// guard is tracked separately (#7302). Binding the host correctly is what keeps
+/// a card off that path, not a substitute for the guard.
 ///
 /// This does NOT duplicate attach legality: the actual attach is performed by
 /// `attach::attach_to` / `attach::attach_to_player`, the single authority for
@@ -2777,25 +3076,289 @@ fn resolve_attach_host(
     ability: &ResolvedAbility,
     filter: &TargetFilter,
 ) -> Option<AttachTarget> {
-    match filter {
+    match classify_attach_host_authority(filter) {
+        // CR 115.1a: the chosen OBJECT target carried in `ability.targets` — the
+        // single-target "attached to target creature" case. A player-valued
+        // slot never reaches this arm; `denotes_player_target` routes it to
+        // `SelectedPlayerTarget` below.
+        AttachHostAuthority::SelectedTarget => first_object_host(ability),
+        // CR 115.1a + CR 303.4: the chosen PLAYER target is the host. Curse
+        // Auras (Selenia's Curse) are the shipped shape; `attach_to_player`
+        // downstream carries the CR 303.4i legality gate, exactly as
+        // `attach_to` does for an object host.
+        AttachHostAuthority::SelectedPlayerTarget => first_player_host(ability),
+        // CR 608.2c + CR 109.4: the resolution-chosen player, read from the
+        // resolution's own chosen-player list.
+        //
+        // Read from the slot directly rather than through
+        // `resolve_player_for_context_ref`: that helper falls back to
+        // `ability.controller` when the index is unbound, which is right for a
+        // sub-effect that must still act ("the chosen player draws a card") and
+        // wrong here. An unbound slot means the sentence names nobody, and this
+        // path may not invent a host — inventing one is the whole defect this
+        // resolver exists to prevent. No host, and CR 704.5m takes it from there.
+        AttachHostAuthority::ChosenPlayer(index) => ability
+            .chosen_players
+            .get(index as usize)
+            .copied()
+            .map(AttachTarget::Player),
         // Event-context hosts ("attached to the triggering creature") resolve the
         // triggering event's subject via the shared event-context resolver.
-        TargetFilter::TriggeringSource | TargetFilter::AttachedTo => {
+        AttachHostAuthority::EventContext => {
             crate::game::targeting::resolve_event_context_target(state, filter, ability.source_id)
                 .map(target_ref_to_attach_target)
         }
-        // ParentTarget and any targeting filter resolve to the chosen target
-        // carried in `ability.targets`. ParentTarget is bound per-iteration by the
-        // for-each rebind; a `Typed` targeting filter is the single-target
-        // "attached to target creature" case (CR 115.1a). Both read the first
-        // `TargetRef::Object` in `ability.targets`. Player-host Auras (CR 303.4
-        // permits a player host) are not yet implemented — no current card creates
-        // a token attached to a player, so a Player slot yields `None` here.
-        _ => ability.targets.iter().find_map(|target| match target {
-            TargetRef::Object(id) => Some(AttachTarget::Object(*id)),
-            TargetRef::Player(_) => None,
+        // The bare-pronoun host ("attached to it"). It normally reads the chosen
+        // target out of `ability.targets` — the for-each rebind binds it per
+        // iteration — but the pronoun also appears in abilities that choose no
+        // target at all, where there is no back-reference for it to make.
+        //
+        // CR 608.2k: such a pronoun names the specific untargeted object the
+        // ability's trigger condition already referred to ("When this creature
+        // enters, create a Monster Role token attached to IT").
+        //
+        // `ParentTarget` IS that anaphor, and `targeting::resolved_targets` is
+        // its authority — so the fallback asks it rather than substituting a
+        // neighbouring one. It carries referents this clause has no business
+        // re-deriving: the attack batch, the cast spell, the blocked attacker,
+        // and the Stationed / VehicleCrewed / Saddled subjects (CR 702.184a,
+        // CR 702.122, CR 702.171). On a zone change it hands back the ENTERING
+        // object only when that is not the source — Gylwain, Casting Director
+        // creates the Role for another creature that entered — and otherwise
+        // falls back to the source, which is what "When THIS creature enters …
+        // attached to it" needs. Resolving `TriggeringSource` here happened to
+        // agree on both zone-change shapes and on nothing else.
+        //
+        // The fallback is confined to this arm and to an ability that chose
+        // NOTHING. A typed targeting filter that legally selected zero targets
+        // ("attached to target creature you control" with no legal target) keeps
+        // its own no-host outcome: nothing in its text names an untargeted
+        // object, so CR 608.2k does not reach it.
+        //
+        // One host is taken from what may be a batch: the clause creates one
+        // token and its pronoun names one thing.
+        AttachHostAuthority::Pronoun => first_object_host(ability).or_else(|| {
+            ability.targets.is_empty().then(|| {
+                crate::game::targeting::resolved_targets(
+                    ability,
+                    &TargetFilter::ParentTarget,
+                    state,
+                )
+                .into_iter()
+                .next()
+                .map(target_ref_to_attach_target)
+            })?
         }),
+        // CR 608.2c: a numbered anaphor resolves against the whole resolving
+        // chain's targets, which is why it routes through the same authority
+        // `attach::resolve_object_filter` uses rather than reading this clause's
+        // nearest target.
+        AttachHostAuthority::ParentSlot(index) => {
+            crate::game::targeting::resolve_parent_slot_from_root(state, ability, index)
+                .map(target_ref_to_attach_target)
+        }
+        AttachHostAuthority::Source => Some(AttachTarget::Object(ability.source_id)),
+        AttachHostAuthority::SpecificObject(id) => Some(AttachTarget::Object(id)),
+        AttachHostAuthority::NoHost => None,
     }
+}
+
+/// CR 303.4 + CR 608.2c: which authority names the host of a token created
+/// "attached to" something.
+///
+/// Reading the enclosing ability's chosen targets is correct only for a filter
+/// that describes a target slot (CR 115.1a). Every other family names its object
+/// through its own authority, and a filter that names no object must leave the
+/// token hostless rather than inherit whatever the ability happened to select.
+enum AttachHostAuthority {
+    /// A predicate over objects, which the targeting layer used to choose a
+    /// target. The host is that chosen target.
+    SelectedTarget,
+    /// CR 115.1a + CR 303.4: a target slot that holds a PLAYER, not an object
+    /// ("… attached to target opponent"). The host is that chosen player.
+    SelectedPlayerTarget,
+    /// CR 608.2c + CR 109.4: the Nth resolution-chosen player. Fixed while the
+    /// ability resolves, never declared as a target — so it names its player
+    /// through the chosen-player list, not through `ability.targets`.
+    ChosenPlayer(u8),
+    /// An object the triggering event or the resolution context names.
+    EventContext,
+    /// The bare anaphoric pronoun, which reads the chosen target and otherwise
+    /// falls back to the untargeted object the trigger condition named.
+    Pronoun,
+    /// One numbered slot of the resolving chain's accumulated targets.
+    ParentSlot(usize),
+    /// The ability's own source object.
+    Source,
+    /// An object the ability definition names outright.
+    SpecificObject(ObjectId),
+    /// No host from this path: a player-valued filter, a filter that names no
+    /// object at all, or a reference family whose authority this path does not
+    /// resolve. The token is then left unattached (see the `resolve_attach_host`
+    /// doc comment for what happens to it).
+    NoHost,
+}
+
+/// The classification is exhaustive over [`TargetFilter`] on purpose: a new
+/// variant has to be triaged here rather than inheriting selected-target
+/// semantics from a wildcard.
+fn classify_attach_host_authority(filter: &TargetFilter) -> AttachHostAuthority {
+    let authority = match filter {
+        // CR 608.2c + CR 109.4: a reference to the resolution-chosen player is a
+        // `Typed` filter BY SHAPE, but it is a context reference — the engine
+        // says so through `chosen_player_index`, which is what
+        // `is_context_ref` itself consults. Asked ahead of the generic `Typed`
+        // arm below, which would otherwise read the ability's chosen targets and
+        // attach the token to an unrelated object.
+        TargetFilter::Typed(_) if filter.chosen_player_index().is_some() => {
+            AttachHostAuthority::ChosenPlayer(
+                filter
+                    .chosen_player_index()
+                    .expect("guarded by the arm above"),
+            )
+        }
+        // CR 115.1a: whether a target slot holds a player or an object is the
+        // targeting layer's question, and `denotes_player_target` is the single
+        // authority both it and this classification read. "… attached to target
+        // opponent" (Selenia, the Cursed Heart) parses to the property-free
+        // `Typed` shape, so without this arm its Curse would look for an object
+        // target, find none, and enter unattached.
+        TargetFilter::Typed(_) if filter.denotes_player_target() => {
+            AttachHostAuthority::SelectedPlayerTarget
+        }
+
+        // CR 601.3 + CR 608.2c: a composite can CONTAIN a context reference —
+        // the parser builds `And { ExiledBySource, Typed }` for "an exiled card
+        // that is a creature" — and `is_context_ref` reports the whole filter as
+        // one. Its object comes from the exile link, not from a target slot, so
+        // it fails closed here rather than reading `ability.targets`. Asked
+        // before the object-predicate arm below, which would otherwise claim the
+        // composite by its outer shape.
+        TargetFilter::And { .. } | TargetFilter::Or { .. } | TargetFilter::Not { .. }
+            if filter.is_context_ref() =>
+        {
+            AttachHostAuthority::NoHost
+        }
+
+        // Predicates over objects — what a target slot is chosen with.
+        TargetFilter::Any
+        | TargetFilter::Typed(_)
+        | TargetFilter::Not { .. }
+        | TargetFilter::Or { .. }
+        | TargetFilter::And { .. }
+        | TargetFilter::Named { .. }
+        | TargetFilter::HasChosenName
+        | TargetFilter::StackSpell
+        | TargetFilter::StackAbility { .. } => AttachHostAuthority::SelectedTarget,
+
+        // CR 603.7c + CR 608.2c: event- and resolution-context references.
+        TargetFilter::EventTarget
+        | TargetFilter::LastCreated
+        | TargetFilter::LastRevealed
+        | TargetFilter::LastZoneChanged
+        | TargetFilter::PostReplacementDamageSource
+        | TargetFilter::TriggeringSource
+        | TargetFilter::AttachedTo => AttachHostAuthority::EventContext,
+
+        TargetFilter::ParentTarget => AttachHostAuthority::Pronoun,
+        TargetFilter::ParentTargetSlot { index } => AttachHostAuthority::ParentSlot(*index),
+        TargetFilter::SelfRef => AttachHostAuthority::Source,
+        TargetFilter::SpecificObject { id } => AttachHostAuthority::SpecificObject(*id),
+
+        // CR 115.1a: the remaining player-valued TARGET SLOTS, which
+        // `denotes_player_target` also claims. Kept as their own arm rather than
+        // folded into a guard so the variant list stays readable, and asserted
+        // to agree with that authority in `attach_host_authority_tests`.
+        TargetFilter::Player | TargetFilter::SpecificPlayer { .. } => {
+            AttachHostAuthority::SelectedPlayerTarget
+        }
+
+        // Player-valued filters that are NOT target slots. CR 303.4 permits a
+        // player host, but each of these names its player through a context
+        // authority this path does not resolve, so they fail closed rather than
+        // guess one.
+        TargetFilter::Controller
+        | TargetFilter::SourceController
+        | TargetFilter::ControllerAndControlledPermanents { .. }
+        | TargetFilter::Opponent
+        | TargetFilter::PlayerWhoChoseLabel { .. }
+        | TargetFilter::PlayerMatching { .. }
+        | TargetFilter::Neighbor { .. }
+        | TargetFilter::ScopedPlayer
+        | TargetFilter::TriggeringSpellController
+        | TargetFilter::TriggeringSpellOwner
+        | TargetFilter::TriggeringPlayer
+        | TargetFilter::TriggeringSourceController
+        | TargetFilter::ParentTargetController
+        | TargetFilter::ParentTargetOwner
+        | TargetFilter::SourceChosenPlayer
+        | TargetFilter::OriginalController
+        | TargetFilter::PostReplacementSourceController
+        | TargetFilter::PostReplacementDamageTarget
+        | TargetFilter::PostReplacementDamageTargetOwner
+        | TargetFilter::DefendingPlayer
+        | TargetFilter::Owner
+        | TargetFilter::AllPlayers => AttachHostAuthority::NoHost,
+
+        // Object references this path does not resolve. Each names its object
+        // through an authority of its own (an exile link, a tracked set, a
+        // recorded choice, a paid cost); none of them is the enclosing ability's
+        // selected target, so an unsupported one yields no host instead.
+        // `OriginalSource` never survives to resolution — it is concretized to
+        // `SpecificObject` beforehand.
+        // CR 702.95b: `SourceOrPaired` names the source AND the creature it is
+        // paired with — two objects, not one host — and `is_context_ref` already
+        // classifies it as an automatic context reference rather than a target
+        // slot. It fails closed here until a host authority for the pair exists.
+        TargetFilter::SourceOrPaired
+        | TargetFilter::None
+        | TargetFilter::GrantingObject
+        | TargetFilter::CostPaidObject
+        | TargetFilter::ChosenCard
+        | TargetFilter::ChosenDamageSource { .. }
+        | TargetFilter::TrackedSet { .. }
+        | TargetFilter::TrackedSetFiltered { .. }
+        | TargetFilter::ExiledBySource
+        | TargetFilter::ExiledCardByIndex { .. }
+        | TargetFilter::OriginalSource => AttachHostAuthority::NoHost,
+    };
+
+    // CR 115.1a: the two authorities above are the engine's, not this function's,
+    // so the classification is checked against them rather than against a
+    // hand-kept list of filters — every filter the engine classifies anywhere is
+    // covered, including shapes nobody thought to write down. `is_context_ref`
+    // says a filter surfaces no target slot; `denotes_player_target` says the
+    // slot holds a player. Either one rules out reading the ability's chosen
+    // OBJECT targets.
+    debug_assert!(
+        !(matches!(authority, AttachHostAuthority::SelectedTarget)
+            && (filter.is_context_ref() || filter.denotes_player_target())),
+        "{filter:?} is not an object target slot, so it must not inherit the ability's \
+         chosen object targets as its attachment host"
+    );
+    authority
+}
+
+/// The first object target the ability chose, which is the host every targeting
+/// attachment filter reads. Mirrors `attach::resolve_object_filter`'s
+/// ParentTarget arm.
+fn first_object_host(ability: &ResolvedAbility) -> Option<AttachTarget> {
+    ability.targets.iter().find_map(|target| match target {
+        TargetRef::Object(id) => Some(AttachTarget::Object(*id)),
+        TargetRef::Player(_) => None,
+    })
+}
+
+/// The first player target the ability chose — the mirror of
+/// [`first_object_host`] for a host filter whose slot holds a player
+/// (CR 115.1a). Object slots are skipped rather than converted: an ability can
+/// carry both ("tap target creature, then create a Curse attached to target
+/// opponent"), and the object slot is the other clause's, not this one's.
+fn first_player_host(ability: &ResolvedAbility) -> Option<AttachTarget> {
+    ability.targets.iter().find_map(|target| match target {
+        TargetRef::Player(id) => Some(AttachTarget::Player(*id)),
+        TargetRef::Object(_) => None,
+    })
 }
 
 /// Convert a resolved `TargetRef` into an `AttachTarget` host. Player and Object
@@ -3295,6 +3858,9 @@ fn incubator_phyrexian_back_face() -> BackFaceData {
         strive_cost: None,
         casting_restrictions: vec![],
         casting_options: vec![],
+        // Built in code from CR 111.10i, not parsed from printed text, so there is
+        // no parse to have gone wrong.
+        parse_warnings: vec![],
         layout_kind: None,
     }
 }
@@ -3799,11 +4365,19 @@ fn apply_token_ability_payload(obj: &mut GameObject, materialized: TokenAbilityM
 
 fn catalog_rules_text_abilities(
     rules_text: &str,
+    card_name: &str,
 ) -> (
     Vec<StaticDefinition>,
     Vec<ContinuousModification>,
     Vec<String>,
 ) {
+    // CR 201.5 + CR 201.5a: A card's Oracle text uses its name to refer to
+    // itself, and a granted ability that refers to its granter by name refers
+    // only to that specific granter. Token catalog rules text is parsed
+    // independently of `parse_oracle_ir`'s single entry point, so it needs its
+    // own `normalize_card_name_refs` pass here, mirroring `parse_oracle_ir`'s
+    // call in `oracle.rs`.
+    let rules_text = crate::parser::oracle_util::normalize_card_name_refs(rules_text, card_name);
     let mut static_definitions = Vec::new();
     let mut modifications = Vec::new();
     let mut unparsed_lines = Vec::new();
@@ -3827,6 +4401,16 @@ fn catalog_rules_text_abilities(
                     .map(normalized_token_static_definition),
             );
         }
+    }
+    // CR 201.5a: catch any residual `GRANTING_SELF_PLACEHOLDER` left in the
+    // parsed statics'/modifications' display `description`s, mirroring
+    // `scrub_granting_placeholder_descriptions`'s whole-tree sweep in
+    // `oracle.rs` for this independent parse entry point.
+    for def in &mut static_definitions {
+        crate::parser::oracle::scrub_static_descriptions(def);
+    }
+    for modification in &mut modifications {
+        crate::parser::oracle::scrub_modification_descriptions(modification);
     }
     (static_definitions, modifications, unparsed_lines)
 }
@@ -5717,7 +6301,7 @@ mod tests {
             sacrifice_at: None,
             source_id: source,
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
         let event = ProposedEvent::CreateToken {
             owner: PlayerId(0),
@@ -5796,7 +6380,7 @@ mod tests {
             sacrifice_at: None,
             source_id: source,
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
         let event = ProposedEvent::CreateToken {
             owner: PlayerId(0),
@@ -5865,7 +6449,7 @@ mod tests {
             sacrifice_at: None,
             source_id: source,
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
         let event = ProposedEvent::CreateToken {
             owner: PlayerId(0),
@@ -5943,7 +6527,7 @@ mod tests {
             sacrifice_at: None,
             source_id: source,
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
         let event = ProposedEvent::CreateToken {
             owner: PlayerId(0),
@@ -6133,7 +6717,7 @@ mod tests {
             sacrifice_at: None,
             source_id: source,
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
         let event = ProposedEvent::CreateToken {
             owner: PlayerId(0),
@@ -6694,7 +7278,7 @@ mod tests {
             sacrifice_at: None,
             source_id: ObjectId(100),
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
 
         let event = ProposedEvent::CreateToken {
@@ -6759,7 +7343,7 @@ mod tests {
             sacrifice_at: None,
             source_id: ObjectId(100),
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
 
         let event = ProposedEvent::CreateToken {
@@ -6827,7 +7411,7 @@ mod tests {
             sacrifice_at: None,
             source_id: ObjectId(101),
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
 
         let event = ProposedEvent::CreateToken {
@@ -6902,7 +7486,7 @@ mod tests {
             sacrifice_at: None,
             source_id: ObjectId(102),
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
 
         let event = ProposedEvent::CreateToken {
@@ -6956,7 +7540,7 @@ mod tests {
             sacrifice_at: None,
             source_id: ObjectId(100),
             controller: PlayerId(0),
-            attach_to: None,
+            attach_to: crate::types::proposed_event::TokenHostRequest::NotRequested,
         };
 
         let event = ProposedEvent::CreateToken {
@@ -7067,6 +7651,276 @@ mod tests {
         );
     }
 
+    /// A Rest in Peace-class board-wide `Moved` graveyard→exile redirect,
+    /// deliberately NOT a creature: a creature would be a legal host for
+    /// `enchant creature` and CR 303.4g would never be reached.
+    fn add_graveyard_to_exile_redirect(state: &mut GameState) -> ObjectId {
+        use crate::types::ability::{AbilityDefinition, AbilityKind, ReplacementDefinition};
+        use crate::types::replacements::ReplacementEvent;
+
+        let rip = create_object(
+            state,
+            CardId(90_400),
+            PlayerId(1),
+            "Rest in Peace".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&rip)
+            .expect("just created")
+            .replacement_definitions
+            .push(
+                ReplacementDefinition::new(ReplacementEvent::Moved)
+                    .destination_zone(Zone::Graveyard)
+                    .execute(AbilityDefinition::new(
+                        AbilityKind::Spell,
+                        Effect::ChangeZone {
+                            origin: None,
+                            destination: Zone::Exile,
+                            target: TargetFilter::SelfRef,
+                            owner_library: false,
+                            enter_transformed: false,
+                            enters_under: None,
+                            enter_tapped: EtbTapState::Unspecified,
+                            enters_attacking: false,
+                            up_to: false,
+                            enter_with_counters: vec![],
+                            conditional_enter_with_counters: vec![],
+                            face_down_profile: None,
+                            enters_modified_if: None,
+                        },
+                    )),
+            );
+        rip
+    }
+
+    /// Build the unhosted liminal Aura fixture: an Aura with `Enchant creature`
+    /// in a game with no creature anywhere, so the CR 303.4f consult finds no
+    /// legal host and CR 303.4g decides the entry.
+    fn unhosted_liminal_aura_entrant(state: &mut GameState) -> (ObjectId, GameObject) {
+        use crate::types::keywords::Keyword;
+
+        let (entry_ref, mut entrant) =
+            reserve_liminal_token_object(state, PlayerId(0), "Unhosted Aura".to_string());
+        entrant.card_types.core_types = vec![CoreType::Enchantment];
+        entrant.card_types.subtypes = vec!["Aura".to_string()];
+        entrant.base_card_types = entrant.card_types.clone();
+        let enchant = Keyword::Enchant(TargetFilter::Typed(
+            crate::types::ability::TypedFilter::new(crate::types::ability::TypeFilter::Creature),
+        ));
+        entrant.keywords = vec![enchant.clone()];
+        entrant.base_keywords = vec![enchant];
+        let timestamp = state.next_timestamp();
+        entrant.reset_for_battlefield_entry(state.turn_number, timestamp);
+        (entry_ref, entrant)
+    }
+
+    fn liminal_entry_for(
+        object: crate::types::game_state::LiminalEntrant,
+        source_id: ObjectId,
+    ) -> crate::types::game_state::LiminalEntry {
+        crate::types::game_state::LiminalEntry {
+            object,
+            name: "Unhosted Aura".to_string(),
+            source_id,
+            controller: PlayerId(0),
+            enters_attacking: false,
+            attach_to: None,
+            sacrifice_at: None,
+            remaining_count: 0,
+            created_ids: Vec::new(),
+            copy_resume: None,
+            spec_resume: None,
+            enter_tapped: EtbTapState::Unspecified,
+            enter_with_counters: Vec::new(),
+            kind: crate::types::game_state::LiminalEntryKind::Token,
+            replacement_applied: std::collections::HashSet::new(),
+        }
+    }
+
+    /// CR 303.4g + CR 111.1 on the liminal seam: an unhosted entrant never
+    /// enters, and because this seam's entrant is a `LiminalEntrant::Token`, "if
+    /// the Aura is a token, it isn't created" is the whole disposition — nothing
+    /// is placed in any zone.
+    ///
+    /// A Rest in Peace-class graveyard→exile redirect is on the battlefield
+    /// throughout. Its only job is to be available: the seam performs no
+    /// placement for it to redirect, so both the graveyard and exile stay empty.
+    /// That is the point of the narrowing — the placement that used to bypass
+    /// this redirect does not exist any more, rather than existing and being
+    /// routed correctly.
+    #[test]
+    fn an_unhosted_liminal_aura_token_is_not_created_and_reaches_no_zone() {
+        let mut state = GameState::new_two_player(42);
+        let source_id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Maker".to_string(),
+            Zone::Battlefield,
+        );
+        let rip = add_graveyard_to_exile_redirect(&mut state);
+        // Reach guard: the anaphora slot starts non-empty, so the republish
+        // below is observable rather than vacuously equal.
+        state.last_created_token_ids = vec![ObjectId(4_242)];
+
+        let (entry_ref, entrant) = unhosted_liminal_aura_entrant(&mut state);
+        state.liminal_entries.insert(
+            entry_ref,
+            liminal_entry_for(
+                crate::types::game_state::LiminalEntrant::Token(
+                    crate::types::game_state::TokenProjection::materialize(entrant),
+                ),
+                source_id,
+            ),
+        );
+
+        let mut events = Vec::new();
+        assert!(
+            commit_liminal_token_entry_with_post_actions(
+                &mut state,
+                ProposedEvent::TokenEntry {
+                    entry_ref,
+                    enter_tapped: EtbTapState::Unspecified,
+                    enter_with_counters: Vec::new(),
+                    applied: std::collections::HashSet::new(),
+                },
+                &mut events,
+                TokenEntryEventEmission::Emit,
+                Vec::new(),
+            ),
+            "a denied entry is not a pause — the batch loop must continue"
+        );
+
+        // CR 303.4g + CR 111.1: "it isn't created" — the object does not exist.
+        assert!(
+            !state.objects.contains_key(&entry_ref),
+            "a token CR 303.4g denies is not created at all"
+        );
+        assert!(!state.battlefield.iter().any(|&id| id == entry_ref));
+        // Nothing observed the entry: no birth, no battlefield ZoneChanged.
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                GameEvent::TokenCreated { object_id, .. } if *object_id == entry_ref
+            )),
+            "CR 303.4g: no TokenCreated for an entry the rule denies"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                GameEvent::ZoneChanged { object_id, .. } if *object_id == entry_ref
+            )),
+            "CR 303.4g: no ZoneChanged at all for an entry the rule denies"
+        );
+        assert!(
+            state
+                .resolved_rules_journal
+                .entries()
+                .iter()
+                .all(|entry| !matches!(
+                    entry.command,
+                    Some(crate::types::resolved_commands::ResolvedRulesCommand::TokenCreation(_))
+                )),
+            "CR 733: no birth is journaled for a token that isn't created"
+        );
+        // CR 111.1: the anaphora slot names the tokens THIS effect created, so
+        // it is republished as this batch's list (empty here) rather than left
+        // holding the earlier, unrelated effect's tokens.
+        assert!(state.last_created_token_ids.is_empty());
+        // Nothing reached a graveyard, so the redirect that was standing by had
+        // nothing to redirect either.
+        assert!(state
+            .players
+            .iter()
+            .all(|player| player.graveyard.is_empty()));
+        assert!(
+            !state.exile.iter().any(|&id| id == entry_ref),
+            "the redirect must not have anything to redirect"
+        );
+        assert!(
+            state.objects.contains_key(&rip),
+            "reach guard: the redirect was on the battlefield the whole time"
+        );
+        assert!(state.liminal_entries.is_empty());
+    }
+
+    /// The card-backed half of the old dual-disposition test, kept as the
+    /// regression for what replaced it: a card-backed projection reaching this
+    /// seam is now inert instead of being raw-placed into a graveyard.
+    ///
+    /// `LiminalEntrant::Card` is the CR 701.42a meld result — a permanent
+    /// "represented by two cards" — which enters through
+    /// `ProposedEvent::ZoneChange` from the exile its components sit in, and
+    /// whose CR 303.4g dispositions are decided there (see
+    /// `zone_pipeline::the_stack_origin_graveyard_placement_consults_moved_redirects`
+    /// for the replacement-consulted graveyard placement on that path). A
+    /// `TokenEntry` naming one names nothing this seam may act on.
+    ///
+    /// Revert-failing assertion: `graveyard.is_empty()`. The deleted
+    /// `place_unentered_aura_in_owners_graveyard` put this entrant into its
+    /// owner's graveyard with raw `zones::` calls, past the Rest in Peace-class
+    /// redirect that is on the battlefield here — so before the change this
+    /// assertion failed, and the exile assertion below failed too.
+    #[test]
+    fn a_card_backed_liminal_projection_is_never_placed_by_the_token_entry_seam() {
+        let mut state = GameState::new_two_player(42);
+        let source_id = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Maker".to_string(),
+            Zone::Battlefield,
+        );
+        add_graveyard_to_exile_redirect(&mut state);
+
+        let (entry_ref, entrant) = unhosted_liminal_aura_entrant(&mut state);
+        state.liminal_entries.insert(
+            entry_ref,
+            liminal_entry_for(
+                crate::types::game_state::LiminalEntrant::Card(entrant),
+                source_id,
+            ),
+        );
+
+        let mut events = Vec::new();
+        assert!(
+            commit_liminal_token_entry_with_post_actions(
+                &mut state,
+                ProposedEvent::TokenEntry {
+                    entry_ref,
+                    enter_tapped: EtbTapState::Unspecified,
+                    enter_with_counters: Vec::new(),
+                    applied: std::collections::HashSet::new(),
+                },
+                &mut events,
+                TokenEntryEventEmission::Emit,
+                Vec::new(),
+            ),
+            "declining an entrant that is not this seam's is not a pause"
+        );
+
+        assert!(
+            state
+                .players
+                .iter()
+                .all(|player| player.graveyard.is_empty()),
+            "no raw graveyard placement may happen on this path"
+        );
+        assert!(
+            state.exile.is_empty(),
+            "and nothing was routed to the redirect's destination either"
+        );
+        assert!(!state.objects.contains_key(&entry_ref));
+        assert!(!state.battlefield.iter().any(|&id| id == entry_ref));
+        assert!(events.is_empty(), "nothing observable happened: {events:?}");
+        assert!(
+            state.liminal_entries.contains_key(&entry_ref),
+            "the projection is left exactly where it was, not consumed"
+        );
+    }
+
     #[test]
     fn paused_liminal_copy_token_counter_finalizes_entry_after_choice() {
         use std::sync::Arc;
@@ -7117,7 +7971,6 @@ mod tests {
         let source_id = ObjectId(100);
         let (entry_ref, mut token) =
             reserve_liminal_token_object(&mut state, PlayerId(0), values.name.clone());
-        token.is_token = true;
         apply_copiable_values_to_liminal_object(
             &mut token,
             &values,
@@ -7130,7 +7983,9 @@ mod tests {
         state.liminal_entries.insert(
             entry_ref,
             LiminalEntry {
-                object: token,
+                object: crate::types::game_state::LiminalEntrant::Token(
+                    crate::types::game_state::TokenProjection::materialize(token),
+                ),
                 name: values.name.clone(),
                 source_id,
                 controller: PlayerId(0),
@@ -7612,6 +8467,7 @@ mod tests {
              This creature can't block.\n\
              {T}: Add {G}.\n\
              When this creature dies, you gain 1 life.",
+            "Test Card",
         );
         assert!(unparsed_lines.is_empty());
 
@@ -7644,6 +8500,102 @@ mod tests {
                 ContinuousModification::GrantTrigger { .. }
             )),
             "trigger rules text must route to GrantTrigger, got {modifications:?}"
+        );
+    }
+
+    /// Revert-to-red: removing the `card_name` threading in
+    /// `catalog_rules_text_abilities` reverts this to `TriggerMode::Unknown`
+    /// with the raw text, since the bare "galactus attacks..." subject
+    /// matches no recognized pattern and falls through to the terminal
+    /// fallback.
+    #[test]
+    fn catalog_galactus_preset_trigger_subject_normalizes() {
+        let (_statics, modifications, _unparsed_lines) = catalog_rules_text_abilities(
+            "Flying, trample\nWhenever Galactus attacks, destroy target land.",
+            "Galactus",
+        );
+
+        assert!(
+            modifications.iter().any(|modification| matches!(
+                modification,
+                ContinuousModification::GrantTrigger { trigger }
+                    if trigger.mode == TriggerMode::Attacks
+                        && trigger.valid_card == Some(TargetFilter::SelfRef)
+            )),
+            "card-name subject in an attack trigger must normalize to a \
+             self-referential TriggerMode::Attacks, got {modifications:?}"
+        );
+    }
+
+    /// Revert-to-red: without normalization, no `StaticDefinition` is
+    /// produced for this line at all (`parse_self_color_subject`'s `alt()`
+    /// doesn't match the bare name "Mechtitan"), and the CDA silently
+    /// vanishes into an inert `GrantAbility` instead.
+    #[test]
+    fn catalog_mechtitan_preset_cda_subject_normalizes() {
+        let (static_definitions, _modifications, _unparsed_lines) = catalog_rules_text_abilities(
+            "Mechtitan is all colors.\nFlying, vigilance, trample, lifelink, haste",
+            "Mechtitan",
+        );
+
+        assert!(
+            static_definitions.iter().any(|def| {
+                def.characteristic_defining
+                    && def.affected == Some(TargetFilter::SelfRef)
+                    && def.modifications.iter().any(|modification| matches!(
+                        modification,
+                        ContinuousModification::SetColor { colors }
+                            if colors.len() == 5
+                    ))
+            }),
+            "card-name subject in a CDA color-setting static must normalize to a \
+             self-referential characteristic-defining SetColor{{all 5 colors}}, got {static_definitions:?}"
+        );
+    }
+
+    /// Revert-to-red: without normalization, the effect's target is
+    /// `TargetFilter::Any` (the unconsumed literal name falls through
+    /// `parse_target`'s terminal fallback), meaning the token would copy
+    /// any legal target instead of itself.
+    #[test]
+    fn catalog_council_of_reeds_preset_copy_effect_normalizes() {
+        let (_statics, modifications, _unparsed_lines) = catalog_rules_text_abilities(
+            "The \"legend rule\" doesn't apply to creatures you control.\n\
+             At the beginning of combat on your turn, if you've cast a noncreature \
+             spell this turn, create a token that's a copy of Council of Reeds.\n\
+             (This token's mana cost is {2}{U}.)",
+            "Council of Reeds",
+        );
+
+        fn ability_has_self_copy(def: &AbilityDefinition) -> bool {
+            matches!(
+                *def.effect,
+                Effect::CopyTokenOf {
+                    target: TargetFilter::SelfRef,
+                    ..
+                }
+            ) || def
+                .sub_ability
+                .as_deref()
+                .is_some_and(ability_has_self_copy)
+                || def
+                    .else_ability
+                    .as_deref()
+                    .is_some_and(ability_has_self_copy)
+                || def.mode_abilities.iter().any(ability_has_self_copy)
+        }
+
+        assert!(
+            modifications.iter().any(|modification| matches!(
+                modification,
+                ContinuousModification::GrantTrigger { trigger }
+                    if trigger
+                        .execute
+                        .as_deref()
+                        .is_some_and(ability_has_self_copy)
+            )),
+            "card-name copy-of subject must normalize to a self-referential \
+             CopyTokenOf, got {modifications:?}"
         );
     }
 
@@ -7906,6 +8858,206 @@ mod tests {
             .contains(&ActivationRestriction::AsSorcery));
     }
 
+    /// CR 201.5a end-to-end proof: Toggo's Rock grants the equipped creature
+    /// "{1}, {T}, Sacrifice Rock: This creature deals 2 damage to any
+    /// target." Rock (the card literally named in the cost) must be the
+    /// object sacrificed — not the host it's equipped to — and the scrub
+    /// pass (Step 1) must have removed the raw placeholder character from
+    /// the granted ability's description before it ever reaches the host.
+    ///
+    /// Revert-to-red: reverting the `card_name` threading in
+    /// `catalog_rules_text_abilities` (Step 2) does NOT bind the sacrifice
+    /// cost to the host. Verified empirically (temporarily disabling the
+    /// `normalize_card_name_refs` call and printing the resulting cost): it
+    /// produces a generic, UNBOUND
+    /// `AbilityCost::Sacrifice(SacrificeCost { target: Typed(TypedFilter {
+    /// type_filters: [], controller: None, properties: [] }), .. })` that
+    /// matches any permanent, not a host-bound `SelfRef`. Because that filter
+    /// is unconstrained, `pay_with(&[rock_id])` below still succeeds even
+    /// under the reverted code (Rock trivially satisfies "any permanent"),
+    /// and the runtime activate/pay/resolve assertions still pass — they
+    /// exercise that the grant-and-activate mechanism works end-to-end (a
+    /// real but separate property), not the granter-binding regression
+    /// itself. The pre-activation `TargetFilter` equality assertion
+    /// immediately below is the one check in this test that is actually
+    /// load-bearing for this regression.
+    ///
+    /// For the placeholder-leak assertion: Rock's granted ability is a
+    /// granted *activated* ability, routed through `parse_quoted_ability`
+    /// (`oracle_static/grammar.rs`), which already calls its own
+    /// `sanitize_granting_placeholder` independent of the two scrub loops
+    /// added to `catalog_rules_text_abilities` in this diff — so disabling
+    /// only those two loops does not reproduce a leak here. See
+    /// `catalog_synthetic_equipment_grant_trigger_scrub_removes_placeholder`
+    /// for the case (a granted TRIGGER, with no independent scrubber) that
+    /// actually exercises the new scrub loops.
+    #[test]
+    fn catalog_toggo_rock_sacrifice_cost_binds_to_rock_not_host() {
+        use crate::game::scenario::{GameScenario, P0, P1};
+        use crate::types::mana::{ManaType, ManaUnit};
+
+        fn sacrifice_target(cost: &AbilityCost) -> Option<&TargetFilter> {
+            match cost {
+                AbilityCost::Sacrifice(sac) => Some(&sac.target),
+                AbilityCost::Composite { costs } | AbilityCost::OneOf { costs } => {
+                    costs.iter().find_map(sacrifice_target)
+                }
+                _ => None,
+            }
+        }
+
+        let mut scenario = GameScenario::new();
+        scenario.at_phase(Phase::PreCombatMain);
+        scenario.with_mana_pool(
+            P0,
+            vec![ManaUnit::new(ManaType::White, ObjectId(0), false, vec![])],
+        );
+        let host = scenario.add_creature(P0, "Bearer", 2, 2).id();
+
+        let mut runner = scenario.build();
+        let rock_id = build_catalog_token(
+            runner.state_mut(),
+            "Rock",
+            "1657233e-c9e1-54ff-aa5a-6e2e2846be42",
+        );
+        {
+            let st = runner.state_mut();
+            st.objects.get_mut(&rock_id).unwrap().attached_to = Some(AttachTarget::Object(host));
+            st.layers_dirty.mark_full();
+        }
+        crate::game::layers::evaluate_layers(runner.state_mut());
+
+        let idx = runner.state().objects[&host]
+            .abilities
+            .iter()
+            .position(|a| a.cost.as_ref().and_then(sacrifice_target).is_some())
+            .expect("host must carry Rock's granted sacrifice-cost ability after evaluate_layers");
+
+        assert_eq!(
+            runner.state().objects[&host].abilities[idx]
+                .cost
+                .as_ref()
+                .and_then(sacrifice_target),
+            Some(&TargetFilter::SpecificObject { id: rock_id }),
+            "CR 201.5a: the sacrifice cost must target Rock (the granting object), not the host"
+        );
+        assert!(
+            !runner.state().objects[&host].abilities[idx]
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains(crate::parser::oracle_util::GRANTING_SELF_PLACEHOLDER),
+            "granted ability description must not leak the raw placeholder char"
+        );
+
+        let outcome = runner
+            .activate(host, idx)
+            .target_player(P1)
+            .pay_with(&[rock_id])
+            .resolve();
+
+        // CR 111.7 + CR 704.5d: Rock is a token, so once it's sacrificed off the
+        // battlefield it ceases to exist as a state-based action and is purged
+        // from `state.objects` entirely — it never sits observably in the
+        // graveyard the way a card-backed permanent would (contrast
+        // `deconstruction_hammer_sacrifice_hits_the_equipment_not_the_host`,
+        // whose Hammer is a real card and persists at `zone_of == Graveyard`).
+        assert!(
+            !outcome.state().objects.contains_key(&rock_id),
+            "Rock (the object actually named in the cost) must be sacrificed and, \
+             being a token, cease to exist"
+        );
+        assert_eq!(
+            outcome.zone_of(host),
+            Zone::Battlefield,
+            "the equipped creature survives"
+        );
+    }
+
+    /// CR 201.5a: proves the two `scrub_static_descriptions` /
+    /// `scrub_modification_descriptions` loops at the end of
+    /// `catalog_rules_text_abilities` actually do something. Rock's own test
+    /// above (a granted *activated* ability, routed through
+    /// `parse_quoted_ability`) is scrubbed independently by that grammar's own
+    /// `sanitize_granting_placeholder` call and does not exercise these two
+    /// loops. A granted *trigger* has no such independent scrubber, so this
+    /// synthetic Equipment's granted "Whenever this creature attacks,
+    /// sacrifice <self>" trigger — parsed via `parse_static_line_multi` →
+    /// `classify_quoted_inner`'s `GrantTrigger` branch, never touching
+    /// `parse_quoted_ability` — is the case that actually needs the new
+    /// scrub loops.
+    ///
+    /// Revert-to-red: commenting out the two scrub loops (while leaving
+    /// `normalize_card_name_refs` intact) leaves the raw
+    /// `GRANTING_SELF_PLACEHOLDER` char in the granted trigger's
+    /// `description`, flipping the no-leak assertion below to a failure.
+    #[test]
+    fn catalog_synthetic_equipment_grant_trigger_scrub_removes_placeholder() {
+        let (static_definitions, _modifications, unparsed_lines) = catalog_rules_text_abilities(
+            "Equipped creature has \"Whenever this creature attacks, sacrifice Ember Golem.\"",
+            "Ember Golem",
+        );
+        assert!(
+            unparsed_lines.is_empty(),
+            "line must fully parse, got unparsed: {unparsed_lines:?}"
+        );
+
+        fn find_grant_trigger(def: &StaticDefinition) -> Option<&TriggerDefinition> {
+            def.modifications.iter().find_map(|m| match m {
+                ContinuousModification::GrantTrigger { trigger } => Some(trigger.as_ref()),
+                _ => None,
+            })
+        }
+
+        let trigger = static_definitions
+            .iter()
+            .find_map(find_grant_trigger)
+            .unwrap_or_else(|| {
+                panic!(
+                    "quoted \"Whenever ...\" body must parse to a GrantTrigger, \
+                     got {static_definitions:?}"
+                )
+            });
+
+        let sacrifices_granter = trigger.execute.as_deref().is_some_and(|def| {
+            matches!(
+                *def.effect,
+                Effect::Sacrifice {
+                    target: TargetFilter::GrantingObject,
+                    ..
+                }
+            )
+        });
+        assert!(
+            sacrifices_granter,
+            "the granted trigger's sacrifice effect must target the GRANTING object \
+             (the equipment itself), got {trigger:?}"
+        );
+
+        // NOTE: check the actual `description` fields directly, NOT a
+        // `{:?}`-formatted dump of the tree — `Debug` escapes the raw private-use
+        // char to the literal text `\u{e0002}`, so searching a Debug string for
+        // the real character is always false regardless of whether scrubbing ran.
+        let placeholder = crate::parser::oracle_util::GRANTING_SELF_PLACEHOLDER;
+        let leaked = static_definitions.iter().any(|def| {
+            def.description
+                .as_deref()
+                .is_some_and(|d| d.contains(placeholder))
+                || def.modifications.iter().any(|m| match m {
+                    ContinuousModification::GrantTrigger { trigger } => trigger
+                        .description
+                        .as_deref()
+                        .is_some_and(|d| d.contains(placeholder)),
+                    _ => false,
+                })
+        });
+        assert!(
+            !leaked,
+            "the new scrub loops must remove the raw placeholder char from the \
+             granted trigger's description, got {static_definitions:#?}"
+        );
+    }
+
     #[test]
     fn classify_quoted_inner_equip_line_is_activated_ability_static_line_unchanged() {
         use crate::parser::oracle_static::classify_quoted_inner;
@@ -8102,6 +9254,123 @@ mod tests {
             zabu_plus1_counters(&state, kazar),
             0,
             "counter must NOT land on Ka-Zar"
+        );
+    }
+}
+
+#[cfg(test)]
+mod attach_host_authority_tests {
+    use super::*;
+    use crate::types::ability::{SeatDirection, TypedFilter};
+
+    /// The selected-target class must stay disjoint from
+    /// [`TargetFilter::is_context_ref`], the engine's existing authority on which
+    /// filters never surface a chosen target slot. Anything that authority calls
+    /// a context reference has to resolve through its own authority here, or
+    /// yield no host — it may never read `ability.targets`.
+    #[test]
+    fn selected_target_filters_are_never_context_refs() {
+        for filter in [
+            TargetFilter::Any,
+            TargetFilter::Typed(TypedFilter::creature()),
+            TargetFilter::Not {
+                filter: Box::new(TargetFilter::Any),
+            },
+            TargetFilter::Or {
+                filters: vec![TargetFilter::Any],
+            },
+            TargetFilter::And {
+                filters: vec![TargetFilter::Any],
+            },
+            TargetFilter::Named {
+                name: "Grizzly Bears".to_string(),
+            },
+            TargetFilter::HasChosenName,
+            TargetFilter::StackSpell,
+            TargetFilter::StackAbility {
+                controller: None,
+                tag: None,
+                kind: None,
+            },
+        ] {
+            assert!(
+                matches!(
+                    classify_attach_host_authority(&filter),
+                    AttachHostAuthority::SelectedTarget
+                ),
+                "fixture guard: {filter:?} is meant to be a selected-target filter"
+            );
+            assert!(
+                !filter.is_context_ref(),
+                "{filter:?} is an automatic context reference and must not read the \
+                 ability's chosen targets"
+            );
+        }
+    }
+
+    /// The same disjointness read from the other side, which is the direction
+    /// that catches a misfiling: every filter the engine calls a context
+    /// reference must resolve through an authority of its own or yield no host.
+    #[test]
+    fn context_references_never_classify_as_a_selected_target() {
+        for filter in [
+            TargetFilter::SourceOrPaired,
+            TargetFilter::SelfRef,
+            TargetFilter::CostPaidObject,
+            TargetFilter::LastCreated,
+            TargetFilter::AttachedTo,
+            TargetFilter::EventTarget,
+            TargetFilter::ParentTarget,
+            TargetFilter::ParentTargetSlot { index: 0 },
+            TargetFilter::OriginalSource,
+            TargetFilter::TrackedSet {
+                id: TrackedSetId(0),
+            },
+            TargetFilter::PostReplacementDamageSource,
+            TargetFilter::Neighbor {
+                direction: SeatDirection::Left,
+            },
+        ] {
+            assert!(
+                filter.is_context_ref(),
+                "fixture guard: {filter:?} is meant to be a context reference"
+            );
+            assert!(
+                !matches!(
+                    classify_attach_host_authority(&filter),
+                    AttachHostAuthority::SelectedTarget
+                ),
+                "{filter:?} is a context reference and must not inherit the ability's \
+                 chosen targets as its attachment host"
+            );
+        }
+    }
+
+    /// CR 601.3: the case where the two ways of deciding disagree. A composite
+    /// that CONTAINS the exile anaphor is a context reference as a whole —
+    /// `is_context_ref` says so through `references_exiled_by_source`, which
+    /// recurses — while its OUTER shape is `And`, which is otherwise an object
+    /// predicate. The parser builds exactly this for "an exiled card that is a
+    /// creature", so classifying by shape would read the enclosing ability's
+    /// chosen targets for an object the exile link already names.
+    #[test]
+    fn a_composite_carrying_the_exile_anaphor_is_not_a_selected_target() {
+        let filter = TargetFilter::And {
+            filters: vec![
+                TargetFilter::ExiledBySource,
+                TargetFilter::Typed(TypedFilter::creature()),
+            ],
+        };
+        assert!(
+            filter.is_context_ref(),
+            "fixture guard: the composite must be a context reference"
+        );
+        assert!(
+            matches!(
+                classify_attach_host_authority(&filter),
+                AttachHostAuthority::NoHost
+            ),
+            "a composite naming an exile-linked object has no host authority here"
         );
     }
 }

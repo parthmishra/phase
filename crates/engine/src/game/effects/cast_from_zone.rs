@@ -402,8 +402,22 @@ pub fn resolve(
         TargetFilter::TrackedSet { .. } | TargetFilter::TrackedSetFiltered { .. } => {
             tracked_set_cast_candidates(state, ability, target_filter)
         }
+        // CR 400.7 + CR 603.7c: a delayed cast-from-zone whose pinned referent
+        // became a new object casts nothing. This `_` arm is THE single read
+        // through which a pinned referent flows into this resolver.
+        //
+        // The plan pre-flagged this file as a possible STOP because of its three
+        // `scoped_ability.targets = …` assignments (`:112`, `:444`, `:517`) and
+        // `fallback.targets = ability.targets.clone()` (`:257`). Re-read at the
+        // source, none of those is a read of the pinned referent: all three
+        // `scoped_ability` sites WRITE a freshly-derived id list onto a throwaway
+        // clone purely to scope a `FilterContext`, and their inputs
+        // (`deduped`, `candidate_ids`, `target_ids`) are already downstream of
+        // this arm. `:257` is chain-context propagation onto a declined-optional
+        // fallback ability, not a target resolution. So the flat substitution
+        // does apply here, at exactly one site.
         _ => ability
-            .targets
+            .live_object_targets(state)
             .iter()
             .filter_map(|t| {
                 if let TargetRef::Object(id) = t {
@@ -414,6 +428,27 @@ pub fn resolve(
             })
             .collect(),
     };
+
+    // CR 400.7 + CR 603.7c + CR 603.7b: the trigger fired and resolved; it cast
+    // nothing. EARLY RETURN IS MANDATORY, and its placement immediately below
+    // the read is load-bearing: EVERY branch between here and the end of this
+    // function keys on `target_ids.is_empty()` and re-binds to a DIFFERENT set
+    // of objects — the linked-exile scan (`:432`), the `last_revealed` library
+    // scan (`:467`), and the `SelfRef` source fallback (`:570`). Letting the
+    // substitution above empty the list without returning would hand the cast to
+    // one of those pools instead of doing nothing.
+    //
+    // Mirrors the existing "No targets resolved — nothing to cast" exit below,
+    // including its `EffectKind::CastFromZone` literal, so both no-op paths emit
+    // the same event.
+    if ability.pinned_object_targets_all_stale(state) {
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::CastFromZone,
+            source_id: ability.source_id,
+            subject: None,
+        });
+        return Ok(());
+    }
 
     // CR 701.20e + CR 608.2c: Look-then-cast chains (Kiora) inject the legal
     // looked-at library cards as targets at the chain seam
@@ -557,7 +592,7 @@ pub fn resolve(
         );
     }
 
-    // CR 310.11b + CR 608.2c: "exile it, then you may cast it transformed" —
+    // CR 310.12b + CR 608.2c: "exile it, then you may cast it transformed" —
     // the SelfRef filter resolves to the source object itself. When
     // `ability.targets` is empty (no pre-selected target, as is typical for
     // Siege defeat and Suspend self-cast triggers), fall back to the source
@@ -696,24 +731,39 @@ pub fn resolve(
             .get(&target_ids[0])
             .is_some_and(|obj| obj.zone == Zone::Graveyard);
 
-    // CR 608.2g + CR 609.4b: paid during-resolution graveyard cast (Quistis Trepe,
-    // Tinybones the Pickpocket). Not without_paying — the caster pays the real cost
-    // with any-type mana. Offered accept/decline, resolved by
-    // initiate_cast_during_resolution with ResolutionCastCost::FullCost. Replaces
-    // the wrong lingering-permission path (#2884: the offer was inert on
-    // opponent-graveyard targets, and own-graveyard targets deferred the cast to a
-    // later priority window instead of a resolution-time offer).
-    let graveyard_paid_cast = !without_paying
-        && mana_spend_permission.is_some()
+    // CR 608.2g + CR 609.4b: paid during-resolution cast of a CHOSEN target. The
+    // caster pays the real printed cost as the granting ability resolves; the mana
+    // is any-type when `mana_spend_permission` is `Some` (Quistis Trepe, Tinybones
+    // the Pickpocket) and NORMAL mana at the printed cost when it is `None`
+    // (Conduit of Worlds: "Choose target nonland permanent card in your graveyard
+    // … you may cast that card."). Both thread `ResolutionCastCost::FullCost`
+    // through `initiate_cast_during_resolution`, which defaults a `None`
+    // permission to normal mana. Offered accept/decline. Replaces the wrong
+    // lingering-permission path (#2884: the offer was inert on opponent-graveyard
+    // targets, and own-graveyard targets deferred the cast to a later priority
+    // window instead of a resolution-time offer).
+    //
+    // CR 608.2g: during-resolution timing is a property of the resolving
+    // INSTRUCTION (the `DuringResolution` driver, set by the parser from a paid
+    // chosen-target "you may cast that card" with no lingering duration), NOT of
+    // the chosen card's zone. This gate therefore accepts any castable
+    // non-battlefield origin — graveyard (Conduit), hand, exile, or library — rather
+    // than requiring `Zone::Graveyard`; `initiate_cast_during_resolution` casts
+    // the card from whichever zone it currently occupies. Emry's "you may cast
+    // that card THIS TURN" carries `duration: Some(_)` and is lowered to
+    // `LingeringPermission` by the parser, so it never reaches this branch.
+    let paid_during_resolution_cast = !without_paying
         && driver.is_during_resolution()
         && alt_ability_cost.is_none()
         && duration.is_none()
         && target_ids.len() == 1
-        && state
-            .objects
-            .get(&target_ids[0])
-            .is_some_and(|o| o.zone == Zone::Graveyard);
-    if graveyard_paid_cast {
+        && state.objects.get(&target_ids[0]).is_some_and(|o| {
+            matches!(
+                o.zone,
+                Zone::Graveyard | Zone::Hand | Zone::Exile | Zone::Library
+            )
+        });
+    if paid_during_resolution_cast {
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::CastFromZone,
             source_id: ability.source_id,
@@ -1023,6 +1073,7 @@ fn cast_stack_spell_copy_during_resolution(
         card_id: obj.card_id,
         controller: ability.controller,
         object_id: copy_id,
+        cast_mana_value: Some(obj.spell_mana_value()),
     });
     crate::game::restrictions::record_spell_cast_from_zone(
         state,
@@ -2045,7 +2096,7 @@ mod tests {
         );
     }
 
-    /// CR 310.11b (#2876): Siege defeat — "exile it, then you may cast it
+    /// CR 310.12b (#2876): Siege defeat — "exile it, then you may cast it
     /// transformed". The `CastFromZone { target: SelfRef }` sub-ability fires
     /// with an EMPTY `ability.targets` (the exile step doesn't pre-select a
     /// target; the source IS the card to cast). Without the SelfRef fallback in
@@ -2132,7 +2183,7 @@ mod tests {
         assert_eq!(
             state.stack.len(),
             1,
-            "CR 310.11b: Siege defeat must put the card on the stack (cast it), \
+            "CR 310.12b: Siege defeat must put the card on the stack (cast it), \
              not silently return with it still in exile"
         );
         assert_eq!(

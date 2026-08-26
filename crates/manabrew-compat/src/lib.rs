@@ -674,7 +674,7 @@ pub fn unsupported_protocol_capabilities() -> &'static [UnsupportedCapability] {
 /// `upstream.` = the protocol has no primitive for something the engine can do.
 /// `local.` = the protocol has the primitive but this engine cannot source it,
 /// or a documented adapter-local extension is intentionally in use.
-static UNSUPPORTED_PROTOCOL_CAPABILITIES: [UnsupportedCapability; 87] = [
+static UNSUPPORTED_PROTOCOL_CAPABILITIES: [UnsupportedCapability; 89] = [
     UnsupportedCapability {
         code: "upstream.object-selection-missing",
         area: "prompts",
@@ -766,6 +766,12 @@ static UNSUPPORTED_PROTOCOL_CAPABILITIES: [UnsupportedCapability; 87] = [
         suggested_protocol_extension: "Clarify whether exhaustStack is advisory or requires an engine-backed auto-pass contract, alongside pass.until.",
     },
     UnsupportedCapability {
+        code: "local.resolve-all-unsupported",
+        area: "responses",
+        reason: "Phase's Resolve All consent protocol has no upstream action family and cannot be faithfully round-tripped as ordinary priority passing.",
+        suggested_protocol_extension: "Add an explicit consent-backed stack-resolution shortcut protocol, including grant, decline, and revocation semantics.",
+    },
+    UnsupportedCapability {
         code: "local.meld-pair-choice-unsupported",
         area: "prompts",
         reason: "The pinned protocol has no typed choice for selecting one physical meld pair from multiple live-name candidates.",
@@ -776,6 +782,12 @@ static UNSUPPORTED_PROTOCOL_CAPABILITIES: [UnsupportedCapability; 87] = [
         area: "combat",
         reason: "The pinned protocol has no response shape for choosing the player, planeswalker, or battle attacked by an entering creature.",
         suggested_protocol_extension: "Add an entry-attack destination choice using the existing attack-target reference shape.",
+    },
+    UnsupportedCapability {
+        code: "local.entry-controller-choice-unsupported",
+        area: "prompts",
+        reason: "CR 614.12a requires an as-enters controller choice before battlefield delivery. The pinned protocol has no non-target opponent-picker prompt for that pre-entry decision.",
+        suggested_protocol_extension: "Add a non-target entry-controller choice carrying eligible opponent player ids.",
     },
     UnsupportedCapability {
         code: "local.zone-opponent-chooser-unsupported",
@@ -2571,6 +2583,13 @@ pub fn convert_available_action(
         | GameAction::CancelCast
         | GameAction::BackToManaPayment
         | GameAction::Concede { .. } => AvailableActionConversion::Skip,
+        // The upstream protocol has no consent-shortcut action family. Do not
+        // advertise an action it cannot round-trip; surface the fidelity gap.
+        GameAction::BeginResolveAll { .. }
+        | GameAction::RespondResolveAllConsent { .. }
+        | GameAction::RevokeResolveAllConsent { .. } => {
+            AvailableActionConversion::Unsupported("local.resolve-all-unsupported")
+        }
         GameAction::DeclareAttackers { .. } => AvailableActionConversion::Skip,
         GameAction::DeclareBlockers { .. } => AvailableActionConversion::Skip,
         GameAction::ChooseUntap { .. } => {
@@ -2587,6 +2606,9 @@ pub fn convert_available_action(
         }
         GameAction::ChooseEntryAttackTarget { .. } => {
             AvailableActionConversion::Unsupported("local.entry-attack-target-choice-unsupported")
+        }
+        GameAction::ChooseEntryController { .. } => {
+            AvailableActionConversion::Unsupported("local.entry-controller-choice-unsupported")
         }
         GameAction::ChooseClashOpponent { .. } => {
             AvailableActionConversion::Unsupported("local.clash-unsupported")
@@ -5255,7 +5277,7 @@ mod tests {
         assert_eq!(json["input"]["presentation"]["title"], "Choose target");
     }
 
-    /// Build a `TargetSelection` board-target prompt whose single slot carries
+    /// Build an earlier `TargetSelection` board-target prompt whose active slot carries
     /// `effect_kind`, driving the real engine projection
     /// (`derive_viewer_interaction` -> `target_intent`) and the real adapter
     /// mapping. Returns the serialized prompt.
@@ -5280,13 +5302,22 @@ mod tests {
         state.waiting_for = WaitingFor::TargetSelection {
             player: PlayerId(0),
             pending_cast: dummy_pending_cast(),
-            target_slots: vec![TargetSelectionSlot {
-                legal_targets: legal.clone(),
-                optional: false,
-                chooser: None,
-                effect_kind,
-                effect_detail,
-            }],
+            target_slots: vec![
+                TargetSelectionSlot {
+                    legal_targets: legal.clone(),
+                    optional: false,
+                    chooser: None,
+                    effect_kind,
+                    effect_detail,
+                },
+                TargetSelectionSlot {
+                    legal_targets: legal.clone(),
+                    optional: true,
+                    chooser: None,
+                    effect_kind: EffectKind::NoOp,
+                    effect_detail: TargetEffectDetail::None,
+                },
+            ],
             mode_labels: Vec::new(),
             selection: TargetSelectionProgress {
                 current_slot: 0,
@@ -5478,6 +5509,7 @@ mod tests {
             source_id: ObjectId(1),
             description: Some("Draw a card?".to_string()),
             may_trigger_key: None,
+            same_card_may_trigger_choice_available: false,
         });
         let json = serde_json::to_value(build_prompt(&prepared, &lookup).unwrap()).unwrap();
         assert_eq!(json["input"]["type"], "chooseBoolean");
@@ -6734,17 +6766,30 @@ mod tests {
         state.objects.get_mut(&class_id).unwrap().class_level = Some(2);
         let saga = state.objects.get_mut(&saga_id).unwrap();
         saga.card_types.subtypes.push("Saga".to_string());
+        // CR 714.2: `saga_chapter` is the chapter-symbol provenance that marks a
+        // trigger as a chapter ability; a bare lore threshold is not one, so
+        // `final_chapter_number` would report `None` without it.
         saga.trigger_definitions = vec![
-            TriggerDefinition::new(TriggerMode::CounterAdded).counter_filter(
-                CounterTriggerFilter {
+            TriggerDefinition::new(TriggerMode::CounterAdded)
+                .counter_filter(CounterTriggerFilter {
                     counter_type: CounterType::Lore,
                     threshold: Some(1),
-                },
-            ),
+                })
+                .saga_chapter(1),
+            TriggerDefinition::new(TriggerMode::CounterAdded)
+                .counter_filter(CounterTriggerFilter {
+                    counter_type: CounterType::Lore,
+                    threshold: Some(3),
+                })
+                .saga_chapter(3),
+            // CR 714.2: a lore threshold WITHOUT chapter-symbol provenance is not
+            // a chapter ability. Its threshold is deliberately higher than the
+            // real final chapter, so this fixture fails if `final_chapter_number`
+            // ever regresses to inferring chapters from thresholds.
             TriggerDefinition::new(TriggerMode::CounterAdded).counter_filter(
                 CounterTriggerFilter {
                     counter_type: CounterType::Lore,
-                    threshold: Some(3),
+                    threshold: Some(99),
                 },
             ),
         ]
@@ -8068,6 +8113,16 @@ mod tests {
             ),
             AvailableActionConversion::Unsupported("local.announcing-opponent-unsupported")
         ));
+        assert!(matches!(
+            convert_available_action(
+                &empty_state(),
+                &GameAction::ChooseEntryController {
+                    opponent: PlayerId(1),
+                },
+                "action-2".to_string(),
+            ),
+            AvailableActionConversion::Unsupported("local.entry-controller-choice-unsupported")
+        ));
     }
 
     #[test]
@@ -8116,13 +8171,13 @@ mod tests {
     #[test]
     fn unsupported_capability_registry_is_well_formed() {
         let capabilities = unsupported_protocol_capabilities();
-        assert_eq!(capabilities.len(), 87);
+        assert_eq!(capabilities.len(), 89);
 
         let codes: HashSet<_> = capabilities
             .iter()
             .map(|capability| capability.code)
             .collect();
-        assert_eq!(codes.len(), 87, "capability codes must be unique");
+        assert_eq!(codes.len(), 89, "capability codes must be unique");
 
         for capability in capabilities {
             assert!(
@@ -8293,6 +8348,7 @@ mod tests {
             "local.harmonize-tap-unsupported",
             "local.payment-resource-actions-missing",
             "local.exhaust-stack-pass-unsupported",
+            "local.resolve-all-unsupported",
             // Every code the adapter can emit must be declared here, or a
             // client that receives it looks it up and finds nothing.
             "local.dungeon-room-unsupported",

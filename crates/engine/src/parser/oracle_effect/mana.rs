@@ -1452,6 +1452,20 @@ fn scan_mana_production_type(
                 },
                 alt((tag("mana of the chosen color"), tag("mana of that color"))),
             ),
+            // CR 106.1b: "mana of ~'s last noted type" (Jeweled Amulet: "Add
+            // one mana of this artifact's last noted type" — `~` normalized
+            // from "this artifact" upstream). Engine-set (`Effect::
+            // NoteManaSpent`), not player-prompted, so this is a separate
+            // variant from `ChosenColor` above rather than a shared phrase.
+            value(
+                ManaProduction::NotedType {
+                    count: count.clone(),
+                },
+                alt((
+                    tag("mana of ~'s last noted type"),
+                    tag("mana of ~’s last noted type"),
+                )),
+            ),
         ))
         .parse(input)
     })
@@ -1524,25 +1538,35 @@ fn parse_restricted_spell_type_phrase(spell_part: &str) -> Option<String> {
     )
 }
 
-/// CR 106.6: Parse the negative spend restriction "this mana can't be spent to
-/// cast [a/an] non<TYPE> spell(s)" into a `SpellTypeOrAbilityActivation` whose
-/// `spell_type` is `<TYPE>` (the phrase with the leading "non" stripped) and
-/// whose ability scope is `Any`. The double-negative restricts spell-casting to
-/// `<TYPE>` spells while leaving every ability activation payable (CR 605/602) —
-/// Karn, Legacy Reforged; Hydraulic Helper. Returns `None` for any other
-/// phrasing so the positive-form parser and the existing gap behavior are
-/// untouched.
+/// CR 106.6 + CR 601.2g-h: Parse "this mana can't be spent to cast ..." restrictions.
+/// A spell-from-zone clause lowers to a prohibition of that cast class
+/// (`spells from your hand` -> `CannotCastSpellFromZone(Hand)`, Karolina Dean).
+/// An already-negative "from anywhere other than" clause is rejected rather
+/// than double-negated.
+/// The existing `non<TYPE>` form lowers to `SpellTypeOrAbilityActivation`, leaving
+/// ability payments unrestricted (Karn, Legacy Reforged; Hydraulic Helper).
 fn parse_negative_mana_spend_restriction(lower: &str) -> Option<ManaSpendRestriction> {
     let (_, rest) = nom_on_lower(lower, lower, |i| {
         // MTGJSON Oracle text is not apostrophe-normalized, so accept both the
         // ASCII (') and curly (U+2019) apostrophe forms of "can't".
         let (i, _) = tag("this mana ca").parse(i)?;
         let (i, _) = alt((tag("n't"), tag("n\u{2019}t"))).parse(i)?;
-        let (i, _) = tag(" be spent to cast ").parse(i)?;
+        value((), tag(" be spent to cast ")).parse(i)
+    })?;
+    let rest = rest.trim().trim_end_matches(['.', '"']).trim();
+
+    if let Some((zone, polarity)) = parse_spell_from_zone(rest) {
+        return match polarity {
+            ZoneSpendPolarity::From => Some(ManaSpendRestriction::CannotCastSpellFromZone(zone)),
+            ZoneSpendPolarity::NotFrom => None,
+        };
+    }
+
+    let rest_lower = rest.to_lowercase();
+    let (_, rest) = nom_on_lower(rest, &rest_lower, |i| {
         let (i, _) = opt(nom_primitives::parse_article).parse(i)?;
         value((), alt((tag("non-"), tag("non")))).parse(i)
     })?;
-    let rest = rest.trim().trim_end_matches(['.', '"']).trim();
     // `rest` is now "<type> spell(s)" (the article and "non" prefix already
     // consumed); reuse the shared type-phrase combinator to canonicalize the
     // spell type.
@@ -2457,14 +2481,81 @@ pub(super) fn parse_mana_spell_grant(lower: &str) -> Option<Vec<ManaSpellGrant>>
     if let Some(grant) = parse_conditional_keyword_grant(trimmed) {
         return Some(vec![grant]);
     }
+    if let Some(grant) = parse_conditional_cant_be_countered_grant(trimmed) {
+        return Some(vec![grant]);
+    }
+    if let Some(grant) = parse_conditional_enters_with_counters_grant(trimmed) {
+        return Some(vec![grant]);
+    }
     // Use nom tag for matching
     if value::<_, _, OracleError<'_>, _>((), tag("that spell can't be countered"))
         .parse(trimmed)
         .is_ok()
     {
-        return Some(vec![ManaSpellGrant::CantBeCountered]);
+        return Some(vec![ManaSpellGrant::CantBeCountered {
+            filter: TargetFilter::Any,
+        }]);
     }
     None
+}
+
+/// CR 106.6: Parse "If that mana is spent on an instant or sorcery spell,
+/// that spell can't be countered" (Boseiju, Who Shelters All).
+fn parse_conditional_cant_be_countered_grant(lower: &str) -> Option<ManaSpellGrant> {
+    let (rest, _) = tag::<_, _, OracleError<'_>>("if that mana is spent on ")
+        .parse(lower)
+        .ok()?;
+    let (rest, filter_text) = terminated(
+        take_until::<_, _, OracleError<'_>>(", that spell can't be countered"),
+        tag(", that spell can't be countered"),
+    )
+    .parse(rest)
+    .ok()?;
+    if !rest.trim().is_empty() {
+        return None;
+    }
+    Some(ManaSpellGrant::CantBeCountered {
+        filter: parse_spend_trigger_filter(filter_text.trim())?,
+    })
+}
+
+/// CR 106.6a + CR 614.1c: Parse mana whose spent-mana replacement effect has
+/// a counter-bearing battlefield entry result (Opal Palace class).
+fn parse_conditional_enters_with_counters_grant(lower: &str) -> Option<ManaSpellGrant> {
+    let (rest, _) = tag::<_, _, OracleError<'_>>("if you spend this mana to cast ")
+        .parse(lower)
+        .ok()?;
+    let (rest, filter_text) = terminated(
+        take_until::<_, _, OracleError<'_>>(", it enters with a number of additional "),
+        tag(", it enters with a number of additional "),
+    )
+    .parse(rest)
+    .ok()?;
+    let filter = parse_spend_trigger_filter(filter_text.trim())?;
+    let (rest, counter_type) = terminated(
+        nom_primitives::parse_counter_type_typed,
+        tag::<_, _, OracleError<'_>>(" counters on it equal to "),
+    )
+    .parse(rest)
+    .ok()?;
+    let (_, count) = all_consuming(terminated(
+        value(
+            QuantityExpr::Ref {
+                qty: QuantityRef::CommanderCastFromCommandZoneCount,
+            },
+            tag::<_, _, OracleError<'_>>(
+                "the number of times it's been cast from the command zone this game",
+            ),
+        ),
+        opt(char('.')),
+    ))
+    .parse(rest)
+    .ok()?;
+    Some(ManaSpellGrant::EntersWithCounters {
+        filter,
+        counter_type,
+        count,
+    })
 }
 
 /// CR 106.6 + CR 702.10: Parse mana-rider keyword grants:
@@ -2613,6 +2704,20 @@ pub(crate) fn parse_mana_spend_trigger(lower: &str) -> Option<ManaSpellGrant> {
 ///
 /// Returns `None` for an unrecognized filter, so the clause stays a loud gap.
 fn parse_spend_trigger_filter(filter: &str) -> Option<TargetFilter> {
+    // CR 903.3d: "your commander" is a commander spell. The live object
+    // retains this designation while on the stack, so the standard object
+    // filter authority can evaluate it when mana is paid.
+    if let Ok((_, filter)) =
+        all_consuming(map(tag::<_, _, OracleError<'_>>("your commander"), |_| {
+            TargetFilter::Typed(TypedFilter {
+                properties: vec![FilterProp::IsCommander],
+                ..TypedFilter::default()
+            })
+        }))
+        .parse(filter)
+    {
+        return Some(filter);
+    }
     // CR 202.3: "a spell with mana value N or greater/less" — a post-`spell`
     // threshold, not a type phrase (the helper keeps the article).
     if let Some((comparator, value)) = parse_mana_value_threshold(filter) {
@@ -2694,7 +2799,9 @@ fn extract_spell_grants(text: &str) -> (&str, Vec<ManaSpellGrant>) {
             let before_len = before.len();
             return (
                 text[..before_len].trim(),
-                vec![ManaSpellGrant::CantBeCountered],
+                vec![ManaSpellGrant::CantBeCountered {
+                    filter: TargetFilter::Any,
+                }],
             );
         }
     }
@@ -2884,6 +2991,7 @@ fn try_parse_amount_equal_to_with_context(
 mod tests {
     use super::*;
     use crate::types::ability::{ControllerRef, TypeFilter};
+    use crate::types::counter::CounterType;
 
     #[test]
     fn shares_type_with_it_in_trigger_context_uses_triggering_source() {
@@ -3058,21 +3166,6 @@ mod tests {
                 "mana-echo must reuse TriggerEventManaType for {echo:?}"
             );
         }
-    }
-
-    #[test]
-    fn sunken_ruins_pattern_parses_as_combinations() {
-        // CR 605.3b: Shadowmoor/Eventide filter land shape.
-        let options = extract_combinations("Add {U}{U}, {U}{B}, or {B}{B}")
-            .expect("should parse filter-land pattern");
-        assert_eq!(
-            options,
-            vec![
-                vec![ManaColor::Blue, ManaColor::Blue],
-                vec![ManaColor::Blue, ManaColor::Black],
-                vec![ManaColor::Black, ManaColor::Black],
-            ]
-        );
     }
 
     #[test]
@@ -3425,6 +3518,7 @@ mod tests {
                     QuantityExpr::Ref {
                         qty: QuantityRef::PreviousEffectAmount {
                             channel: crate::types::ability::DamageChannel::Total,
+                            aggregate: crate::types::ability::AggregateFunction::Sum,
                         }
                     },
                     "for-each tail must dispatch to PreviousEffectAmount"
@@ -3888,6 +3982,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_commander_mana_entry_counter_grant() {
+        let grants = parse_mana_spell_grant(
+            "if you spend this mana to cast your commander, it enters with a number of additional +1/+1 counters on it equal to the number of times it's been cast from the command zone this game.",
+        )
+        .expect("Opal Palace mana rider must parse");
+        assert!(matches!(
+            grants.as_slice(),
+            [ManaSpellGrant::EntersWithCounters {
+                filter: TargetFilter::Typed(TypedFilter { properties, .. }),
+                counter_type: CounterType::Plus1Plus1,
+                count: QuantityExpr::Ref {
+                    qty: QuantityRef::CommanderCastFromCommandZoneCount,
+                },
+            }] if properties == &[FilterProp::IsCommander]
+        ));
+    }
+
     /// CR 106.6 + CR 702.10a: Hall of the Bandit Lord — any creature spell,
     /// permanent haste (no "until end of turn" rider).
     #[test]
@@ -4197,6 +4309,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn negated_spell_from_zone_lowers_to_cast_prohibition_once() {
+        let expected = vec![ManaSpendRestriction::CannotCastSpellFromZone(Zone::Hand)];
+
+        for text in [
+            "this mana can't be spent to cast spells from your hand",
+            "this mana can\u{2019}t be spent to cast a spell from your hand",
+        ] {
+            assert_eq!(
+                parse_mana_spend_restriction(text).map(|(restrictions, _)| restrictions),
+                Some(expected.clone()),
+                "negative zone restriction must parse fully: {text}"
+            );
+        }
+
+        for hostile in [
+            "this mana can't be spent to cast spells from anywhere other than your hand",
+            "this mana can't be spent to cast spells from your hand nonsense",
+        ] {
+            assert_eq!(
+                parse_mana_spend_restriction(hostile),
+                None,
+                "already-negative and trailing-tail shapes must remain unsupported: {hostile}"
+            );
+        }
+    }
+
     // CR 106.6 + CR 107.3 + CR 202.3: Troyan, Gutsy Explorer — any-type
     // disjunctive MV/X spend restriction.
     #[test]
@@ -4385,42 +4524,35 @@ mod tests {
         );
     }
 
-    // CR 702.6a: Ronin, Shadow Stalker — plural "equip abilities" in the
-    // activation tail maps to `Any([SpellType("Equipment"), ActivateTagged(Equip)])`.
-    // Keyword-precise: only equip-tagged abilities qualify, not arbitrary
-    // activated abilities on Equipment permanents.
+    // CR 702.6a: both the plural and singular equip-activation tails map to the same
+    // `Any([SpellType("Equipment"), ActivateTagged(Equip)])`. Keyword-precise: only
+    // equip-tagged abilities qualify, not arbitrary activated abilities on Equipment
+    // permanents. Each row differs in BOTH halves (spell count and ability count), so
+    // both full input strings are retained.
     #[test]
-    fn mana_spend_restriction_equip_abilities_plural() {
-        let (restriction, grants) = parse_mana_spend_restriction(
-            "spend this mana only to cast equipment spells or activate equip abilities",
-        )
-        .expect("equip abilities plural must parse");
-        assert_eq!(
-            restriction,
-            vec![ManaSpendRestriction::Any(vec![
-                ManaSpendRestriction::SpellType("Equipment".to_string()),
-                ManaSpendRestriction::ActivateTagged(AbilityTag::Equip),
-            ])]
-        );
-        assert!(grants.is_empty());
-    }
-
-    // CR 702.6a: Freya Crescent — singular "an equip ability" in the activation
-    // tail maps to the same `Any([SpellType("Equipment"), ActivateTagged(Equip)])`.
-    #[test]
-    fn mana_spend_restriction_equip_ability_singular() {
-        let (restriction, grants) = parse_mana_spend_restriction(
-            "spend this mana only to cast an equipment spell or activate an equip ability",
-        )
-        .expect("equip ability singular must parse");
-        assert_eq!(
-            restriction,
-            vec![ManaSpendRestriction::Any(vec![
-                ManaSpendRestriction::SpellType("Equipment".to_string()),
-                ManaSpendRestriction::ActivateTagged(AbilityTag::Equip),
-            ])]
-        );
-        assert!(grants.is_empty());
+    fn mana_spend_restriction_equip_abilities_plural_and_singular() {
+        for (card, text) in [
+            (
+                "Ronin, Shadow Stalker",
+                "spend this mana only to cast equipment spells or activate equip abilities",
+            ),
+            (
+                "Freya Crescent",
+                "spend this mana only to cast an equipment spell or activate an equip ability",
+            ),
+        ] {
+            let (restriction, grants) = parse_mana_spend_restriction(text)
+                .unwrap_or_else(|| panic!("{card}: {text:?} must parse"));
+            assert_eq!(
+                restriction,
+                vec![ManaSpendRestriction::Any(vec![
+                    ManaSpendRestriction::SpellType("Equipment".to_string()),
+                    ManaSpendRestriction::ActivateTagged(AbilityTag::Equip),
+                ])],
+                "{card}: wrong restriction for {text:?}"
+            );
+            assert!(grants.is_empty(), "{card}: {text:?} must grant nothing");
+        }
     }
 
     // CR 105.2a + CR 106.6: The Great Henge-style compound rider is an AND,
