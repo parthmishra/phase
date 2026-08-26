@@ -927,6 +927,7 @@ fn keyword_choice_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::resolve_ability_chain;
     use crate::types::identifiers::ObjectId;
     use crate::types::player::PlayerId;
 
@@ -1784,7 +1785,7 @@ mod tests {
     #[test]
     fn resolve_single_active_player_in_chain_binds_without_prompting() {
         let mut state = GameState::new_two_player(42);
-        let mut ability = ResolvedAbility::new(
+        let ability = ResolvedAbility::new(
             Effect::Choose {
                 choice_type: ChoiceType::active_player(),
                 persist: false,
@@ -1796,12 +1797,9 @@ mod tests {
         );
         let mut events = Vec::new();
 
-        assert!(resolve_single_active_player_in_chain(
-            &mut state,
-            &mut ability,
-            &mut events,
-        ));
-        assert_eq!(ability.chosen_players, vec![PlayerId(0)]);
+        resolve_ability_chain(&mut state, &ability, &mut events, 0)
+            .expect("the production chain must resolve the forced active-player choice");
+        assert_eq!(state.last_named_choice, Some(ChoiceValue::Player(PlayerId(0))));
         assert!(!matches!(state.waiting_for, WaitingFor::NamedChoice { .. }));
     }
 
