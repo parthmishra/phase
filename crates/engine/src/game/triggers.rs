@@ -7511,6 +7511,12 @@ pub(crate) fn seed_event_context_parent_targets(
                 return;
             }
             let Some(pin) = zone_change_parent_target_pin(event) else {
+                // CR 603.6: A malformed zone-change carrier cannot identify
+                // the object in its destination zone. Remove the source-only
+                // propagation fallback rather than substituting the ability's
+                // source for the event object.
+                ability.targets.clear();
+                ability.target_incarnations.clear();
                 return;
             };
             (Some(*object_id), Some(pin))
@@ -7558,7 +7564,12 @@ fn zone_change_parent_target_pin(event: &GameEvent) -> Option<ObjectIncarnationR
         {
             return None;
         }
-        if from.is_some_and(|zone| zone != *to) {
+        // CR 400.7: The record-owned context is the pre-route identity
+        // authority. `from: None` can still represent a merge component that
+        // was routed from its absorbed battlefield identity into `to`; compare
+        // the captured expected zone, not the optional public origin, to decide
+        // whether the destination is the next incarnation.
+        if source.identity.expected_zone != *to {
             source.identity.reference.incarnation.checked_add(1)?
         } else {
             source.identity.reference.incarnation
@@ -16599,10 +16610,9 @@ pub mod tests {
     }
 
     #[test]
-    fn resolution_fallback_does_not_pin_reentered_zone_change_object() {
+    fn stack_push_rejects_malformed_zone_change_parent_target_provenance() {
         let source = ObjectId(999);
-        let mut state = GameState::new_two_player(1);
-        let entered = make_creature(&mut state, PlayerId(0), "Entered", 2, 2);
+        let entered = ObjectId(2);
         let event = zone_changed_event(
             entered,
             Zone::Hand,
@@ -16610,11 +16620,83 @@ pub mod tests {
             vec![CoreType::Creature],
             vec![],
         );
-        let observed_incarnation = state.objects[&entered].incarnation;
+        let mut ability = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::ParentTarget,
+            },
+            vec![TargetRef::Object(source)],
+            source,
+            PlayerId(0),
+        );
+
+        seed_event_context_parent_targets(
+            &mut ability,
+            Some(&event),
+            EventContextSeedTiming::StackPush,
+        );
+
+        assert!(ability.targets.is_empty());
+        assert!(ability.target_incarnations.is_empty());
+    }
+
+    #[test]
+    fn resolution_fallback_does_not_pin_reentered_zone_change_object() {
+        let source = ObjectId(999);
+        let mut state = GameState::new_two_player(1);
+        let entered = make_creature(&mut state, PlayerId(0), "Entered", 2, 2);
+        crate::game::zones::absorb_component(&mut state, entered, Some(Zone::Battlefield));
+        let pre_delivery_incarnation = state.objects[&entered].incarnation;
+        let mut component_events = Vec::new();
+        crate::game::merge::put_component_into_zone(
+            &mut state,
+            entered,
+            Zone::Graveyard,
+            &mut component_events,
+        );
+        let event = component_events
+            .iter()
+            .find(|event| matches!(event, GameEvent::ZoneChanged { .. }))
+            .expect("production component delivery emits a zone-change event");
+        assert!(matches!(event, GameEvent::ZoneChanged { from: None, .. }));
+        let destination_pin = ObjectIncarnationRef::from_object(&state.objects[&entered]);
+        assert_eq!(
+            destination_pin.incarnation,
+            pre_delivery_incarnation + 1,
+            "component delivery creates the destination incarnation"
+        );
+
+        let mut reach_guard = ResolvedAbility::new(
+            Effect::TargetOnly {
+                target: TargetFilter::ParentTarget,
+            },
+            vec![TargetRef::Object(source)],
+            source,
+            PlayerId(0),
+        );
+        seed_event_context_parent_targets(
+            &mut reach_guard,
+            Some(event),
+            EventContextSeedTiming::StackPush,
+        );
+        assert_eq!(reach_guard.targets, vec![TargetRef::Object(entered)]);
+        assert_eq!(reach_guard.target_incarnations, vec![destination_pin]);
+        assert_eq!(
+            crate::game::targeting::resolved_targets(
+                &reach_guard,
+                &TargetFilter::ParentTarget,
+                &state,
+            ),
+            vec![TargetRef::Object(entered)],
+            "the production component event reaches the live target resolver"
+        );
+
         let mut move_events = Vec::new();
         crate::game::zones::move_to_zone(&mut state, entered, Zone::Exile, &mut move_events);
-        crate::game::zones::move_to_zone(&mut state, entered, Zone::Battlefield, &mut move_events);
-        assert_ne!(state.objects[&entered].incarnation, observed_incarnation);
+        crate::game::zones::move_to_zone(&mut state, entered, Zone::Graveyard, &mut move_events);
+        assert_ne!(
+            ObjectIncarnationRef::from_object(&state.objects[&entered]),
+            destination_pin
+        );
 
         let mut ability = ResolvedAbility::new(
             Effect::TargetOnly {
@@ -16626,7 +16708,7 @@ pub mod tests {
         );
         seed_event_context_parent_targets(
             &mut ability,
-            Some(&event),
+            Some(event),
             EventContextSeedTiming::ResolutionFallback,
         );
 
@@ -41738,6 +41820,7 @@ pub mod tests {
             PlayerId(0),
         );
         player_ability.scoped_player = Some(PlayerId(1));
+        player_ability.fanout_player = Some(PlayerId(1));
         crate::game::effects::choose::resolve(&mut player_bound, &player_ability, &mut Vec::new())
             .expect("the production per-player constructor raises the prompt");
         assert!(matches!(

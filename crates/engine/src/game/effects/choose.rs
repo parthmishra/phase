@@ -87,11 +87,12 @@ pub fn resolve(
         source,
         // CR 607.2d / CR 607.2m (by analogy): `persist_player` is an INDEPENDENT
         // routing discriminator, not a repurposing of source authority. During a
-        // `player_scope: All` fan-out (effects/mod.rs `set_scoped_player_recursive`),
-        // `ability.scoped_player` names the fanned per-player value, so a
-        // persisting choice records the anchor onto that exact player. Outside a
-        // fan-out (Khans Siege), `scoped_player` is `None`, so this stays `None`
-        // and the exact-object source binding is preserved unchanged.
+        // real per-player fan-out, `set_fanout_player_recursive` records the
+        // exact iterated player independently of `scoped_player`, so a persisting
+        // choice records the anchor onto that player. Outside a fan-out (Khans
+        // Siege), and for an ordinary phase trigger that has phase scope but no
+        // fan-out provenance, this stays `None` and preserves exact-object source
+        // binding.
         persist_player,
     };
 
