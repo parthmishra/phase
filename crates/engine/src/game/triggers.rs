@@ -16667,7 +16667,10 @@ pub mod tests {
             .iter()
             .find(|event| matches!(event, GameEvent::ZoneChanged { .. }))
             .expect("production component delivery emits a zone-change event");
-        assert!(matches!(event, GameEvent::ZoneChanged { from: None, .. }));
+        let GameEvent::ZoneChanged { from, .. } = event else {
+            unreachable!("the preceding search accepts only zone-change events");
+        };
+        assert!(from.is_none());
         let destination_pin = ObjectIncarnationRef::from_object(&state.objects[&entered]);
         assert_eq!(
             destination_pin.incarnation,
