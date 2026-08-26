@@ -856,7 +856,7 @@ function OpponentTab({
         />
         <span
           data-arena-opponent-portrait
-          className={`arena-opponent-seat-portrait relative flex border transition-[border-color,background-color,box-shadow,transform] duration-150 group-hover:-translate-y-0.5 ${borderClass}`}
+          className={`arena-opponent-seat-portrait relative flex overflow-visible border transition-[border-color,background-color,box-shadow,transform] duration-150 group-hover:-translate-y-0.5 ${borderClass}`}
         >
           {isUnderAttack && (
             <>
@@ -876,7 +876,7 @@ function OpponentTab({
           <span
             aria-hidden
             data-arena-opponent-fill-shade
-            className="absolute inset-0 z-10 bg-black/30"
+            className="absolute inset-0 z-10 rounded-[inherit] bg-black/30"
           />
           {waitingReasonText ? (
             <PriorityMarker

@@ -172,6 +172,8 @@ describe("OpponentHud", () => {
       expect(name).not.toHaveClass("rounded-full");
       expect(name).not.toHaveClass("bg-black/55");
       expect(portrait).toHaveClass("arena-opponent-seat-portrait");
+      expect(portrait).toHaveClass("overflow-visible");
+      expect(shade).toHaveClass("rounded-[inherit]");
       expect(
         playerMarker?.querySelector(".arena-opponent-avatar"),
       ).toHaveClass("arena-opponent-seat-avatar");

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
@@ -29,7 +29,14 @@ import { PriorityMarker } from "./TurnStatusLine.tsx";
 export const TOUCH_TABLET_PLAYER_HUD_QUERY =
   "(pointer: coarse) and (max-width: 1400px)";
 
-export function PlayerHud() {
+interface PlayerHudProps {
+  /** Center the life nameplate, rather than the full variable-width HUD, on
+   *  the parent anchor. ArenaGameBoard uses this to pin the nameplate to the
+   *  exact center while phase controls and badges grow around it. */
+  alignNameplateToAnchor?: boolean;
+}
+
+export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {}) {
   const { t } = useTranslation("game");
   const playerId = usePerspectivePlayerId();
   const isMyTurn = useGameStore((s) => s.gameState?.active_player === playerId);
@@ -59,6 +66,42 @@ export function PlayerHud() {
   const isCompactHeight = useIsCompactHeight();
   const compact = usesEdgePill || isCompactHeight;
   const { waitingSeatId, reason } = useTurnStatus();
+  const hudRef = useRef<HTMLDivElement>(null);
+
+  // The Arena hand anchor is centered in screen space, but this HUD's width is
+  // intentionally asymmetric (phase controls on the left; mana and status
+  // badges on the right). Measure the rendered nameplate and compensate by
+  // exactly that local offset, so the plate itself — not the numeral or the
+  // surrounding controls — stays centered. Compact edge pills already center
+  // their plate and contain fixed corner controls, so they receive no shift.
+  useLayoutEffect(() => {
+    const hud = hudRef.current;
+    if (!alignNameplateToAnchor || usesEdgePill || !hud) return;
+
+    const nameplate = hud.querySelector<HTMLElement>("[data-hud-plate]");
+    if (!nameplate) return;
+
+    const alignNameplate = () => {
+      const hudRect = hud.getBoundingClientRect();
+      const nameplateRect = nameplate.getBoundingClientRect();
+      const shift = hudRect.left + hudRect.width / 2
+        - (nameplateRect.left + nameplateRect.width / 2);
+      hud.style.setProperty("--arena-nameplate-anchor-shift", `${shift}px`);
+    };
+
+    alignNameplate();
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(alignNameplate);
+    observer?.observe(hud);
+    observer?.observe(nameplate);
+    window.addEventListener("resize", alignNameplate);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", alignNameplate);
+    };
+  }, [alignNameplateToAnchor, usesEdgePill]);
 
   const isHumanTargetSelection =
     (waitingFor?.type === "TargetSelection" || waitingFor?.type === "TriggerTargetSelection")
@@ -100,18 +143,24 @@ export function PlayerHud() {
 
   return (
     <div
+      ref={hudRef}
       data-player-hud={playerId}
       data-local-player-hud=""
+      data-nameplate-anchor-aligned={alignNameplateToAnchor && !usesEdgePill ? "true" : undefined}
       data-edge-pill-layout={usesEdgePill ? "true" : undefined}
       data-player-life-shape={usesEdgePill ? "pill" : undefined}
       data-phased-out={isPhasedOut ? "true" : undefined}
       className={`relative z-20 flex shrink-0 flex-row flex-nowrap items-center justify-center ${usesEdgePill ? "gap-0 p-0" : compact ? "gap-1 px-0.5 py-0.5" : "gap-1.5 px-1 py-1 lg:gap-2 lg:px-2"} ${
         isPhasedOut ? "opacity-40 grayscale" : ""
       }`}
+      style={alignNameplateToAnchor && !usesEdgePill
+        ? { transform: "translateX(var(--arena-nameplate-anchor-shift, 0px))" }
+        : undefined}
     >
       {!usesEdgePill ? <PhaseIndicatorLeft /> : null}
       <HudPlate
         label={getPlayerDisplayName(playerId, playerId)}
+        hideLabel={alignNameplateToAnchor}
         tone={hudTone}
         active={isMyTurn}
         seatColor={seatColor}

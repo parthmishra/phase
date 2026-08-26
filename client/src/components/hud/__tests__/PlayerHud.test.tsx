@@ -49,6 +49,35 @@ describe("PlayerHud", () => {
     expect(screen.queryByText(/Poison counters:/)).toBeNull();
   });
 
+  it("centers the rendered life nameplate on the Arena hand anchor", () => {
+    const rect = (left: number, width: number): DOMRect => ({
+      x: left,
+      y: 0,
+      left,
+      right: left + width,
+      top: 0,
+      bottom: 40,
+      width,
+      height: 40,
+      toJSON: () => ({}),
+    });
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.hasAttribute("data-local-player-hud")) return rect(0, 300);
+        if (this.hasAttribute("data-hud-plate")) return rect(170, 40);
+        return rect(0, 0);
+      });
+
+    const { container } = render(<PlayerHud alignNameplateToAnchor />);
+    const hud = container.querySelector<HTMLElement>("[data-local-player-hud]");
+
+    expect(hud).toHaveAttribute("data-nameplate-anchor-aligned", "true");
+    expect(hud?.style.getPropertyValue("--arena-nameplate-anchor-shift")).toBe("-40px");
+    expect(hud).toHaveStyle({ transform: "translateX(-40px)" });
+
+    rectSpy.mockRestore();
+  });
+
   it("renders local Next Up badge only for the next actual turn", () => {
     act(() => {
       useGameStore.setState({
@@ -76,7 +105,7 @@ describe("PlayerHud", () => {
       window.dispatchEvent(new Event("resize"));
     });
 
-    const { container } = render(<PlayerHud />);
+    const { container } = render(<PlayerHud alignNameplateToAnchor />);
 
     expect(container.querySelector('[data-edge-pill-layout="true"]')).toHaveAttribute(
       "data-player-life-shape",
@@ -98,9 +127,7 @@ describe("PlayerHud", () => {
       screen.getByRole("button", { name: "Undo" }),
     );
     expect(plate).toHaveTextContent("20");
-    expect(
-      plate?.querySelector("[data-hud-plate-label-text]"),
-    ).toHaveTextContent("You");
+    expect(plate?.querySelector("[data-hud-plate-label]")).not.toBeInTheDocument();
     expect(plate?.querySelector("svg")).toBeNull();
     expect(plate?.querySelector('[data-hud-plate-art] img')).toHaveAttribute(
       "src",

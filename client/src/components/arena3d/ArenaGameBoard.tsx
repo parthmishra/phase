@@ -121,11 +121,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
         {props.renderOpponentHud?.(opponentSeats)}
       </div>
       <div
-        className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
-        style={{
-          bottom:
-            "calc(env(safe-area-inset-bottom) + clamp(7.9rem, 18.5dvh, 10.5rem))",
-        }}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"
         data-arena-screen-space-ui="player-hud"
       >
         <div className="contents pointer-events-auto">{props.playerHud}</div>

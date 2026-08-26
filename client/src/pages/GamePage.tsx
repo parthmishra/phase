@@ -975,7 +975,7 @@ function GamePageContent({
     ),
     [handleKickPlayer, isOnlineMode, opponentDisplayName, isP2PHost],
   );
-  const playerHud = useMemo(() => <PlayerHud />, []);
+  const playerHud = useMemo(() => <PlayerHud alignNameplateToAnchor />, []);
 
   useAudioContext("battlefield");
 

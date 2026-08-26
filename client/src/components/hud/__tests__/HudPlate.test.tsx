@@ -1,4 +1,4 @@
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HudPlate } from "../HudPlate.tsx";
@@ -30,5 +30,19 @@ describe("HudPlate", () => {
     expect(art).toHaveAttribute("data-avatar-fallback", "true");
     expect(art).toHaveStyle({ color: "#22d3ee" });
     expect(art?.querySelector("[data-hud-plate-profile-fallback]")).toBeInTheDocument();
+  });
+
+  it("hides the visual label while preserving a target button's accessible name", () => {
+    const { container } = render(
+      <HudPlate label="Player" hideLabel onClick={() => undefined}>
+        <span>40</span>
+      </HudPlate>,
+    );
+
+    expect(container.querySelector("[data-hud-plate-label]")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Player" })).toHaveAttribute(
+      "data-hud-plate-label-hidden",
+      "true",
+    );
   });
 });

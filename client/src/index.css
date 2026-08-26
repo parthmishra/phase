@@ -309,11 +309,11 @@
 
 .arena-opponent-seat-portrait {
   isolation: isolate;
-  overflow: hidden;
+  overflow: visible;
   width: var(--arena-opponent-pill-width);
   height: var(--arena-opponent-pill-height);
   border-radius: 9999px;
-  contain: layout paint size;
+  contain: layout size;
 }
 
 .arena-opponent-seat-avatar {
@@ -866,11 +866,24 @@ select.select-dark option {
   display: none;
 }
 
-/* Keep the local Arena identity immediately above the resting hand fan on
-   phones and touch-first tablets through the 13-inch iPad Pro. The compact
-   portrait-filled pill clears the center card instead of occupying battlefield
-   space farther up the table. Undo and the persistent mode toggles remain
-   independent glass controls around the edge of the play surface. */
+/* Pin the passive local Arena nameplate to the physical bottom-center edge.
+   This intentionally ignores the iOS safe area: the plate is presentation,
+   while the hand cards remain lifted into the touch-safe area. Only actual
+   HUD controls and a nameplate promoted to a legal player-target button accept
+   pointer input. */
+[data-arena-screen-space-ui="player-hud"] [data-local-player-hud] {
+  align-items: flex-end;
+  padding-bottom: 0;
+  pointer-events: none;
+}
+
+[data-arena-screen-space-ui="player-hud"] [data-local-player-hud] button,
+[data-arena-screen-space-ui="player-hud"] [data-local-player-hud] input,
+[data-arena-screen-space-ui="player-hud"] [data-local-player-hud] select,
+[data-arena-screen-space-ui="player-hud"] [data-local-player-hud] [role="button"] {
+  pointer-events: auto;
+}
+
 @media (width < 64rem),
   (pointer: coarse) and (max-width: 87.5rem) {
   [data-game-menu-anchor] {
@@ -882,20 +895,18 @@ select.select-dark option {
   }
 
   [data-arena-screen-space-ui="player-hud"] {
-    --edge-pill-hand-offset: clamp(4.5rem, 19dvh, 5rem);
     position: fixed !important;
     right: 0;
     left: 0;
-    bottom: calc(
-      env(safe-area-inset-bottom) + var(--edge-pill-hand-offset)
-    ) !important;
+    bottom: 0 !important;
     width: 100vw;
     z-index: 40;
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] {
     --mobile-player-hud-body-width: var(--arena-life-pill-width);
-    --mobile-player-hud-body-height: var(--arena-life-pill-height);
+    --mobile-player-hud-body-height:
+      clamp(2.25rem, min(6dvw, 10dvh), 2.5rem);
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate] {
@@ -910,14 +921,6 @@ select.select-dark option {
     clip-path: none;
     z-index: 2;
     filter: drop-shadow(0 4px 9px rgba(0, 0, 0, 0.42));
-  }
-
-  /* A passive life portrait may visually overlap the base of the fan, but it
-     must not steal taps from those cards. It becomes interactive only when
-     the engine exposes it as a legal player target and HudPlate renders it as
-     a button. */
-  [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate]:not(button) {
-    pointer-events: none;
   }
 
   [data-major-phase-stop-rail] {
@@ -1109,12 +1112,6 @@ select.select-dark option {
   }
 }
 
-@media (width < 64rem) {
-  [data-arena-screen-space-ui="player-hud"] {
-    --edge-pill-hand-offset: 4.75rem;
-  }
-}
-
 /* Mobile PORTRAIT only: lift the fanned hand above the fixed bottom action
    rail and split the dock into left/right clusters. Landscape (<lg) keeps the
    desktop-style right-anchored rail; short landscape viewports are handled by
@@ -1127,12 +1124,6 @@ select.select-dark option {
     --game-mobile-command-lift: 0.5rem;
     --game-mobile-player-hud-lift: 12.75rem;
     --game-mobile-player-hud-shift-x: 1.125rem;
-  }
-
-  [data-arena-screen-space-ui="player-hud"] {
-    bottom: calc(
-      env(safe-area-inset-bottom) + 5.25rem
-    ) !important;
   }
 
   [data-flex-zone="player-row"] {
@@ -1218,13 +1209,15 @@ select.select-dark option {
   }
 }
 
-/* The fan's own resting curve intentionally leaves its lower frame below the
-   viewport, matching the desktop/Arena silhouette. Cancel the grid's safe-area
-   padding for this visual row; the exposed upper card remains the touch target
-   and the system gesture region stays free of essential controls. */
+/* Keep the landscape-phone fan comfortably above the pinned life nameplate and
+   the system gesture region. The lower card frames may still trail offscreen,
+   preserving the Arena silhouette while leaving more of each touch target
+   exposed. */
 @media (width < 64rem) and (orientation: landscape) {
   [data-flex-zone="playerHandRow"] {
-    transform: translateY(max(env(safe-area-inset-bottom), 0.5rem));
+    transform: translateY(
+      calc(-1 * max(env(safe-area-inset-bottom), 1.25rem))
+    );
   }
 }
 

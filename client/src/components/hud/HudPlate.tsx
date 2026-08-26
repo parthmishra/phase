@@ -10,6 +10,9 @@ type HudTone = "neutral" | "emerald" | "rose" | "cyan" | "amber";
 
 interface HudPlateProps {
   label: string;
+  /** Visually omit the identity row while retaining `label` for avatar and
+   *  target-button accessibility. */
+  hideLabel?: boolean;
   tone?: HudTone;
   onClick?: () => void;
   children: ReactNode;
@@ -50,6 +53,7 @@ const ACTIVE_TURN_CLASSES: Record<HudTone, string> = {
 
 export function HudPlate({
   label,
+  hideLabel = false,
   tone = "neutral",
   onClick,
   children,
@@ -69,9 +73,13 @@ export function HudPlate({
     (s) => playerId != null && s.debugHighlightedPlayerId === playerId,
   );
   const compact = density === "compact";
-  const plateChrome = compact
-    ? "min-h-11 gap-1 px-1.5 py-1"
-    : "min-h-12 gap-2 px-2 py-1.5 lg:gap-2.5 lg:px-3 lg:py-2";
+  const plateChrome = hideLabel
+    ? compact
+      ? "min-h-9 gap-1 px-1.5 py-0.5"
+      : "min-h-11 gap-2 px-2 py-1 lg:gap-2.5 lg:px-3"
+    : compact
+      ? "min-h-11 gap-1 px-1.5 py-1"
+      : "min-h-12 gap-2 px-2 py-1.5 lg:gap-2.5 lg:px-3 lg:py-2";
   const labelClass = compact
     ? "truncate text-[8px] font-semibold uppercase tracking-[0.12em]"
     : "truncate text-[9px] font-semibold uppercase tracking-[0.18em]";
@@ -85,7 +93,9 @@ export function HudPlate({
     <Component
       type={onClick ? "button" : undefined}
       onClick={onClick}
+      aria-label={hideLabel && onClick ? label : undefined}
       data-hud-plate=""
+      data-hud-plate-label-hidden={hideLabel ? "true" : undefined}
       data-hud-tone={tone}
       data-active-turn={active ? "true" : undefined}
       className={`arena-hud-plate group relative inline-flex max-w-full items-center border transition-[border-color,background-color,box-shadow] duration-150 ${plateChrome} ${TONE_CLASSES[tone]}${activeChrome} ${
@@ -152,25 +162,27 @@ export function HudPlate({
         className={`relative flex min-w-0 flex-col items-center justify-center ${contentGap}`}
         data-hud-plate-content=""
       >
-        <div
-          className={`flex min-w-0 items-center justify-center ${contentGap}`}
-          data-hud-plate-label=""
-        >
-          {!avatarUrl && seatColor && (
-            <span
-              aria-hidden
-              className={`${compact ? "h-2 w-2" : "h-2.5 w-2.5"} shrink-0 rounded-full ring-1 ring-black/30`}
-              style={{ backgroundColor: seatColor }}
-            />
-          )}
-          <span
-            data-hud-plate-label-text=""
-            className={labelClass}
-            style={seatColor ? { color: seatColor } : { color: "rgba(255,255,255,0.68)" }}
+        {!hideLabel ? (
+          <div
+            className={`flex min-w-0 items-center justify-center ${contentGap}`}
+            data-hud-plate-label=""
           >
-            {label}
-          </span>
-        </div>
+            {!avatarUrl && seatColor && (
+              <span
+                aria-hidden
+                className={`${compact ? "h-2 w-2" : "h-2.5 w-2.5"} shrink-0 rounded-full ring-1 ring-black/30`}
+                style={{ backgroundColor: seatColor }}
+              />
+            )}
+            <span
+              data-hud-plate-label-text=""
+              className={labelClass}
+              style={seatColor ? { color: seatColor } : { color: "rgba(255,255,255,0.68)" }}
+            >
+              {label}
+            </span>
+          </div>
+        ) : null}
         <div
           className={`flex min-w-0 items-center justify-center ${childGap}`}
           data-hud-plate-primary=""
