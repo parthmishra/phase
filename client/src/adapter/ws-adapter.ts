@@ -203,16 +203,32 @@ export class NativeEngineVersionMismatchError extends Error {
  * `crates/server-core/src/protocol.rs`. Bump in lockstep when either side
  * adds, removes, renames, or changes the type of a protocol variant field.
  *
- * 39 — ChoiceType.Player.population carries the CR 805.9 active-player choice
+ * 41 — ChoiceType.Player.population carries the CR 805.9 active-player choice
  *      restriction through WaitingFor.NamedChoice. Older full-game peers
  *      default the field to all players and would broaden the choice.
- * 38 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
+ * 40 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
  *      cardinality and binding for shared-team turns. Older peers deserialize
  *      the affected trigger as a once-per-team definition.
- * 37 — GameState.beginning_of_turn_snapshot and
+ * 39 — GameState.beginning_of_turn_snapshot and
  *      QuantityRef.UntappedLandsAtTurnStart add the serialized historical
  *      value needed by Power Surge-class look-back effects. An older full-game
  *      peer cannot decode the new quantity tag.
+ * 38 — WaitingFor.ChooseObjectsSelection publishes the resolving effect's
+ *      min and optional max bounds. Older clients silently ignore these
+ *      additive fields and offer selections outside the engine-authoritative
+ *      range, so the full-game handshake refuses that capability mismatch.
+ * 37 — PayCostKind::TapCreatures changed from { aggregate:
+ *      Option<TapCreaturesAggregate> } to a required { mode:
+ *      TapCreaturesSelectionMode } (Fixed/VariableX/Aggregate) — the fix that
+ *      also unlocks the u32::MAX X-sentinel tap-cost form (Glacian,
+ *      Powerstone Engineer + 8 sibling cards, #7799). mode carries no serde
+ *      default: a GameState snapshot paused mid-TapCreatures payment
+ *      (Crew/Saddle/Teamwork/Conspire, or the newly-unlocked X-sentinel form)
+ *      under the old aggregate shape now fails deserialization rather than
+ *      risk silently misclassifying an aggregate payment as fixed-count (or
+ *      vice versa) — exactly the ambiguity TapCreaturesSelectionMode exists to
+ *      make unrepresentable. Old and new peers can't parse each other's
+ *      serialized snapshots while such a payment is in flight.
  * 36 — WaitingFor.ChooseDungeon.options changed from DungeonId[] to
  *      DungeonPreview[], and ChooseDungeonRoom dropped option_names, gained a
  *      required dungeon_name, and changed options from number[] to
@@ -290,7 +306,7 @@ export class NativeEngineVersionMismatchError extends Error {
  *      into a MulliganDecisionPhase::BottomCards sub-phase on
  *      WaitingFor::MulliganDecision.
  */
-export const PROTOCOL_VERSION = 39;
+export const PROTOCOL_VERSION = 41;
 
 /**
  * Lowest server protocol version this client will accept in the handshake.

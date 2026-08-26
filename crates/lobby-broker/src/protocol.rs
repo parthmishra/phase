@@ -43,16 +43,34 @@ pub enum ServerErrorCode {
 /// handshake. When making such changes, plan a deprecation window where
 /// both the old and new variants coexist, then bump and remove the old.
 ///
-/// 39 — `ChoiceType::Player::population` carries the CR 805.9 active-player
+/// 41 — `ChoiceType::Player::population` carries the CR 805.9 active-player
 ///      choice restriction through `WaitingFor::NamedChoice`. Older full-game
 ///      peers default the field to all players and would broaden the choice.
-/// 38 — `TriggerDefinition::phase_fanout` preserves per-player phase-trigger
+/// 40 — `TriggerDefinition::phase_fanout` preserves per-player phase-trigger
 ///      cardinality and binding for shared-team turns. Old full-game peers
 ///      deserialize the affected trigger as a once-per-team definition.
-/// 37 — `GameState::beginning_of_turn_snapshot` and
+/// 39 — `GameState::beginning_of_turn_snapshot` and
 ///      `QuantityRef::UntappedLandsAtTurnStart` add the serialized historical
 ///      value needed by Power Surge-class look-back effects. Old full-game
 ///      peers cannot decode the new quantity tag.
+/// 38 — `WaitingFor::ChooseObjectsSelection` publishes the resolving effect's
+///      `min` and optional `max` bounds. Older clients parse and silently
+///      ignore these additive fields, then offer selections outside the
+///      engine-authoritative range; refuse that capability mismatch at the
+///      full-game handshake. Lobby messages are unchanged.
+/// 37 — `PayCostKind::TapCreatures` changed from `{ aggregate:
+///      Option<TapCreaturesAggregate> }` to a required `{ mode:
+///      TapCreaturesSelectionMode }` (Fixed/VariableX/Aggregate) — the fix
+///      that also unlocks the `u32::MAX` X-sentinel tap-cost form (Glacian,
+///      Powerstone Engineer + 8 sibling cards, #7799). `mode` carries no
+///      `#[serde(default)]`: a `GameState` snapshot paused mid-TapCreatures
+///      payment (Crew/Saddle/Teamwork/Conspire, or the newly-unlocked
+///      X-sentinel form) under the old `aggregate` shape now fails
+///      deserialization rather than risk silently misclassifying an
+///      aggregate payment as fixed-count (or vice versa) — exactly the
+///      ambiguity `TapCreaturesSelectionMode` exists to make
+///      unrepresentable. Old and new peers can't parse each other's
+///      serialized snapshots while such a payment is in flight.
 /// 36 — `WaitingFor::ChooseDungeon::options` changed from `Vec<DungeonId>` to
 ///      `Vec<DungeonPreview>`, and `WaitingFor::ChooseDungeonRoom` dropped
 ///      `option_names`, gained a required `dungeon_name`, and changed `options`
@@ -129,7 +147,7 @@ pub enum ServerErrorCode {
 ///      payload; mulligan bottoming folded into a
 ///      `MulliganDecisionPhase::BottomCards` sub-phase on
 ///      `WaitingFor::MulliganDecision`.
-pub const PROTOCOL_VERSION: u32 = 39;
+pub const PROTOCOL_VERSION: u32 = 41;
 
 /// Minimum protocol version accepted by lobby-only brokers at the hello
 /// handshake **from clients that predate [`LOBBY_PROTOCOL_VERSION`]** — the
@@ -537,12 +555,12 @@ mod tests {
 
     #[test]
     fn protocol_version_tracks_full_game_wire_additions() {
-        assert_eq!(PROTOCOL_VERSION, 39);
+        assert_eq!(PROTOCOL_VERSION, 41);
         // Lobby keeps its one-version rollout window; full-game servers stay
         // current-only (`server_core::MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION`),
         // which is what refuses an older full-game peer whose GameState cannot
         // understand a success acknowledgment the submitting client awaits.
-        assert_eq!(MIN_SUPPORTED_PROTOCOL, 38);
+        assert_eq!(MIN_SUPPORTED_PROTOCOL, 40);
     }
 
     #[test]

@@ -13099,6 +13099,16 @@ fn evaluate_trigger_condition_with_source(
             }) => source_id.is_some_and(|source| source != *bearer),
             _ => false,
         },
+        TriggerCondition::ChoseRingBearer => match trigger_event {
+            // CR 701.54a: a temptation with no legal candidates chooses
+            // nothing — `chosen_bearer: None` must not fire "you choose a
+            // creature as your Ring-bearer".
+            Some(GameEvent::RingTemptsYou {
+                player_id,
+                chosen_bearer: Some(_),
+            }) => *player_id == controller,
+            _ => false,
+        },
         TriggerCondition::SourceEnteredThisTurn => source_context.is_some_and(|source| {
             source.source_read(state).entered_battlefield_turn() == Some(state.turn_number)
         }),
@@ -19422,6 +19432,7 @@ pub mod tests {
             colors: Vec::new(),
             mana_value: 1,
             has_x_in_cost: false,
+            has_adventure: false,
             from_zone: Zone::Hand,
             cast_variant: crate::types::game_state::CastingVariant::Normal,
             was_kicked: false,
@@ -19436,6 +19447,7 @@ pub mod tests {
             colors: Vec::new(),
             mana_value: 1,
             has_x_in_cost: false,
+            has_adventure: false,
             from_zone: Zone::Hand,
             cast_variant: crate::types::game_state::CastingVariant::Normal,
             was_kicked: false,
@@ -26409,6 +26421,7 @@ pub mod tests {
                     colors: vec![ManaColor::Blue],
                     mana_value: 1,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -26423,6 +26436,7 @@ pub mod tests {
                     colors: vec![ManaColor::Blue],
                     mana_value: 3,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32134,6 +32148,7 @@ pub mod tests {
                 colors: vec![],
                 mana_value: 3,
                 has_x_in_cost: true,
+                has_adventure: false,
                 from_zone: Zone::Hand,
                 cast_variant: crate::types::game_state::CastingVariant::Normal,
                 was_kicked: false,
@@ -32157,6 +32172,7 @@ pub mod tests {
                 colors: vec![],
                 mana_value: 1,
                 has_x_in_cost: false,
+                has_adventure: false,
                 from_zone: Zone::Hand,
                 cast_variant: crate::types::game_state::CastingVariant::Normal,
                 was_kicked: false,
@@ -32181,6 +32197,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 2,
                     has_x_in_cost: true,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32195,6 +32212,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 4,
                     has_x_in_cost: true,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32222,6 +32240,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 2,
                     has_x_in_cost: true,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32236,6 +32255,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 1,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32261,6 +32281,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 2,
                     has_x_in_cost: true,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32275,6 +32296,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 1,
                     has_x_in_cost: false,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32289,6 +32311,7 @@ pub mod tests {
                     colors: vec![],
                     mana_value: 4,
                     has_x_in_cost: true,
+                    has_adventure: false,
                     from_zone: Zone::Hand,
                     cast_variant: crate::types::game_state::CastingVariant::Normal,
                     was_kicked: false,
@@ -32314,6 +32337,7 @@ pub mod tests {
                 colors: vec![],
                 mana_value: 1,
                 has_x_in_cost: false,
+                has_adventure: false,
                 from_zone: Zone::Hand,
                 cast_variant: crate::types::game_state::CastingVariant::Normal,
                 was_kicked: false,
@@ -45957,6 +45981,54 @@ pub mod tests {
             PlayerId(0),
             None,
             Some(&event),
+        ));
+    }
+
+    /// CR 701.54a: "you choose a creature as your Ring-bearer" — fires only
+    /// for the controller's own choice, and only when a bearer was actually
+    /// chosen (#7816).
+    #[test]
+    fn chose_ring_bearer_requires_the_controllers_own_choice() {
+        let mut state = setup();
+        let bearer = create_object(
+            &mut state,
+            CardId(43),
+            PlayerId(0),
+            "Bearer".to_string(),
+            Zone::Battlefield,
+        );
+        let condition = TriggerCondition::ChoseRingBearer;
+        let chosen = GameEvent::RingTemptsYou {
+            player_id: PlayerId(0),
+            chosen_bearer: Some(bearer),
+        };
+        // The controller's own choice fires — no source identity required.
+        assert!(check_trigger_condition_with_source(
+            &state,
+            &condition,
+            PlayerId(0),
+            None,
+            Some(&chosen),
+        ));
+        // Another player's choice must not fire this controller's trigger.
+        assert!(!check_trigger_condition_with_source(
+            &state,
+            &condition,
+            PlayerId(1),
+            None,
+            Some(&chosen),
+        ));
+        // A temptation that chose nothing (no legal candidates) must not fire.
+        let unchosen = GameEvent::RingTemptsYou {
+            player_id: PlayerId(0),
+            chosen_bearer: None,
+        };
+        assert!(!check_trigger_condition_with_source(
+            &state,
+            &condition,
+            PlayerId(0),
+            None,
+            Some(&unchosen),
         ));
     }
 }
