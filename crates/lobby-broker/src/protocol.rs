@@ -54,7 +54,7 @@ pub enum ServerErrorCode {
 ///      value needed by Power Surge-class look-back effects. Old full-game
 ///      peers cannot decode the new quantity tag.
 /// 39 — `ManaRestriction::CannotCastSpellFromZone` adds a serialized
-///      GameState/ManaUnit restriction used by Karolina Dean. Older peers
+///      `GameState`/`ManaUnit` restriction used by Karolina Dean. Older peers
 ///      cannot deserialize that externally tagged enum variant. Lobby messages
 ///      are unchanged.
 /// 38 — `WaitingFor::ChooseObjectsSelection` publishes the resolving effect's
