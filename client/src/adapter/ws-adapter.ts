@@ -203,16 +203,19 @@ export class NativeEngineVersionMismatchError extends Error {
  * `crates/server-core/src/protocol.rs`. Bump in lockstep when either side
  * adds, removes, renames, or changes the type of a protocol variant field.
  *
- * 41 — ChoiceType.Player.population carries the CR 805.9 active-player choice
+ * 42 — ChoiceType.Player.population carries the CR 805.9 active-player choice
  *      restriction through WaitingFor.NamedChoice. Older full-game peers
  *      default the field to all players and would broaden the choice.
- * 40 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
+ * 41 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
  *      cardinality and binding for shared-team turns. Older peers deserialize
  *      the affected trigger as a once-per-team definition.
- * 39 — GameState.beginning_of_turn_snapshot and
+ * 40 — GameState.beginning_of_turn_snapshot and
  *      QuantityRef.UntappedLandsAtTurnStart add the serialized historical
  *      value needed by Power Surge-class look-back effects. An older full-game
  *      peer cannot decode the new quantity tag.
+ * 39 — ManaRestriction.CannotCastSpellFromZone adds a serialized
+ *      GameState/ManaUnit restriction used by Karolina Dean. Older peers
+ *      cannot deserialize that externally tagged enum variant.
  * 38 — WaitingFor.ChooseObjectsSelection publishes the resolving effect's
  *      min and optional max bounds. Older clients silently ignore these
  *      additive fields and offer selections outside the engine-authoritative
@@ -306,7 +309,7 @@ export class NativeEngineVersionMismatchError extends Error {
  *      into a MulliganDecisionPhase::BottomCards sub-phase on
  *      WaitingFor::MulliganDecision.
  */
-export const PROTOCOL_VERSION = 41;
+export const PROTOCOL_VERSION = 42;
 
 /**
  * Lowest server protocol version this client will accept in the handshake.

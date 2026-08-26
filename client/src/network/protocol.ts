@@ -94,14 +94,17 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  * admitted; see the gate for why.
  *
  * Bumps to date:
- *  32 — ChoiceType.Player.population carries the CR 805.9 active-player choice
+ *  33 — ChoiceType.Player.population carries the CR 805.9 active-player choice
  *       restriction through WaitingFor.NamedChoice. Older peers default the
  *       field to all players and would broaden the choice.
- *  31 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
+ *  32 — TriggerDefinition.phase_fanout preserves per-player phase-trigger
  *       cardinality and binding for shared-team turns.
- *  30 — GameState.beginning_of_turn_snapshot and
+ *  31 — GameState.beginning_of_turn_snapshot and
  *       QuantityRef.UntappedLandsAtTurnStart add the serialized historical
  *       value needed by Power Surge-class look-back effects.
+ *  30 — ManaRestriction.CannotCastSpellFromZone adds a serialized
+ *       GameState/ManaUnit restriction used by Karolina Dean. Older peers
+ *       cannot deserialize that externally tagged enum variant.
  *  29 — WaitingFor.ChooseObjectsSelection publishes min and optional max
  *       bounds. A v28 peer silently ignores the additive fields and offers
  *       out-of-range selections, so refuse the capability mismatch during
@@ -180,7 +183,7 @@ export function legalActionsFromWire(wire: LegalActionsWire): LegalActionsResult
  *       sub-phase on WaitingFor::MulliganDecision; the MulliganBottomCards
  *       variant was removed
  */
-export const WIRE_PROTOCOL_VERSION = 32 as const;
+export const WIRE_PROTOCOL_VERSION = 33 as const;
 
 export type P2PMessage = P2PAuthorityWire & (
   // `wireProtocolVersion` is optional on both first-contact guest messages:

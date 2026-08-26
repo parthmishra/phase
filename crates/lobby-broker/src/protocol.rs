@@ -43,16 +43,20 @@ pub enum ServerErrorCode {
 /// handshake. When making such changes, plan a deprecation window where
 /// both the old and new variants coexist, then bump and remove the old.
 ///
-/// 41 — `ChoiceType::Player::population` carries the CR 805.9 active-player
+/// 42 — `ChoiceType::Player::population` carries the CR 805.9 active-player
 ///      choice restriction through `WaitingFor::NamedChoice`. Older full-game
 ///      peers default the field to all players and would broaden the choice.
-/// 40 — `TriggerDefinition::phase_fanout` preserves per-player phase-trigger
+/// 41 — `TriggerDefinition::phase_fanout` preserves per-player phase-trigger
 ///      cardinality and binding for shared-team turns. Old full-game peers
 ///      deserialize the affected trigger as a once-per-team definition.
-/// 39 — `GameState::beginning_of_turn_snapshot` and
+/// 40 — `GameState::beginning_of_turn_snapshot` and
 ///      `QuantityRef::UntappedLandsAtTurnStart` add the serialized historical
 ///      value needed by Power Surge-class look-back effects. Old full-game
 ///      peers cannot decode the new quantity tag.
+/// 39 — `ManaRestriction::CannotCastSpellFromZone` adds a serialized
+///      GameState/ManaUnit restriction used by Karolina Dean. Older peers
+///      cannot deserialize that externally tagged enum variant. Lobby messages
+///      are unchanged.
 /// 38 — `WaitingFor::ChooseObjectsSelection` publishes the resolving effect's
 ///      `min` and optional `max` bounds. Older clients parse and silently
 ///      ignore these additive fields, then offer selections outside the
@@ -147,7 +151,7 @@ pub enum ServerErrorCode {
 ///      payload; mulligan bottoming folded into a
 ///      `MulliganDecisionPhase::BottomCards` sub-phase on
 ///      `WaitingFor::MulliganDecision`.
-pub const PROTOCOL_VERSION: u32 = 41;
+pub const PROTOCOL_VERSION: u32 = 42;
 
 /// Minimum protocol version accepted by lobby-only brokers at the hello
 /// handshake **from clients that predate [`LOBBY_PROTOCOL_VERSION`]** — the
@@ -555,12 +559,12 @@ mod tests {
 
     #[test]
     fn protocol_version_tracks_full_game_wire_additions() {
-        assert_eq!(PROTOCOL_VERSION, 41);
+        assert_eq!(PROTOCOL_VERSION, 42);
         // Lobby keeps its one-version rollout window; full-game servers stay
         // current-only (`server_core::MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION`),
         // which is what refuses an older full-game peer whose GameState cannot
         // understand a success acknowledgment the submitting client awaits.
-        assert_eq!(MIN_SUPPORTED_PROTOCOL, 40);
+        assert_eq!(MIN_SUPPORTED_PROTOCOL, 41);
     }
 
     #[test]
