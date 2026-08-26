@@ -926,8 +926,8 @@ fn keyword_choice_options(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::resolve_ability_chain;
+    use super::*;
     use crate::types::identifiers::ObjectId;
     use crate::types::player::PlayerId;
 
@@ -1799,7 +1799,10 @@ mod tests {
 
         resolve_ability_chain(&mut state, &ability, &mut events, 0)
             .expect("the production chain must resolve the forced active-player choice");
-        assert_eq!(state.last_named_choice, Some(ChoiceValue::Player(PlayerId(0))));
+        assert_eq!(
+            state.last_named_choice,
+            Some(ChoiceValue::Player(PlayerId(0)))
+        );
         assert!(!matches!(state.waiting_for, WaitingFor::NamedChoice { .. }));
     }
 
