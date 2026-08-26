@@ -3134,6 +3134,7 @@ fn self_counter_ability_is_batch_candidate(ability: &ResolvedAbility) -> bool {
         controller: _,
         original_controller,
         scoped_player,
+        fanout_player,
         kind,
         sub_ability,
         else_ability,
@@ -3198,6 +3199,7 @@ fn self_counter_ability_is_batch_candidate(ability: &ResolvedAbility) -> bool {
         && trigger_definition_ref.is_none()
         && original_controller.is_none()
         && scoped_player.is_none()
+        && fanout_player.is_none()
         && matches!(kind, AbilityKind::Spell | AbilityKind::Database)
         && sub_ability.is_none()
         && else_ability.is_none()
@@ -3362,6 +3364,7 @@ fn fixed_controller_gain_life_ability_is_batch_candidate(ability: &ResolvedAbili
         controller: _,
         original_controller: _,
         scoped_player,
+        fanout_player,
         kind,
         sub_ability,
         else_ability,
@@ -3421,6 +3424,7 @@ fn fixed_controller_gain_life_ability_is_batch_candidate(ability: &ResolvedAbili
     fixed_controller_gain_life
         && targets.is_empty()
         && scoped_player.is_none()
+        && fanout_player.is_none()
         && matches!(kind, AbilityKind::Spell | AbilityKind::Database)
         && sub_ability.is_none()
         && else_ability.is_none()
@@ -3570,6 +3574,7 @@ fn fixed_opponent_effect_ability_is_batch_candidate(ability: &ResolvedAbility) -
         controller: _,
         original_controller: _,
         scoped_player,
+        fanout_player,
         kind,
         sub_ability,
         else_ability,
@@ -3633,6 +3638,7 @@ fn fixed_opponent_effect_ability_is_batch_candidate(ability: &ResolvedAbility) -
     fixed_opponent_effect
         && targets.is_empty()
         && scoped_player.is_none()
+        && fanout_player.is_none()
         && matches!(kind, AbilityKind::Spell | AbilityKind::Database)
         && sub_ability.is_none()
         && else_ability.is_none()
@@ -4229,6 +4235,7 @@ fn inert_trigger_abilities_eq_ignoring_provenance(
         controller: a_controller,
         original_controller: _,
         scoped_player: a_scoped_player,
+        fanout_player: _,
         kind: a_kind,
         sub_ability: a_sub_ability,
         else_ability: a_else_ability,
@@ -4301,6 +4308,7 @@ fn inert_trigger_abilities_eq_ignoring_provenance(
         controller: b_controller,
         original_controller: _,
         scoped_player: b_scoped_player,
+        fanout_player: _,
         kind: b_kind,
         sub_ability: b_sub_ability,
         else_ability: b_else_ability,

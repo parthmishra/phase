@@ -238,6 +238,7 @@ fn resolved_ability_axes(a: &ResolvedAbility, mode: ScanMode) -> Axes {
         controller: _,             // player id
         original_controller: _,    // player id
         scoped_player: _,          // player id (iteration binding)
+        fanout_player: _,          // player id (per-player fanout provenance)
         kind: _,                   // AbilityKind tag (no payload)
         context: _,                // SpellContext: cast-time fact snapshot, not a live read
         optional_targeting: _,     // bool

@@ -4041,6 +4041,7 @@ fn walk_ability(
         controller: _,
         original_controller: _,
         scoped_player: _,
+        fanout_player: _, // concrete per-player fanout provenance, no read/write effect
         kind: _,
         context: _,
         optional_targeting: _,

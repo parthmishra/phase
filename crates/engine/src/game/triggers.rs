@@ -2746,6 +2746,13 @@ fn collect_matching_triggers_inner(
                     // read that player's row rather than the team representative.
                     if matches!(trig_def.mode, TriggerMode::Phase) {
                         pending_ability.set_scoped_player_recursive(scoped_player);
+                        if !matches!(trig_def.phase_fanout, PhaseTriggerFanout::Single) {
+                            // CR 805.4d: Preserve that this firing belongs to
+                            // one named shared-turn participant. A single phase
+                            // trigger still has phase context, but is not a
+                            // per-participant firing.
+                            pending_ability.set_fanout_player_recursive(scoped_player);
+                        }
                     }
                     if let GameEvent::CreatureEnlisted {
                         tapped_snapshot, ..

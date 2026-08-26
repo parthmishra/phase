@@ -12094,9 +12094,10 @@ pub enum WaitingFor {
         /// PER-PLAYER persistent anchor label — the answer binds
         /// `ChosenAttribute::Label` onto `state.players[persist_player]`
         /// (`chosen_attributes`) instead of onto `source_id`'s object. Set during
-        /// a `player_scope: All` fan-out of a persisting `Effect::Choose` to the
-        /// fanned per-player value (`ability.scoped_player`). `None` preserves the
-        /// object-scoped binding used by Khans Sieges and every other named choice.
+        /// an explicit per-player fan-out of a persisting `Effect::Choose` to
+        /// the fanned value (`ability.fanout_player`). `None` preserves the
+        /// object-scoped binding used by Khans Sieges and every other named
+        /// choice.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         persist_player: Option<PlayerId>,
         /// CR 107.1a/b: the free-entry contract for `choice_type`, when its

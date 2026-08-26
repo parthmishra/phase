@@ -412,18 +412,13 @@ pub(crate) fn named_choice_authority(
     // during a per-player iteration is the planar anchor (Two Streams Facility),
     // recorded on the choosing player instead of the source object.
     //
-    // NOTE for future axes: `scoped_player` is NOT a reliable "this is a
-    // per-player fan-out" marker — it is also set for a plain triggered ability
-    // resolving for its own controller (measured: The Toymaker's Trap's upkeep
-    // trigger arrives here with `scoped_player == controller == Some(P0)`,
-    // indistinguishable from the first iteration of a real fan-out). Adding a
-    // choice kind to this routing therefore MOVES the answer off the source for
-    // single-chooser cards too, which breaks any object-scoped reader. The
-    // per-player secret number (CR 101.4) is instead recorded ADDITIVELY by
-    // `record_player_chosen_number`, leaving every existing source binding
-    // intact.
+    // CR 805.4d: Shared-turn participant firings are explicit per-player
+    // iterations. `fanout_player` also covers typed `player_scope` fanout;
+    // `scoped_player` is intentionally not consulted because ordinary phase
+    // triggers set it too and must keep their label on the exact source object
+    // that `ChosenLabelIs` reads.
     let persist_player = (persist && matches!(choice_type, ChoiceType::Labeled { .. }))
-        .then_some(ability.scoped_player)
+        .then_some(ability.fanout_player)
         .flatten();
     let needs_context =
         choice_type.needs_choice_source_context() || (persist && persist_player.is_none());
@@ -953,6 +948,106 @@ mod tests {
             context,
             NamedChoiceSourceBinding::ExactObjectAndResolution,
         )
+    }
+
+    /// CR 805.4d: Only explicit per-player fanout provenance may route a
+    /// persistent anchor label to a player; ordinary phase context is insufficient.
+    #[test]
+    fn named_choice_authority_uses_fanout_provenance() {
+        let state = GameState::new_two_player(42);
+        let choice_type = ChoiceType::Labeled {
+            options: vec!["Alpha".to_string(), "Beta".to_string()],
+        };
+        let mut ability = make_choose_ability(choice_type.clone());
+        ability.scoped_player = Some(PlayerId(0));
+
+        let (_, ordinary_persist_player) =
+            named_choice_authority(&state, &ability, true, &choice_type);
+        assert_eq!(ordinary_persist_player, None);
+
+        ability.fanout_player = Some(PlayerId(1));
+        let (_, fanout_persist_player) =
+            named_choice_authority(&state, &ability, true, &choice_type);
+        assert_eq!(fanout_persist_player, Some(PlayerId(1)));
+    }
+
+    /// A real `player_scope: All` choice (Two Streams Facility's shape) records
+    /// each anchor on the iterating player and never on the source object.
+    #[test]
+    fn player_scope_choice_persists_each_players_label() {
+        let mut state = GameState::new_two_player(42);
+        let source_id = ObjectId(700);
+        state.objects.insert(
+            source_id,
+            crate::game::game_object::GameObject::new(
+                source_id,
+                crate::types::identifiers::CardId(700),
+                PlayerId(0),
+                "Per-player anchor source".to_string(),
+                crate::types::zones::Zone::Command,
+            ),
+        );
+        let mut ability = ResolvedAbility::new(
+            Effect::Choose {
+                choice_type: ChoiceType::Labeled {
+                    options: vec!["Green anchor".to_string(), "Red waterfall".to_string()],
+                },
+                persist: true,
+                selection: TargetSelectionMode::Chosen,
+            },
+            vec![],
+            source_id,
+            PlayerId(0),
+        );
+        ability.player_scope = Some(crate::types::ability::PlayerFilter::All);
+
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &ability, &mut events, 0)
+            .expect("the first player-scope iteration must raise its choice");
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::NamedChoice {
+                player: PlayerId(0),
+                persist_player: Some(PlayerId(0)),
+                ..
+            }
+        ));
+
+        crate::game::engine::apply_as_current(
+            &mut state,
+            crate::types::actions::GameAction::ChooseOption {
+                choice: "Green anchor".to_string(),
+            },
+        )
+        .expect("the first player choice must resume the fanout");
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::NamedChoice {
+                player: PlayerId(1),
+                persist_player: Some(PlayerId(1)),
+                ..
+            }
+        ));
+
+        crate::game::engine::apply_as_current(
+            &mut state,
+            crate::types::actions::GameAction::ChooseOption {
+                choice: "Red waterfall".to_string(),
+            },
+        )
+        .expect("the second player choice must complete the fanout");
+
+        assert!(crate::game::players::player_last_chose_label(
+            &state,
+            PlayerId(0),
+            "Green anchor"
+        ));
+        assert!(crate::game::players::player_last_chose_label(
+            &state,
+            PlayerId(1),
+            "Red waterfall"
+        ));
+        assert!(state.objects[&source_id].chosen_attributes.is_empty());
     }
 
     /// CR 607.2d / CR 607.2m (by analogy): `bind_named_choice` routes an anchor

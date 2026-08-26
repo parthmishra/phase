@@ -26678,6 +26678,12 @@ pub struct ResolvedAbility {
     /// controller while the instruction affects another player.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scoped_player: Option<PlayerId>,
+    /// CR 805.4d: Shared-team phase fanout binds one individual participant.
+    /// More generally, this identifies the player whose explicit per-player
+    /// iteration this chain represents. Unlike `scoped_player`, it is absent for
+    /// ordinary context and preserves provenance for persistent choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fanout_player: Option<PlayerId>,
     /// The kind of ability this was (activated, triggered, static, etc.).
     /// Carried through from `AbilityDefinition` to allow resolution guards (e.g. skipping
     /// `BeginGame` abilities during normal stack resolution).
@@ -27002,6 +27008,7 @@ impl ResolvedAbility {
             controller,
             original_controller: None,
             scoped_player: None,
+            fanout_player: None,
             kind: AbilityKind::default(),
             sub_ability: None,
             else_ability: None,
@@ -27872,6 +27879,18 @@ impl ResolvedAbility {
         }
         if let Some(else_branch) = self.else_ability.as_mut() {
             else_branch.set_scoped_player_recursive(player);
+        }
+    }
+
+    /// CR 805.4d: Stamp the individual participant represented by a shared-team
+    /// phase firing. `player_scope` fanout uses the same runtime provenance seam.
+    pub fn set_fanout_player_recursive(&mut self, player: PlayerId) {
+        self.fanout_player = Some(player);
+        if let Some(sub) = self.sub_ability.as_mut() {
+            sub.set_fanout_player_recursive(player);
+        }
+        if let Some(else_branch) = self.else_ability.as_mut() {
+            else_branch.set_fanout_player_recursive(player);
         }
     }
 

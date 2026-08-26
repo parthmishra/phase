@@ -9641,6 +9641,7 @@ pub(crate) fn drain_pending_discard_batch(
             scoped.set_original_controller_recursive(fan_out.original_controller);
             scoped.set_controller_recursive(*pid);
             scoped.set_scoped_player_recursive(*pid);
+            scoped.set_fanout_player_recursive(*pid);
             resolve_ability_chain(state, &scoped, events, 1)?;
             if state.waiting_for == initial_waiting_for {
                 continue;
@@ -9676,6 +9677,7 @@ pub(crate) fn drain_pending_discard_batch(
                 remaining_scoped.set_original_controller_recursive(fan_out.original_controller);
                 remaining_scoped.set_controller_recursive(remaining_pid);
                 remaining_scoped.set_scoped_player_recursive(remaining_pid);
+                remaining_scoped.set_fanout_player_recursive(remaining_pid);
                 remaining_scoped.sub_link = SubAbilityLink::SequentialSibling;
                 if let Some(prev) = tail {
                     super::ability_utils::append_to_sub_chain(&mut remaining_scoped, *prev);
@@ -10788,6 +10790,7 @@ fn resolve_chain_body(
             // keeping "you" references stable (CR 109.5).
             scoped.set_controller_recursive(*pid);
             scoped.set_scoped_player_recursive(*pid);
+            scoped.set_fanout_player_recursive(*pid);
             resolve_ability_chain(state, &scoped, events, depth + 1)?;
 
             // CR 608.2e: Break if inner effect entered a player-choice state —
@@ -10857,6 +10860,7 @@ fn resolve_chain_body(
                     // the iterating player.
                     remaining_scoped.set_controller_recursive(remaining_pid);
                     remaining_scoped.set_scoped_player_recursive(remaining_pid);
+                    remaining_scoped.set_fanout_player_recursive(remaining_pid);
                     // CR 608.2c: each remaining player's clause is an INDEPENDENT
                     // following instruction, not a continuation of the prior
                     // player's. When the scoped template carries a conditional
