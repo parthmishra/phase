@@ -5,12 +5,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
 import { CardArtFallback } from "../card/CardArtFallback.tsx";
-import { UnimplementedMechanicsBadge } from "../card/UnimplementedMechanicsBadge.tsx";
 import { useCardImage } from "../../hooks/useCardImage.ts";
 import { useIsMobile } from "../../hooks/useIsMobile.ts";
 import { useLongPress } from "../../hooks/useLongPress.ts";
-import { useCanActForWaitingState, usePlayerId } from "../../hooks/usePlayerId.ts";
-import { useSeatColor } from "../../hooks/useSeatColor.ts";
+import { useCanActForWaitingState } from "../../hooks/usePlayerId.ts";
 import { dispatchAction } from "../../game/dispatch.ts";
 import { cardImageLookup, tokenFiltersForObject } from "../../services/cardImageLookup.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
@@ -21,8 +19,7 @@ import { renderDescription } from "../../utils/description.ts";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 import { PopoverMenu } from "../menu/PopoverMenu.tsx";
 import { YieldMuteIcon } from "./YieldMuteIcon.tsx";
-import { RichLabel } from "../mana/RichLabel.tsx";
-import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import { ArenaStackCardSurface } from "./ArenaStackCardSurface.tsx";
 import type {
   ObjectId,
   StackEntry as StackEntryType,
@@ -62,7 +59,6 @@ interface StackEntryProps {
 export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isPending, cardSize, style, onHoverChange, pacingMultiplier = 1, groupCount = 1, details }: StackEntryProps) {
   const { t } = useTranslation("game");
   const isMobile = useIsMobile();
-  const playerId = usePlayerId();
   const objects = useGameStore((s) => s.gameState?.objects);
   const waitingFor = useGameStore((s) => s.waitingFor);
   const canActForWaitingState = useCanActForWaitingState();
@@ -158,11 +154,13 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
   // tell which permanent owns the trigger without hovering the card image.
   // Activated abilities don't carry a pre-resolved source name (different
   // engine path); they keep the bare "Activated" label.
-  const abilityLabel = details?.kind_label ?? (entry.kind.type === "ActivatedAbility"
-    ? t("stack.activated")
-    : isTriggered && triggerSourceName
-      ? t("stack.triggeredFrom", { source: triggerSourceName })
-      : t("stack.triggered"));
+  const abilityLabel = details?.kind_label ?? (isSpell
+    ? sourceName
+    : entry.kind.type === "ActivatedAbility"
+      ? t("stack.activated")
+      : isTriggered && triggerSourceName
+        ? t("stack.triggeredFrom", { source: triggerSourceName })
+        : t("stack.triggered"));
   const triggerDescription =
     details?.ability_description
       ? renderDescription(details.ability_description, sourceName)
@@ -171,22 +169,14 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
         : undefined;
   const targetLabels = details?.targets?.map((target) => target.label) ?? [];
   const selectedModeLabels = isSpell ? details?.selected_mode_labels ?? [] : [];
-  // The chosen {X} is a resolved value (like a chosen color), not just a cost —
-  // pull it out for a dedicated, always-visible badge and drop it from the
-  // capped paid-chip row so it isn't shown twice.
-  const xValueFact = details?.paid?.find((fact) => fact.type === "XValue");
-  const xValue = xValueFact?.type === "XValue" ? xValueFact.data.value : undefined;
   const paidLabels =
-    details?.paid?.filter((fact) => fact.type !== "XValue").map((fact) => formatPaidFact(fact, t)) ??
-    [];
-  const contextLabels = details?.trigger_context?.map((context) => context.label) ?? [];
-  const stormCopyCount = details?.provenance?.type === "Storm"
-    ? details.provenance.data.copy_count
-    : undefined;
-  const controllerLabel = entry.controller === playerId ? t("stack.controllerYou") : t("stack.controllerOpp");
-  const seatColor = useSeatColor(entry.controller);
-  const controllerInitial =
-    entry.controller === playerId ? t("stack.controllerInitialYou") : t("stack.controllerInitialOpp", { seat: entry.controller });
+    details?.paid?.map((fact) => formatPaidFact(fact, t)) ?? [];
+  const contextLabels = [
+    ...(details?.trigger_context?.map((context) => context.label) ?? []),
+    ...(details?.provenance?.type === "Storm"
+      ? [t("storm.copies", { count: details.provenance.data.copy_count })]
+      : []),
+  ];
 
   // Targeting: whether the engine is currently asking THIS seat to choose an
   // object and this stack entry is one of the choices. `getWaitingForObjectChoiceIds`
@@ -225,6 +215,8 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
       }}
       style={style}
       data-stack-entry={entry.id}
+      data-stack-top={isTop ? "true" : undefined}
+      data-stack-pending={isPending ? "true" : undefined}
       data-object-id={isSpell ? entry.source_id : undefined}
       data-card-hover
       className={`relative cursor-pointer ${isCardInFlight ? "invisible" : ""}`}
@@ -239,25 +231,19 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
       }}
       {...longPressHandlers}
     >
-      {/* Seat-color left-edge bar — identifies controller at a glance in multiplayer. */}
-      <div
-        className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-[3px] rounded-l-lg"
-        style={{ backgroundColor: seatColor }}
-      />
-      {/* Card image with explicit inline dimensions (Tailwind can't handle dynamic values) */}
+      {/* The settled card is the same composed surface used by its cast flight.
+          Engine-authored stack details remain available through the native
+          title and inspection interaction without repainting the card as a
+          second dashboard. */}
       <div
         style={{ width: cardSize.width, height: cardSize.height }}
         className={`overflow-hidden rounded-lg shadow-lg ${ringClass}`}
+        title={stackEntryTitle(abilityLabel, triggerDescription, targetLabels, paidLabels, contextLabels, t)}
       >
-        {isSpell && sourceObj ? (
-          <ArenaCardFace
+        {sourceObj ? (
+          <ArenaStackCardSurface
             objectId={entry.source_id}
             displayCost={displayManaCost}
-            className="h-full w-full rounded-lg"
-            style={{
-              "--hand-card-w": "100%",
-              "--hand-card-h": "100%",
-            } as CSSProperties}
           />
         ) : isLoading ? (
           <div
@@ -284,26 +270,10 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
           />
         )}
       </div>
-      {/* @container overlay sized to the card (sibling of the overflow-hidden
-          image wrapper, so the pip backdrop isn't clipped at the card edge).
-          absolute inset-0 takes its width from the relative outer wrapper, so
-          container-type can't collapse it; pips scale in cqi with the stack
-          card's width instead of a fixed px size. */}
       {isSpell && displayManaCost && (
-        <div className="pointer-events-none absolute inset-0 @container">
+        <div className="sr-only">
           <ManaCostPips cost={displayManaCost} size="fluid" />
         </div>
-      )}
-
-      {/* Badge: unimplemented-mechanics warning (issue #4711). Hand and
-          battlefield cards already surface this through CardImage; a spell is
-          most consequential while it is on the stack about to resolve, so the
-          same badge is shown here from the same engine-provided projection. */}
-      {!isSpell && (
-        <UnimplementedMechanicsBadge
-          mechanics={sourceObj?.unimplemented_mechanics}
-          variant="corner"
-        />
       )}
 
       {/* Badge: ×N coalesce count for engine-grouped mass triggers. */}
@@ -313,104 +283,18 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
         </span>
       )}
 
-      {/* Chosen {X} value — a resolved choice the player needs to see at a
-          glance (e.g. Fireball cast for X=5). Top-left so it never competes with
-          the top-right status badge or the capped cost-chip row. */}
-      {xValue !== undefined && (
-        <span
-          className="absolute -left-1 -top-2 z-10 rounded-full bg-purple-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-md"
-          title={t("stack.paidXValue", { value: xValue })}
-        >
-          X={xValue}
-        </span>
-      )}
-
-      {/* Badge: "Casting..." for pending spells, "Next" for top of stack */}
-      {isPending ? (
-        <span className="absolute -right-1 -top-2 animate-pulse rounded-full bg-cyan-500 px-2 py-0.5 text-[10px] font-bold text-black shadow-md">
-          {t("stack.casting")}
-        </span>
-      ) : isTop && (
-        <span className="absolute -right-1 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-black shadow-md">
-          {t("stack.next")}
-        </span>
-      )}
-
-      {/* Ability badge overlay (non-spell entries: triggered/activated) */}
-      {!isSpell && (
-        <div
-          className="absolute inset-x-0 bottom-0 rounded-b-lg border-t border-white/10 bg-gray-900/95 px-1.5 py-1 backdrop-blur-sm"
-          title={stackEntryTitle(abilityLabel, triggerDescription, targetLabels, paidLabels, contextLabels, t)}
-        >
-          <RichLabel
-            text={abilityLabel}
-            size="xs"
-            className="block truncate pr-8 text-[9px] font-semibold text-purple-300"
-          />
-          {triggerDescription && (
-            <RichLabel
-              text={triggerDescription}
-              size="xs"
-              className="mt-0.5 line-clamp-3 pr-6 text-[8px] leading-tight text-gray-300"
-            />
-          )}
-        </div>
-      )}
-
       {selectedModeLabels.length > 0 && (
         <section
           aria-label={t("stack.selectedModes")}
-          className="absolute inset-x-0 bottom-0 rounded-b-lg border-t border-white/10 bg-gray-900/95 px-1.5 py-1 backdrop-blur-sm"
+          className="sr-only"
         >
-          <span className="block text-[9px] font-semibold uppercase tracking-wide text-purple-300">
-            {t("stack.selectedModes")}
-          </span>
-          <ul className="mt-0.5 list-inside list-disc text-[8px] leading-tight text-gray-300">
+          <span>{t("stack.selectedModes")}</span>
+          <ul>
             {selectedModeLabels.map((label, index) => (
               <li key={`${index}-${label}`}>{renderDescription(label, sourceName)}</li>
             ))}
           </ul>
         </section>
-      )}
-
-      {(stormCopyCount !== undefined || targetLabels.length > 0 || paidLabels.length > 0 || contextLabels.length > 0) && (
-        <div className="absolute left-1 right-1 top-5 flex flex-wrap gap-1">
-          {stormCopyCount !== undefined && (
-            <span
-              className="max-w-full rounded bg-violet-950/90 px-1.5 py-0.5 text-[8px] font-semibold text-violet-100 shadow"
-              title={t("storm.copies", { count: stormCopyCount })}
-            >
-              {t("storm.copies", { count: stormCopyCount })}
-            </span>
-          )}
-          {targetLabels.slice(0, 2).map((label) => (
-            <span
-              key={`target-${label}`}
-              className="max-w-full rounded bg-cyan-950/90 px-1.5 py-0.5 text-[8px] font-semibold text-cyan-100 shadow"
-              title={t("stack.targetingLabel", { label })}
-            >
-              → {label}
-            </span>
-          ))}
-          {paidLabels.slice(0, 2).map((label) => (
-            <span
-              key={`paid-${label}`}
-              className="max-w-full rounded bg-amber-950/90 px-1.5 py-0.5 text-[8px] font-semibold text-amber-100 shadow"
-              title={label}
-            >
-              {label}
-            </span>
-          ))}
-          {targetLabels.length === 0 && contextLabels.slice(0, 1).map((label) => (
-            <span
-              key={`context-${label}`}
-              className="max-w-full rounded bg-slate-950/90 px-1.5 py-0.5 text-[8px] font-semibold text-slate-100 shadow"
-              title={label}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
       )}
 
       {/* CR 117.3d: discoverable auto-pass (yield) control on triggered abilities.
@@ -546,17 +430,6 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
         </PopoverMenu>
       )}
 
-      {/* Controller seat avatar — colored initial anchors identity to every surface
-          where this player appears (stack, HUD, log). */}
-      <span
-        title={controllerLabel}
-        className={`absolute flex h-4 min-w-4 items-center justify-center rounded-full border border-black/30 px-[3px] text-[9px] font-bold text-black shadow ${
-          isSpell ? "bottom-1 left-1" : "bottom-1 right-1"
-        }`}
-        style={{ backgroundColor: seatColor }}
-      >
-        {controllerInitial}
-      </span>
     </motion.div>
   );
 }

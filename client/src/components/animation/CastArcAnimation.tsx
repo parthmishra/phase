@@ -4,7 +4,7 @@ import type {
   CardMotionTarget,
   ReleasedCardMotion,
 } from "../../stores/animationStore.ts";
-import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
+import { ArenaStackCardSurface } from "../stack/ArenaStackCardSurface.tsx";
 import { cardFlightControl } from "./cardMotion.ts";
 
 interface CastArcAnimationProps {
@@ -94,22 +94,9 @@ export function CastArcAnimation({
       data-card-in-flight={objectId}
       data-card-flight-mode={mode}
     >
-      <ArenaCardFace
+      <ArenaStackCardSurface
         objectId={objectId}
-        className="h-full w-full drop-shadow-[0_18px_22px_rgba(0,0,0,0.52)]"
-      />
-      <motion.div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-[4.4%/3.15%]"
-        initial={{ boxShadow: "0 0 5px rgba(119,190,198,0.18)" }}
-        animate={{
-          boxShadow: [
-            "0 0 5px rgba(119,190,198,0.18)",
-            "0 0 22px rgba(119,190,198,0.46)",
-            "0 0 8px rgba(216,207,178,0.24)",
-          ],
-        }}
-        transition={{ duration: transitDuration, times: [0, 0.52, 1] }}
+        transitDuration={transitDuration}
       />
     </motion.div>
   );
