@@ -10,7 +10,8 @@ use nom::Parser;
 use super::oracle_effect::conditions::source_saddled_filter;
 use super::oracle_effect::{
     attach_terminal_die_result_branches_before_finalization, condition_text_is_rehomeable,
-    lower_effect_chain_ir, parse_attacked_player_relative_clause, parse_effect_chain_ir,
+    each_target_filter_mut, lower_effect_chain_ir, mass_population_filter_mut,
+    parse_attacked_player_relative_clause, parse_effect_chain_ir, rebind_controller_scope,
     try_parse_reanimator_aura_etb_effect_ir, try_parse_reanimator_aura_grant_etb_effect_ir,
 };
 use super::oracle_ir::ast::parsed_clause;
@@ -299,44 +300,19 @@ fn effect_adds_mana_to_triggering_player(effect_lower: &str) -> bool {
     .is_ok()
 }
 
-fn effect_adds_mana_to_active_player(effect_lower: &str) -> bool {
-    value(
-        (),
-        pair(
-            tag::<_, _, OracleError<'_>>("the active player "),
-            alt((tag("adds "), tag("add "))),
-        ),
-    )
-    .parse(effect_lower.trim_start())
-    .is_ok()
-}
-
 /// CR 805.9: An ability that refers to "the active player" refers to one
 /// specific active player chosen by the ability's controller as the effect is
-/// applied. Lower that instruction through the generic resolution-time player
-/// choice, then bind the mana recipient to the selected player.
-fn bind_active_player_mana_choice(ability: &mut AbilityDefinition, effect_lower: &str) {
-    if !effect_adds_mana_to_active_player(effect_lower) {
+/// applied. Rewrite every active-player controller reference in the resolving
+/// chain to the generic resolution-scoped chosen-player binding, then prepend
+/// the single choice that supplies it. This covers direct player resolvers and
+/// object-population filters rather than special-casing one effect verb.
+fn bind_active_player_choice(ability: &mut AbilityDefinition) {
+    if !rebind_active_player_references(ability) {
         return;
     }
-
-    let Effect::Mana {
-        target: Some(role), ..
-    } = ability.effect.as_mut()
-    else {
-        return;
-    };
-    if role.recipient() != Some(&TargetFilter::ScopedPlayer) {
-        return;
-    }
-
-    let recipient = TargetFilter::Typed(
-        TypedFilter::default().controller(ControllerRef::ChosenPlayer { index: 0 }),
-    );
-    *role = role.clone().with_recipient(recipient);
 
     let kind = ability.kind;
-    let mana = std::mem::replace(
+    let dependent = std::mem::replace(
         ability,
         AbilityDefinition::new(
             kind,
@@ -347,7 +323,58 @@ fn bind_active_player_mana_choice(ability: &mut AbilityDefinition, effect_lower:
             },
         ),
     );
-    ability.sub_ability = Some(Box::new(mana));
+    ability.sub_ability = Some(Box::new(dependent));
+}
+
+/// Replace the CR 805.9 intermediate controller reference throughout one
+/// resolving ability chain. Returns whether any reference was rebound.
+fn rebind_active_player_references(ability: &mut AbilityDefinition) -> bool {
+    let chosen = ControllerRef::ChosenPlayer { index: 0 };
+    let mut rebound = false;
+
+    // CR 603.7: A delayed trigger's payload is a separately resolving ability.
+    // Bind its CR 805.9 choice inside that payload rather than choosing early
+    // while the ability that merely creates the delayed trigger resolves.
+    if let Effect::CreateDelayedTrigger { effect, .. } = ability.effect.as_mut() {
+        bind_active_player_choice(effect);
+    } else {
+        each_target_filter_mut(ability.effect.as_mut(), &mut |filter| {
+            rebound |= rebind_controller_scope(filter, ControllerRef::ActivePlayer, chosen.clone());
+        });
+        if let Some(filter) = mass_population_filter_mut(ability.effect.as_mut()) {
+            rebound |= rebind_controller_scope(filter, ControllerRef::ActivePlayer, chosen.clone());
+        }
+
+        // CR 106.4: Mana carries its recipient inside `ManaTargetRole`, outside
+        // the common TargetFilter slots visited above.
+        if let Effect::Mana {
+            target: Some(role), ..
+        } = ability.effect.as_mut()
+        {
+            if let Some(recipient) = role.recipient() {
+                let mut recipient = recipient.clone();
+                if rebind_controller_scope(
+                    &mut recipient,
+                    ControllerRef::ActivePlayer,
+                    chosen.clone(),
+                ) {
+                    *role = role.clone().with_recipient(recipient);
+                    rebound = true;
+                }
+            }
+        }
+    }
+
+    if let Some(sub) = ability.sub_ability.as_deref_mut() {
+        rebound |= rebind_active_player_references(sub);
+    }
+    if let Some(else_ability) = ability.else_ability.as_deref_mut() {
+        rebound |= rebind_active_player_references(else_ability);
+    }
+    for mode in &mut ability.mode_abilities {
+        rebound |= rebind_active_player_references(mode);
+    }
+    rebound
 }
 
 /// CR 608.2d + CR 603.2: A leading "they may" in a normalized trigger body
@@ -2035,7 +2062,7 @@ pub(crate) fn lower_trigger_ir(ir: &TriggerIr) -> TriggerDefinition {
         def.phase_fanout = PhaseTriggerFanout::Single;
     }
     if let Some(ability) = execute.as_deref_mut() {
-        bind_active_player_mana_choice(ability, &modifiers.effect_lower);
+        bind_active_player_choice(ability);
     }
 
     def.execute = execute;

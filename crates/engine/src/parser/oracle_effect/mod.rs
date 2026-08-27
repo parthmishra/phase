@@ -8925,36 +8925,55 @@ fn rebind_owned_scope(filter: &mut TargetFilter, to: ControllerRef) {
     }
 }
 
-/// Rewrite a moved-object filter's controller/owner scope `from` → `to`, recursing
-/// through `And`/`Or`/`Not` composites. The general building block for controller-
-/// scope rebinding; `rebind_owned_scope` above is the pre-existing
-/// `ScopedPlayer → <target>` specialization kept as-is per the #6505 review.
+/// Rewrite a filter's controller/owner scope `from` → `to`, recursing through
+/// composed filters. Returns whether any reference was rebound. The general
+/// building block for controller-scope rebinding; `rebind_owned_scope` above is
+/// the pre-existing `ScopedPlayer → <target>` specialization kept as-is per
+/// the #6505 review.
 ///
 /// CR 109.4 + CR 115.10a (issue #6505): used to lift a battlefield resolution-pick
 /// leg's default `You` scope (the anaphoric "they control" lowered without a
 /// parse-time relative-scope pin) to `ScopedPlayer`, so the resolution-time
 /// `scoped_player` stamp binds the chooser to the target player, not the caster.
-fn rebind_controller_scope(filter: &mut TargetFilter, from: ControllerRef, to: ControllerRef) {
+/// CR 805.9: also binds an `ActivePlayer` reference to the specific active player
+/// chosen by the ability's controller as the effect is applied.
+pub(crate) fn rebind_controller_scope(
+    filter: &mut TargetFilter,
+    from: ControllerRef,
+    to: ControllerRef,
+) -> bool {
     use crate::types::ability::FilterProp;
     match filter {
         TargetFilter::Typed(tf) => {
+            let mut rebound = false;
             if tf.controller.as_ref() == Some(&from) {
                 tf.controller = Some(to.clone());
+                rebound = true;
             }
             for prop in tf.properties.iter_mut() {
                 if let FilterProp::Owned { controller } = prop {
                     if *controller == from {
                         *controller = to.clone();
+                        rebound = true;
                     }
                 }
             }
+            rebound
         }
         TargetFilter::And { filters } | TargetFilter::Or { filters } => {
+            let mut rebound = false;
             for f in filters.iter_mut() {
-                rebind_controller_scope(f, from.clone(), to.clone());
+                rebound |= rebind_controller_scope(f, from.clone(), to.clone());
             }
+            rebound
         }
-        TargetFilter::Not { filter } => rebind_controller_scope(filter, from, to),
+        TargetFilter::Not { filter } | TargetFilter::TrackedSetFiltered { filter, .. } => {
+            rebind_controller_scope(filter, from, to)
+        }
+        TargetFilter::StackAbility { controller, .. } if controller.as_ref() == Some(&from) => {
+            *controller = Some(to);
+            true
+        }
         TargetFilter::None
         | TargetFilter::Any
         | TargetFilter::Player
@@ -8980,7 +8999,6 @@ fn rebind_controller_scope(filter: &mut TargetFilter, from: ControllerRef, to: C
         | TargetFilter::CostPaidObject
         | TargetFilter::ChosenCard
         | TargetFilter::TrackedSet { .. }
-        | TargetFilter::TrackedSetFiltered { .. }
         | TargetFilter::ExiledBySource
         | TargetFilter::ExiledCardByIndex { .. }
         | TargetFilter::TriggeringSpellController
@@ -9005,7 +9023,7 @@ fn rebind_controller_scope(filter: &mut TargetFilter, from: ControllerRef, to: C
         | TargetFilter::ChosenDamageSource { .. }
         | TargetFilter::Named { .. }
         | TargetFilter::Owner
-        | TargetFilter::AllPlayers => {}
+        | TargetFilter::AllPlayers => false,
     }
 }
 

@@ -16543,6 +16543,46 @@ fn phase_trigger_active_player_reference_stays_single() {
     );
 }
 
+/// CR 805.9: Active-player references in an object population use the same
+/// controller-made resolution choice as direct player effects.
+#[test]
+fn phase_trigger_active_player_population_binds_chosen_player() {
+    let def = parse_trigger_line(
+        "At the beginning of each player's upkeep, destroy all creatures the active player controls.",
+        "Test Enchantment",
+    );
+
+    assert_eq!(def.phase_fanout, PhaseTriggerFanout::Single);
+    let execute = def.execute.as_ref().expect("active-player trigger execute");
+    assert!(matches!(
+        execute.effect.as_ref(),
+        Effect::Choose {
+            choice_type: crate::types::ability::ChoiceType::Player {
+                population: PlayerChoicePopulation::ActivePlayers,
+                ..
+            },
+            ..
+        }
+    ));
+    let dependent = execute
+        .sub_ability
+        .as_ref()
+        .expect("choice must continue into the population effect");
+    let Effect::DestroyAll { target, .. } = dependent.effect.as_ref() else {
+        panic!(
+            "expected DestroyAll continuation, got {:?}",
+            dependent.effect
+        );
+    };
+    let TargetFilter::Typed(typed) = target else {
+        panic!("expected typed creature population, got {target:?}");
+    };
+    assert_eq!(
+        typed.controller,
+        Some(ControllerRef::ChosenPlayer { index: 0 })
+    );
+}
+
 /// CR 805.4d: A plural object pronoun is not a reference to the players whose
 /// shared end step began. Akal Pakal's "one of them" denotes the two looked-at
 /// cards, so the trigger occurs once for the shared phase rather than once per

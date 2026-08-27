@@ -588,6 +588,60 @@ fn two_headed_giant_active_player_reference_is_one_controller_made_choice() {
     assert_shared_turn_active_player_mana_recipient(P1);
 }
 
+fn assert_shared_turn_active_player_population(recipient: PlayerId) {
+    const ORACLE: &str = "At the beginning of each player's upkeep, destroy all creatures the active player controls.";
+
+    let mut scenario = GameScenario::new_with_format(FormatConfig::two_headed_giant(), 4, 43);
+    scenario.at_phase(Phase::Untap);
+    let source = scenario
+        .add_enchantment_from_oracle(P2, "Active Player Population Test", ORACLE)
+        .id();
+    let p0_creature = scenario.add_creature(P0, "P0 Creature", 2, 2).id();
+    let p1_creature = scenario.add_creature(P1, "P1 Creature", 2, 2).id();
+    let mut runner = scenario.build();
+
+    runner.state_mut().active_player = P0;
+    runner.state_mut().priority_player = P0;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P0 };
+    engine::game::trigger_index::reindex_object_triggers(runner.state_mut(), source);
+
+    runner.advance_to_upkeep();
+    for _ in 0..16 {
+        match &runner.state().waiting_for {
+            WaitingFor::NamedChoice { .. } => break,
+            WaitingFor::Priority { .. } => {
+                runner
+                    .act(GameAction::PassPriority)
+                    .expect("priority passing must reach the active-player choice");
+            }
+            other => panic!("unexpected window before active-player choice: {other:?}"),
+        }
+    }
+
+    runner
+        .act(GameAction::ChooseOption {
+            choice: recipient.0.to_string(),
+        })
+        .expect("either active teammate must be a legal population binding");
+
+    let (destroyed, spared) = if recipient == P0 {
+        (p0_creature, p1_creature)
+    } else {
+        (p1_creature, p0_creature)
+    };
+    assert_eq!(runner.state().objects[&destroyed].zone, Zone::Graveyard);
+    assert_eq!(runner.state().objects[&spared].zone, Zone::Battlefield);
+}
+
+/// CR 805.9: The chosen active teammate also binds controller filters used to
+/// enumerate an object population; the nominal active-player representative is
+/// not read live by the resolver.
+#[test]
+fn two_headed_giant_active_player_choice_binds_object_population() {
+    assert_shared_turn_active_player_population(P0);
+    assert_shared_turn_active_player_population(P1);
+}
+
 /// CR 603.4 + CR 805.4d: A failing condition for the shared turn's team
 /// representative must not suppress a teammate's independently valid firing.
 #[test]
