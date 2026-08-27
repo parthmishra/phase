@@ -1,12 +1,9 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useCanActForWaitingState, usePerspectivePlayerId } from "../../hooks/usePlayerId.ts";
 import { usePlayerDesignations } from "../../hooks/usePlayerDesignations.ts";
 import { useSeatColor } from "../../hooks/useSeatColor.ts";
-import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
-import { useIsMobile } from "../../hooks/useIsMobile.ts";
-import { useMediaQuery } from "../../hooks/useMediaQuery.ts";
 import { useTurnStatus } from "../../hooks/useTurnStatus.ts";
 import { isAuthorityRemote, useGameStore } from "../../stores/gameStore.ts";
 import { getPlayerDisplayName, useMultiplayerStore } from "../../stores/multiplayerStore.ts";
@@ -17,20 +14,15 @@ import { UndoButton } from "../board/UndoButton.tsx";
 import { FullControlToggle } from "../controls/FullControlToggle.tsx";
 import { LifeTotal } from "../controls/LifeTotal.tsx";
 import { ManaPoolSummary } from "./ManaPoolSummary.tsx";
-import { PhaseIndicatorLeft, PhaseIndicatorRight } from "../controls/PhaseStopBar.tsx";
 import { CityBlessingBadge, ConditionBadge, CounterBadge, DungeonBadge, EnduringStoryBadge, InitiativeBadge, MonarchBadge, PendingSpellBadge, RingBenefitsBadge, StatusBadge, UnboundedBadge } from "./HudBadges.tsx";
 import { EnchantmentsBadge } from "./EnchantmentsBadge.tsx";
 import { HudPlate } from "./HudPlate.tsx";
 import { NextUpBadge } from "./NextUpBadge.tsx";
 import { PriorityMarker } from "./TurnStatusLine.tsx";
 
-export const TOUCH_TABLET_PLAYER_HUD_QUERY =
-  "(pointer: coarse) and (max-width: 1400px)";
-
 interface PlayerHudProps {
-  /** Center the life nameplate, rather than the full variable-width HUD, on
-   *  the parent anchor. ArenaGameBoard uses this to pin the nameplate to the
-   *  exact center while phase controls and badges grow around it. */
+  /** Hide the redundant local-player label when ArenaGameBoard pins the
+   *  portrait-filled life pill to the exact bottom-center edge. */
   alignNameplateToAnchor?: boolean;
 }
 
@@ -58,48 +50,7 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
   const canUndo = useGameStore(
     (s) => s.stateHistory.length > 0 && !isAuthorityRemote(s.gameMode),
   );
-  const isMobile = useIsMobile();
-  const isTouchTablet = useMediaQuery(TOUCH_TABLET_PLAYER_HUD_QUERY);
-  const usesEdgePill = isMobile || isTouchTablet;
-  const isCompactHeight = useIsCompactHeight();
-  const compact = usesEdgePill || isCompactHeight;
   const { waitingSeatId, reason } = useTurnStatus();
-  const hudRef = useRef<HTMLDivElement>(null);
-
-  // The Arena hand anchor is centered in screen space, but this HUD's width is
-  // intentionally asymmetric (phase controls on the left; mana and status
-  // badges on the right). Measure the rendered nameplate and compensate by
-  // exactly that local offset, so the plate itself — not the numeral or the
-  // surrounding controls — stays centered. Compact edge pills already center
-  // their plate and contain fixed corner controls, so they receive no shift.
-  useLayoutEffect(() => {
-    const hud = hudRef.current;
-    if (!alignNameplateToAnchor || usesEdgePill || !hud) return;
-
-    const nameplate = hud.querySelector<HTMLElement>("[data-hud-plate]");
-    if (!nameplate) return;
-
-    const alignNameplate = () => {
-      const hudRect = hud.getBoundingClientRect();
-      const nameplateRect = nameplate.getBoundingClientRect();
-      const shift = hudRect.left + hudRect.width / 2
-        - (nameplateRect.left + nameplateRect.width / 2);
-      hud.style.setProperty("--arena-nameplate-anchor-shift", `${shift}px`);
-    };
-
-    alignNameplate();
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(alignNameplate);
-    observer?.observe(hud);
-    observer?.observe(nameplate);
-    window.addEventListener("resize", alignNameplate);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", alignNameplate);
-    };
-  }, [alignNameplateToAnchor, usesEdgePill]);
 
   const canActForWaitingState = useCanActForWaitingState();
   // CR 115.1: the engine's legal set can name this seat. `getWaitingForPlayerChoiceIds`
@@ -124,24 +75,69 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
   const priorityTitle = waitingSeatId === playerId
     ? t(reason?.key ?? "status.reason.thinking", reason?.params)
     : undefined;
+  const cornerBadges = (
+    <div className="flex items-center gap-1">
+      <NextUpBadge playerId={playerId} compact />
+      <PriorityMarker
+        active={waitingSeatId === playerId}
+        reasonKey={reason?.key}
+        seatColor={seatColor}
+        title={priorityTitle}
+      />
+    </div>
+  );
+  const statusBadges = (
+    <>
+      <ManaPoolSummary playerId={playerId} size="sm" />
+      <EnchantmentsBadge playerId={playerId} />
+      {showMatchScore && matchScore ? <ScoreBadge score={matchScore} player={0} /> : null}
+      {designations.isMonarch ? <MonarchBadge /> : null}
+      {designations.hasInitiative ? <InitiativeBadge /> : null}
+      {designations.hasCityBlessing ? <CityBlessingBadge /> : null}
+      {designations.hasEnduringStory ? <EnduringStoryBadge /> : null}
+      {designations.dungeonRoom ? <DungeonBadge room={designations.dungeonRoom} /> : null}
+      {isPhasedOut ? <StatusBadge label={t("player.phasedOut")} tone="neutral" /> : null}
+      {designations.ringLevel > 0 ? (
+        <RingBenefitsBadge
+          level={designations.ringLevel}
+          ringBearerName={designations.ringBearerName}
+        />
+      ) : null}
+      {designations.energy > 0 ? <CounterBadge kind="energy" value={designations.energy} /> : null}
+      {poisonCounters > 0 ? <CounterBadge kind="poison" value={poisonCounters} /> : null}
+      {radCounters > 0 ? <CounterBadge kind="rad" value={radCounters} /> : null}
+      {experienceCounters > 0 ? <CounterBadge kind="experience" value={experienceCounters} /> : null}
+      {speed > 0 ? <CounterBadge kind="speed" value={speed} /> : null}
+      {designations.pendingSpellModifiers.length > 0
+      || designations.pendingSpellReductions.length > 0 ? (
+        <PendingSpellBadge
+          modifiers={designations.pendingSpellModifiers}
+          reductions={designations.pendingSpellReductions}
+        />
+      ) : null}
+      {designations.statusConditions.map((condition, i) => (
+        <ConditionBadge
+          key={`${condition.kind.type}-${condition.source ?? "x"}-${i}`}
+          condition={condition}
+        />
+      ))}
+      {designations.unboundedFamilies.map((u) => (
+        <UnboundedBadge key={u.family} family={u.family} state={u.state} />
+      ))}
+    </>
+  );
 
   return (
     <div
-      ref={hudRef}
       data-player-hud={playerId}
       data-local-player-hud=""
-      data-nameplate-anchor-aligned={alignNameplateToAnchor && !usesEdgePill ? "true" : undefined}
-      data-edge-pill-layout={usesEdgePill ? "true" : undefined}
-      data-player-life-shape={usesEdgePill ? "pill" : undefined}
+      data-edge-pill-layout="true"
+      data-player-life-shape="pill"
       data-phased-out={isPhasedOut ? "true" : undefined}
-      className={`relative z-20 flex shrink-0 flex-row flex-nowrap items-center justify-center ${usesEdgePill ? "gap-0 p-0" : compact ? "gap-1 px-0.5 py-0.5" : "gap-1.5 px-1 py-1 lg:gap-2 lg:px-2"} ${
+      className={`relative z-20 flex shrink-0 flex-row flex-nowrap items-center justify-center gap-0 p-0 ${
         isPhasedOut ? "opacity-40 grayscale" : ""
       }`}
-      style={alignNameplateToAnchor && !usesEdgePill
-        ? { transform: "translateX(var(--arena-nameplate-anchor-shift, 0px))" }
-        : undefined}
     >
-      {!usesEdgePill ? <PhaseIndicatorLeft /> : null}
       <HudPlate
         label={getPlayerDisplayName(playerId, playerId)}
         hideLabel={alignNameplateToAnchor}
@@ -151,104 +147,35 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
         underAttack={isUnderAttack}
         avatarUrl={avatarUrl}
         playerId={playerId}
-        density={compact ? "compact" : "default"}
+        density="compact"
         onClick={isValidTarget ? handleTargetClick : undefined}
-        cornerBadge={usesEdgePill ? undefined : (
-          <div className="flex items-center gap-1">
-            <NextUpBadge playerId={playerId} compact={compact} />
-            <PriorityMarker
-              active={waitingSeatId === playerId}
-              reasonKey={reason?.key}
-              seatColor={seatColor}
-              title={priorityTitle}
-            />
-          </div>
-        )}
-        trailing={usesEdgePill ? undefined : (
-          <>
-            <EnchantmentsBadge playerId={playerId} />
-            {showMatchScore && matchScore ? <ScoreBadge score={matchScore} player={0} /> : null}
-            {designations.isMonarch ? <MonarchBadge /> : null}
-            {designations.hasInitiative ? <InitiativeBadge /> : null}
-            {designations.hasCityBlessing ? <CityBlessingBadge /> : null}
-            {designations.hasEnduringStory ? <EnduringStoryBadge /> : null}
-            {designations.dungeonRoom ? (
-              <DungeonBadge room={designations.dungeonRoom} />
-            ) : null}
-            {isPhasedOut ? <StatusBadge label={t("player.phasedOut")} tone="neutral" /> : null}
-            {designations.ringLevel > 0 ? (
-              <RingBenefitsBadge
-                level={designations.ringLevel}
-                ringBearerName={designations.ringBearerName}
-              />
-            ) : null}
-            {designations.energy > 0 ? <CounterBadge kind="energy" value={designations.energy} /> : null}
-            {poisonCounters > 0 ? <CounterBadge kind="poison" value={poisonCounters} /> : null}
-            {radCounters > 0 ? <CounterBadge kind="rad" value={radCounters} /> : null}
-            {experienceCounters > 0 ? <CounterBadge kind="experience" value={experienceCounters} /> : null}
-            {speed > 0 ? <CounterBadge kind="speed" value={speed} /> : null}
-            {designations.pendingSpellModifiers.length > 0
-            || designations.pendingSpellReductions.length > 0 ? (
-              <PendingSpellBadge
-                modifiers={designations.pendingSpellModifiers}
-                reductions={designations.pendingSpellReductions}
-              />
-            ) : null}
-            {designations.statusConditions.map((condition, i) => (
-              <ConditionBadge
-                key={`${condition.kind.type}-${condition.source ?? "x"}-${i}`}
-                condition={condition}
-              />
-            ))}
-            {designations.unboundedFamilies.map(
-              (u) => (
-                <UnboundedBadge key={u.family} family={u.family} state={u.state} />
-              ),
-            )}
-          </>
-        )}
       >
-        <div className={`flex min-w-0 items-center ${compact ? "gap-1" : "gap-2"}`}>
-          <LifeTotal
-            playerId={playerId}
-            size={usesEdgePill ? "lg" : compact ? "sm" : "lg"}
-            hideLabel
-          />
-          {!usesEdgePill ? (
-            <ManaPoolSummary playerId={playerId} size={compact ? "sm" : "default"} />
-          ) : null}
+        <div className="flex min-w-0 items-center gap-1">
+          <LifeTotal playerId={playerId} size="lg" hideLabel />
         </div>
       </HudPlate>
-      {!usesEdgePill ? <PhaseIndicatorRight /> : null}
-      {usesEdgePill ? (
-        <>
-          <div
-            className="pointer-events-auto fixed z-20 flex flex-col gap-2"
-            data-player-hud-corner-controls=""
-          >
-            <FullControlToggle iconOnly />
-            <ManualManaToggle iconOnly />
-          </div>
-          {canUndo ? (
-            <div
-              className="pointer-events-auto fixed z-40"
-              data-player-hud-undo-control=""
-            >
-              <UndoButton iconOnly />
-            </div>
-          ) : null}
-        </>
-      ) : (
-        /* Manual mana + undo ride the HUD instead of overlaying the land
-           column, where they collide with land stacks and zone piles. */
+      <div
+        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center justify-center gap-1 [&>*]:pointer-events-auto"
+        data-player-hud-edge-statuses=""
+      >
+        {cornerBadges}
+        {statusBadges}
+      </div>
+      <div
+        className="pointer-events-auto fixed z-20 flex flex-col gap-2"
+        data-player-hud-corner-controls=""
+      >
+        <FullControlToggle iconOnly />
+        <ManualManaToggle iconOnly />
+      </div>
+      {canUndo ? (
         <div
-          className="pointer-events-none absolute left-full top-1/2 z-20 ml-1 flex -translate-y-1/2 flex-col items-start gap-1 [&>*]:pointer-events-auto"
-          data-player-hud-utility-layout="column"
+          className="pointer-events-auto fixed z-40"
+          data-player-hud-undo-control=""
         >
-          <ManualManaToggle />
-          <UndoButton />
+          <UndoButton iconOnly />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

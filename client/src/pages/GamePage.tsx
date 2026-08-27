@@ -1485,7 +1485,8 @@ function GamePageContent({
         </div>
       </div>
 
-      {/* Bottom UI: mobile splits hand/full-control (left) from phases + pass (right). */}
+      {/* Unified Arena bottom UI: centered life pill and hand, independent
+          corner modes, and a compact phase/pass cluster at the lower right. */}
       <DraggableWidget
         target={{ kind: "widget", key: "actionRail" }}
         flexZone="actionRail"

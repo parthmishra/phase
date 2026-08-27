@@ -16,7 +16,7 @@ import {
   returnAsAuraTargetWaitingForFactory,
   targetSelectionWaitingForFactory,
 } from "../../../test/factories/gameStateFactory.ts";
-import { PlayerHud, TOUCH_TABLET_PLAYER_HUD_QUERY } from "../PlayerHud.tsx";
+import { PlayerHud } from "../PlayerHud.tsx";
 
 describe("PlayerHud", () => {
   beforeEach(() => {
@@ -43,7 +43,7 @@ describe("PlayerHud", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders local poison and speed as compact accessible badges", () => {
+  it("renders local poison and speed outside the unified edge life pill", () => {
     const gameState = buildGameState();
     gameState.players[0].poison_counters = 8;
     gameState.players[0].speed = 3;
@@ -54,13 +54,12 @@ describe("PlayerHud", () => {
 
     render(<PlayerHud />);
 
-    // Badges now use the custom GameplayTooltip (text rendered in the DOM)
-    // rather than a native `title`; the aria-label stays on the badge element.
-    expect(screen.getByLabelText("8 poison counters")).toBeInTheDocument();
-    expect(screen.getByText("Poison counters: 8")).toBeInTheDocument();
-    expect(screen.getByLabelText("Speed 3")).toBeInTheDocument();
-    expect(screen.getByText("Speed: 3")).toBeInTheDocument();
-    expect(screen.queryByText("Speed")).toBeNull();
+    const plate = document.querySelector('[data-hud-plate]');
+    const statuses = document.querySelector('[data-player-hud-edge-statuses]');
+    expect(statuses).toContainElement(screen.getByLabelText("8 poison counters"));
+    expect(statuses).toContainElement(screen.getByLabelText("Speed 3"));
+    expect(plate).not.toContainElement(screen.getByLabelText("8 poison counters"));
+    expect(plate).not.toContainElement(screen.getByLabelText("Speed 3"));
   });
 
   it("hides local zero poison counters", () => {
@@ -69,7 +68,7 @@ describe("PlayerHud", () => {
     expect(screen.queryByText(/Poison counters:/)).toBeNull();
   });
 
-  it("renders local Next Up badge only for the next actual turn", () => {
+  it("renders temporary turn badges outside the unified edge life pill", () => {
     act(() => {
       useGameStore.setState({
         gameState: buildGameState({
@@ -85,7 +84,9 @@ describe("PlayerHud", () => {
 
     render(<PlayerHud />);
 
-    expect(screen.getByTitle("This player's turn is next.")).toHaveTextContent("Next Up");
+    const nextUp = screen.getByTitle("This player's turn is next.");
+    expect(document.querySelector('[data-player-hud-edge-statuses]')).toContainElement(nextUp);
+    expect(document.querySelector('[data-hud-plate]')).not.toContainElement(nextUp);
   });
 
   // ── The player-target affordance: one authority + one actor gate ──────────
@@ -274,41 +275,18 @@ describe("PlayerHud", () => {
     });
   });
 
-  it("centers the rendered life nameplate on the Arena hand anchor", () => {
-    const rect = (left: number, width: number): DOMRect => ({
-      x: left,
-      y: 0,
-      left,
-      right: left + width,
-      top: 0,
-      bottom: 40,
-      width,
-      height: 40,
-      toJSON: () => ({}),
-    });
-    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
-      .mockImplementation(function (this: HTMLElement) {
-        if (this.hasAttribute("data-local-player-hud")) return rect(0, 300);
-        if (this.hasAttribute("data-hud-plate")) return rect(170, 40);
-        return rect(0, 0);
-      });
-
+  it("centers the rendered life pill without a desktop-only offset", () => {
     const { container } = render(<PlayerHud alignNameplateToAnchor />);
     const hud = container.querySelector<HTMLElement>("[data-local-player-hud]");
 
-    expect(hud).toHaveAttribute("data-nameplate-anchor-aligned", "true");
-    expect(hud?.style.getPropertyValue("--arena-nameplate-anchor-shift")).toBe("-40px");
-    expect(hud).toHaveStyle({ transform: "translateX(-40px)" });
-
-    rectSpy.mockRestore();
+    expect(hud).toHaveAttribute("data-edge-pill-layout", "true");
+    expect(hud).not.toHaveAttribute("data-nameplate-anchor-aligned");
+    expect(hud?.style.transform).toBe("");
   });
 
-  it("uses a portrait-filled life pill with independent glass controls on mobile", () => {
-    const originalWidth = window.innerWidth;
+  it("uses a portrait-filled life pill with independent glass controls at every resolution", () => {
     act(() => {
       useGameStore.setState({ gameMode: "ai", stateHistory: [buildGameState()] });
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
-      window.dispatchEvent(new Event("resize"));
     });
 
     const { container } = render(<PlayerHud alignNameplateToAnchor />);
@@ -350,28 +328,11 @@ describe("PlayerHud", () => {
     expect(undo.querySelector("svg")).toHaveClass("h-5", "w-5");
     expect(undoControl).toHaveClass("fixed");
 
-    act(() => {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
-      window.dispatchEvent(new Event("resize"));
-    });
   });
 
-  it("uses the same edge pill on a coarse-pointer 13-inch iPad Pro", () => {
-    const originalWidth = window.innerWidth;
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === TOUCH_TABLET_PLAYER_HUD_QUERY,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }));
+  it("uses the same edge pill for the desktop HUD", () => {
     act(() => {
       useGameStore.setState({ gameMode: "ai", stateHistory: [buildGameState()] });
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1376 });
-      window.dispatchEvent(new Event("resize"));
     });
 
     const { container } = render(<PlayerHud />);
@@ -394,9 +355,5 @@ describe("PlayerHud", () => {
     expect(container.querySelector('[data-hud-plate-corner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-hud-plate-trailing]')).not.toBeInTheDocument();
 
-    act(() => {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
-      window.dispatchEvent(new Event("resize"));
-    });
   });
 });

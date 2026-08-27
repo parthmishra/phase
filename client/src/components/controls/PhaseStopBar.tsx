@@ -237,9 +237,9 @@ function PhaseDot({ phase }: { phase: Phase }) {
   );
 }
 
-/** Compact major-phase stop rail for touch layouts. GamePage docks it with the
- *  transient action buttons so the life orb can remain independently centered
- *  above the hand fan. */
+/** Compact major-phase stop rail for the shared Arena HUD. GamePage docks it
+ *  with the transient action buttons so the life pill can remain independently
+ *  centered at the bottom edge. */
 export function MajorPhaseStopRail() {
   return (
     <div

@@ -866,11 +866,11 @@ select.select-dark option {
   display: none;
 }
 
-/* Pin the passive local Arena nameplate to the physical bottom-center edge.
-   This intentionally ignores the iOS safe area: the plate is presentation,
-   while the hand cards remain lifted into the touch-safe area. Only actual
-   HUD controls and a nameplate promoted to a legal player-target button accept
-   pointer input. */
+/* Pin the passive local Arena nameplate to the physical bottom-center edge at
+   every resolution. This intentionally ignores the safe area: the plate is
+   presentation, while the hand cards remain lifted into the interaction-safe
+   area. Only actual HUD controls and a nameplate promoted to a legal player-
+   target button accept pointer input. */
 [data-arena-screen-space-ui="player-hud"] [data-local-player-hud] {
   align-items: flex-end;
   padding-bottom: 0;
@@ -884,8 +884,10 @@ select.select-dark option {
   pointer-events: auto;
 }
 
-@media (width < 64rem),
-  (pointer: coarse) and (max-width: 87.5rem) {
+/* The battlefield uses one compact Arena HUD composition on phone, tablet,
+   and desktop. Pointer capability still controls hover/touch behavior, not the
+   placement or silhouette of static HUD elements. */
+@media all {
   [data-game-menu-anchor] {
     --game-menu-inline: var(--game-control-lower-inline);
   }
@@ -1075,11 +1077,10 @@ select.select-dark option {
   }
 }
 
-/* Dock phase stops directly below one compact row of advance/pass actions.
-   The cluster grows inward from the lower-right edge and ends before the
-   centered hand fan, including on a 13-inch iPad in landscape. */
-@media (width < 64rem) and (orientation: landscape),
-  (pointer: coarse) and (min-width: 64rem) and (max-width: 87.5rem) {
+/* Dock phase stops directly below one compact row of advance/pass actions at
+   every landscape resolution. The cluster grows inward from the lower-right
+   edge and ends before the centered hand fan. */
+@media (orientation: landscape) {
   [data-touch-action-cluster] {
     width: clamp(10.25rem, 18dvw, 11.5rem);
     max-width: calc(100vw - 0.5rem);
