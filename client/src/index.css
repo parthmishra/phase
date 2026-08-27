@@ -1228,6 +1228,16 @@ select.select-dark option {
    the system gesture region. The lower card frames may still trail offscreen,
    preserving the Arena silhouette while leaving more of each touch target
    exposed. */
+@media (width < 64rem) {
+  /* The library and command zone occupy the same lower-left lane in world and
+     screen space. Keep the full commander readable, but dock it immediately
+     above that pile so neither card covers the other. Transforming this child
+     preserves the hand row's horizontal reservation and centered fan. */
+  [data-arena-hand-command-zone="player"] {
+    transform: translateY(calc(-1 * (var(--hand-card-h) + 0.5rem)));
+  }
+}
+
 @media (width < 64rem) and (orientation: landscape) {
   [data-flex-zone="playerHandRow"] {
     transform: translateY(
