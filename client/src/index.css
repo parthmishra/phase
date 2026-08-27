@@ -1229,19 +1229,29 @@ select.select-dark option {
    preserving the Arena silhouette while leaving more of each touch target
    exposed. */
 @media (width < 64rem) {
-  /* The library and command zone occupy the same lower-left lane in world and
-     screen space. Keep the full commander readable, but dock it immediately
-     above that pile so neither card covers the other. Transforming this child
-     preserves the hand row's horizontal reservation and centered fan. */
+  /* Let the command card trail naturally through the bottom edge: its upper
+     art half remains readable beneath the library while the rules half stays
+     outside the viewport. This is a positional cut, not an overflow crop, so
+     the same complete card still owns inspection and drag interactions. */
   [data-arena-hand-command-zone="player"] {
-    transform: translateY(calc(-1 * (var(--hand-card-h) + 0.5rem)));
+    transform: translateY(calc(var(--hand-card-h) * 0.42));
   }
 }
 
 @media (width < 64rem) and (orientation: landscape) {
   [data-flex-zone="playerHandRow"] {
-    transform: translateY(
+    transform: translate(
+      4.25vw,
       calc(-1 * max(env(safe-area-inset-bottom), 1.25rem))
+    );
+  }
+}
+
+@media (width < 64rem) and (orientation: portrait) {
+  [data-arena-hand-command-zone="player"] {
+    transform: translate(
+      calc(var(--hand-card-w) * 0.42),
+      calc(var(--hand-card-h) * 0.42)
     );
   }
 }
