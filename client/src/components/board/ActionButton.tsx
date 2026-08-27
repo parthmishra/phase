@@ -299,6 +299,7 @@ export function ActionButton() {
         className={panelClassName}
         data-action-button-panel
         data-compact-pass-layout={showsPassAction ? "true" : undefined}
+        data-stack-action-layout={mode === "priority-stack" ? "true" : undefined}
       >
         {mode === "combat-attackers" && !isEndingTurn && (
           <>

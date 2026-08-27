@@ -23,10 +23,18 @@ interface DisplayStackEntry {
   groupCount: number;
 }
 
-const STAGGER_Y = 20;
-const STAGGER_X = 8;
+// Arena-style stack pile: cards mostly overlap, with only enough offset and
+// alternating rotation to preserve the physical-card silhouette. This avoids
+// a deep stack stair-stepping down into the lower-right action controls.
+const PILE_OFFSET_Y = 4;
+const PILE_OFFSET_X = 3;
+const PILE_ROTATION_DEGREES = 2.25;
 const MAX_VISIBLE_STACK_DEPTH = 4;
 const VERTICAL_VIEWPORT_INSET = 12;
+// Keep a compact lower-right lane clear for the priority controls on short
+// landscape screens. A deep right-docked stack previously extended over the
+// Resolve buttons on devices around 915x412 (for example, OnePlus 8T).
+const COMPACT_RIGHT_ACTION_CLEARANCE = 108;
 
 function getViewportSize() {
   if (typeof window === "undefined") {
@@ -139,24 +147,26 @@ export function StackDisplay({
     width: Math.max(118, Math.round(rawCardSize.width * responsiveScale)),
     height: Math.max(165, Math.round(rawCardSize.height * responsiveScale)),
   };
-  const staggerX = viewport.width < 768 ? 5 : STAGGER_X;
-  const staggerY = viewport.width < 768 ? 15 : STAGGER_Y;
   const visibleDepth = Math.min(
     Math.max(displayStack.length - 1, 0),
     MAX_VISIBLE_STACK_DEPTH,
   );
-  const pileWidth = cardSize.width + staggerX * visibleDepth;
-  const pileHeight = cardSize.height + staggerY * visibleDepth;
+  const pileWidth = cardSize.width + PILE_OFFSET_X * visibleDepth;
+  const pileHeight = cardSize.height + PILE_OFFSET_Y * visibleDepth;
   const edgeInset =
     viewport.width < 640 ? 14 :
       viewport.width < 1024 ? 28 :
         viewport.width < 1440 ? 44 : 64;
   const centerY = viewport.height * (viewport.width < 768 ? 0.39 : 0.44);
+  const bottomInset =
+    !dockedLeft && viewport.width < 1024 && viewport.height < 500
+      ? COMPACT_RIGHT_ACTION_CLEARANCE
+      : VERTICAL_VIEWPORT_INSET;
   const pileTop = Math.min(
     Math.max(centerY - cardSize.height / 2, VERTICAL_VIEWPORT_INSET),
     Math.max(
       VERTICAL_VIEWPORT_INSET,
-      viewport.height - pileHeight - VERTICAL_VIEWPORT_INSET,
+      viewport.height - pileHeight - bottomInset,
     ),
   );
   const pileAnchorStyle = dockedLeft
@@ -174,10 +184,16 @@ export function StackDisplay({
       displayStack.length <= MAX_VISIBLE_STACK_DEPTH + 1
         ? index
         : index * MAX_VISIBLE_STACK_DEPTH / (displayStack.length - 1);
+    const isTop = index === displayStack.length - 1;
+    const rotation = isTop
+      ? 0
+      : (index % 2 === 0 ? -1 : 1) * PILE_ROTATION_DEGREES;
     return {
-    position: "absolute" as const,
-    top: visualIndex * staggerY,
-    left: visualIndex * staggerX,
+      position: "absolute" as const,
+      top: visualIndex * PILE_OFFSET_Y,
+      left: visualIndex * PILE_OFFSET_X,
+      rotate: `${rotation}deg`,
+      transformOrigin: "center center",
       zIndex: entry.id === hoveredStackEntryId ? displayStack.length + 1 : index + 1,
     };
   });

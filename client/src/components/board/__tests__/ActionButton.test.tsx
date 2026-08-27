@@ -114,9 +114,13 @@ describe("ActionButton", () => {
     });
     useMultiplayerStore.setState({ activePlayerId: 1, actionPending: false });
 
-    render(<ActionButton />);
+    const { container } = render(<ActionButton />);
 
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+    expect(container.querySelector("[data-action-button-panel]")).toHaveAttribute(
+      "data-stack-action-layout",
+      "true",
+    );
   });
 
   it("renders Pass as an accessible fast-forward icon in the compact action layout", () => {

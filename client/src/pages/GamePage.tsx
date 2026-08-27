@@ -1492,7 +1492,7 @@ function GamePageContent({
         flexZone="actionRail"
         scaleKey="actionRail"
         resizeCorner="bl"
-        className="arena-command-shelf fixed z-30 flex flex-col items-end gap-1.5 p-0 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
+        className="arena-command-shelf fixed z-[45] flex flex-col items-end gap-1.5 p-0 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
         style={{
           bottom:
             "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + 0.4rem)",
