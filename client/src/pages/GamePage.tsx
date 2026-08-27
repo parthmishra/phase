@@ -1471,7 +1471,7 @@ function GamePageContent({
             <div className="pointer-events-auto flex min-w-0 items-end justify-end pb-1">
               <ArenaHandCommandZone playerId={playerId} seat="player" />
             </div>
-            <div className="pointer-events-auto min-w-0">
+            <div className="pointer-events-none min-w-0">
               {/* Castable graveyard/exile cards remain colored wings inside the
                   main hand fan; the command zone has its own adjacent dock. */}
               <PlayerHand />

@@ -180,16 +180,22 @@ export function ArenaCardDetailOverlay({
                   />
                 </div>
               ) : (
-                <ArenaCardFace
-                  objectId={object.id}
-                  mode="inspection"
-                  className="!h-auto !max-h-[calc(100dvh-6rem)] !w-auto shrink-0"
+                <div
+                  className="shrink-0"
                   style={{
-                    aspectRatio: "5 / 7",
                     width:
                       "min(72vw, calc((100dvh - 6rem) * 5 / 7), 430px)",
+                    height:
+                      "min(100.8vw, calc(100dvh - 6rem), 602px)",
                   }}
-                />
+                  data-arena-live-card-detail-frame
+                >
+                  <ArenaCardFace
+                    objectId={object.id}
+                    mode="inspection"
+                    className="!h-full !w-full"
+                  />
+                </div>
               )}
 
               {activeView !== "parse" && visibleKeywords.length > 0 ? (

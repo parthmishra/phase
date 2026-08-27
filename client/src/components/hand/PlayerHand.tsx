@@ -673,7 +673,7 @@ export function PlayerHand() {
     <>
       <div
       ref={handContainerRef}
-      className={`relative flex items-end justify-center overflow-visible px-4 py-1 ${
+      className={`pointer-events-none relative flex items-end justify-center overflow-visible px-4 py-1 ${
         isCompactHeight ? "min-h-[40px]" : "min-h-[calc(var(--card-h)*0.7)]"
       } ${isMobile ? "touch-none" : ""}`}
       style={{
@@ -699,7 +699,7 @@ export function PlayerHand() {
           the touch area. The wrapper stops click propagation so opening it
           never toggles the hand-lift. */}
       {!isMobile && handCardIds.length > 0 && (
-        <div className="absolute right-2 top-0 z-50" onClick={(e) => e.stopPropagation()}>
+        <div className="pointer-events-auto absolute right-2 top-0 z-50" onClick={(e) => e.stopPropagation()}>
           <PopoverMenu ariaLabel={t("hand.organizeLabel")} menuWidthPx={220}>
             {() => (
               <div className="flex flex-col gap-2 px-3 py-2">
@@ -1184,7 +1184,7 @@ const HandCard = memo(function HandCard({
         }}
         onMouseEnter={() => onMouseEnter(objectId)}
         onMouseLeave={onMouseLeave}
-        className="relative cursor-pointer"
+        className="pointer-events-auto relative cursor-pointer"
         {...(enableHover ? longPressHandlers : {})}
       >
         <motion.div
@@ -1356,7 +1356,7 @@ const ZoneFanCard = memo(function ZoneFanCard({
           e.stopPropagation();
           onDoubleClick(objectId);
         }}
-        className="relative cursor-pointer"
+        className="pointer-events-auto relative cursor-pointer"
         {...longPressHandlers}
       >
         <div

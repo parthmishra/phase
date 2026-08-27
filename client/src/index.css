@@ -1139,14 +1139,10 @@ select.select-dark option {
   }
 
   [data-flex-zone="playerHandRow"] {
-    /* Center the combined command-crop + hand silhouette, not only the hand
-       column. Half a normal hand-card width leaves a balanced outer gutter on
-       narrow portrait phones while the tighter accordion preserves the right
-       action lane. */
-    transform: translate(
-      calc(var(--hand-card-w) * 0.5),
-      calc(-1 * var(--game-mobile-hand-lift))
-    );
+    /* The middle grid column is independently centered over the player HUD.
+       Only lift the row here: any horizontal translation also moves the hand
+       away from the pinned nameplate. */
+    transform: translateY(calc(-1 * var(--game-mobile-hand-lift)));
   }
 
   [data-flex-zone="playerPiles"] {
@@ -1240,8 +1236,7 @@ select.select-dark option {
 
 @media (width < 64rem) and (orientation: landscape) {
   [data-flex-zone="playerHandRow"] {
-    transform: translate(
-      4.25vw,
+    transform: translateY(
       calc(-1 * max(env(safe-area-inset-bottom), 1.25rem))
     );
   }

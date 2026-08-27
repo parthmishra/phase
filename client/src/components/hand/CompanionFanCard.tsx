@@ -104,7 +104,7 @@ const CompanionFanCard = memo(function CompanionFanCard({
           e.stopPropagation();
           if (canActivate) activate();
         }}
-        className="relative cursor-pointer"
+        className="pointer-events-auto relative cursor-pointer"
       >
         <div
           className={`relative overflow-hidden rounded-lg border ${theme.cardBorder}`}

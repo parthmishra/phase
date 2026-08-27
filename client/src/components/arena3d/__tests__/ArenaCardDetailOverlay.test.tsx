@@ -26,8 +26,14 @@ vi.mock("../../card/CardImage.tsx", () => ({
 }));
 
 vi.mock("../ArenaCardFace.tsx", () => ({
-  ArenaCardFace: ({ objectId }: { objectId: number }) => (
-    <article aria-label={`card-${objectId}`} />
+  ArenaCardFace: ({
+    objectId,
+    className,
+  }: {
+    objectId: number;
+    className?: string;
+  }) => (
+    <article aria-label={`card-${objectId}`} className={className} />
   ),
 }));
 
@@ -55,7 +61,13 @@ describe("ArenaCardDetailOverlay", () => {
         name: "Card details: Lightstall Inquisitor",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("article", { name: "card-17" })).toBeInTheDocument();
+    const liveCard = screen.getByRole("article", { name: "card-17" });
+    const liveFrame = liveCard.closest("[data-arena-live-card-detail-frame]");
+    expect(liveFrame).toHaveStyle({
+      width: "min(72vw, calc((100dvh - 6rem) * 5 / 7), 430px)",
+      height: "min(100.8vw, calc(100dvh - 6rem), 602px)",
+    });
+    expect(liveCard).toHaveClass("!h-full", "!w-full");
     expect(screen.getByText("Vigilance")).toBeInTheDocument();
     expect(
       screen.getByText("Attacking doesn't cause this creature to tap."),
