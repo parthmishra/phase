@@ -240,18 +240,16 @@ const DrawerCard = memo(function DrawerCard({
   onPlay,
   onDebugOpen,
 }: DrawerCardProps) {
-  const inspectObject = useUiStore((s) => s.inspectObject);
-  const setPreviewSticky = useUiStore((s) => s.setPreviewSticky);
   const effectiveCost = useGameStore((s) => s.spellCosts[String(objectId)]);
   const { src } = useCardImage(cardName, { size: "normal" });
   const { displayCost, isReduced } = spellCostDisplay(effectiveCost, manaCost);
 
-  // Mouse hover (desktop) + long-press (touch) both open the card preview, and
+  // Mouse hover (desktop) + long-press (touch) both open card inspection, and
   // the hook tags the element with `data-card-hover` so usePreviewDismiss's
   // pointer poll keeps the preview alive while the cursor is over the card.
   // This is what lets a player read any card in the full-hand modal: the fanned
   // hand overlaps cards, so the modal is the only place to inspect the ones
-  // hidden behind others — and that inspection must work for mouse and touch.
+  // hidden behind others — while an ordinary tap remains reserved for play.
   const { handlers, firedRef } = useCardHover(objectId);
 
   const handleClick = useCallback(
@@ -271,12 +269,9 @@ const DrawerCard = memo(function DrawerCard({
       }
       if (isPlayable) {
         onPlay(objectId);
-      } else {
-        inspectObject(objectId);
-        setPreviewSticky(true);
       }
     },
-    [objectId, isPlayable, onPlay, onDebugOpen, inspectObject, setPreviewSticky, firedRef],
+    [objectId, isPlayable, onPlay, onDebugOpen, firedRef],
   );
 
   const glowClass = hasPriority && isPlayable

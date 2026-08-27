@@ -1322,9 +1322,10 @@ export interface ParsedAbilitiesPanelProps {
   /** In-game report context for the displayed face; absent in the deck builder
    *  (no live game), where the report button is not shown. */
   report?: CardReportContext;
+  className?: string;
 }
 
-export function ParsedAbilitiesPanel({ name, cardTypes, keywords, localizedTypeLine, parseDetails, maxHeight, report }: ParsedAbilitiesPanelProps) {
+export function ParsedAbilitiesPanel({ name, cardTypes, keywords, localizedTypeLine, parseDetails, maxHeight, report, className = "" }: ParsedAbilitiesPanelProps) {
   const { t } = useTranslation("game");
   const items = parseDetails ?? [];
   const rulings = useCardRulings(name);
@@ -1332,7 +1333,7 @@ export function ParsedAbilitiesPanel({ name, cardTypes, keywords, localizedTypeL
 
   return (
     <div
-      className="w-[clamp(220px,26vw,472px)] overflow-y-auto pointer-events-auto rounded-[3.5%] border border-gray-600 bg-gray-950/95 shadow-2xl backdrop-blur-sm"
+      className={`w-[clamp(220px,26vw,472px)] overflow-y-auto pointer-events-auto rounded-[3.5%] border border-gray-600 bg-gray-950/95 shadow-2xl backdrop-blur-sm ${className}`}
       style={{ maxHeight: maxHeight ?? "80vh" }}
       data-card-hover
     >

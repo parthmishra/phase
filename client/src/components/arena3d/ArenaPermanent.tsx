@@ -293,6 +293,8 @@ export function ArenaPermanent({
 
   const handlePointerOver = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
+    const pointerType = event.pointerType || event.nativeEvent.pointerType;
+    if (pointerType === "touch" || pointerType === "pen") return;
     interaction.onPointerEnter();
     document.body.style.cursor = interaction.isActionable ? "pointer" : "zoom-in";
   };

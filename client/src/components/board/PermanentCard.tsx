@@ -773,9 +773,6 @@ export const PermanentCard = memo(function PermanentCard({
       // exile-link expansion.
       selectObject(objectId);
       showAttachmentFan();
-    } else if (isMobile) {
-      inspectObject(objectId);
-      setPreviewSticky(true);
     } else {
       selectObject(isSelected ? null : objectId);
     }

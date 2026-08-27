@@ -223,7 +223,7 @@ function CommanderCard({
           activateNinjutsu();
           return;
         }
-        inspectObject(commander.id);
+        if (!isMobile) inspectObject(commander.id);
       }}
       onDoubleClick={canCast ? () => dispatchAction(castAction) : undefined}
       drag={canCast || false}

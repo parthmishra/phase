@@ -58,6 +58,10 @@ describe("PlayerHand mobile lift", () => {
 
     fireEvent.click(cardElement!);
     expect(handLift).toHaveAttribute("data-player-hand-expanded", "true");
+    expect(useUiStore.getState().inspectedObjectId).toBeNull();
+
+    fireEvent.click(cardElement!);
+    expect(useUiStore.getState().inspectedObjectId).toBeNull();
 
     fireEvent.pointerDown(document.body);
     expect(handLift).toHaveAttribute("data-player-hand-expanded", "false");

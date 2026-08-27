@@ -56,6 +56,8 @@ function inspect(object: GameObject, faceIndex = 0): void {
   useUiStore.setState({ inspectedObjectId: object.id, inspectedFaceIndex: faceIndex });
 }
 
+const originalInnerWidth = window.innerWidth;
+
 afterEach(() => {
   cleanup();
   useGameStore.setState({ gameState: null, spellCosts: {} });
@@ -65,14 +67,38 @@ afterEach(() => {
     previewPlacement: "cursor",
     isDragging: false,
     mobileHandGesture: null,
+    previewSticky: false,
     shiftHeld: false,
     altHeld: false,
   });
   // GameCardPreview adds a third store; reset it so "shift" mode doesn't leak.
   usePreferencesStore.setState({ cardPreviewMode: "follow" });
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: originalInnerWidth,
+  });
+  fireEvent(window, new Event("resize"));
 });
 
 describe("GameCardPreview", () => {
+  it("requires an explicit sticky hold before showing mobile inspection", () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    inspect(battlefieldObject());
+
+    render(<GameCardPreview />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    act(() => useUiStore.setState({ previewSticky: true }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Card details: Pithing Needle" }),
+    ).toBeInTheDocument();
+  });
+
   it("forwards the inspected object's name to the preview", () => {
     inspect(battlefieldObject());
 

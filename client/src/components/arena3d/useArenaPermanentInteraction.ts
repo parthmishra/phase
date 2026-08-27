@@ -176,12 +176,10 @@ export function useArenaPermanentInteraction(
     }
 
     selectObject(selectedObjectId === objectId ? null : objectId);
-    inspectObject(objectId, undefined, "immediate");
   }, [
     boardChoice,
     combatClickHandler,
     combatMode,
-    inspectObject,
     isBoardChoice,
     isSelectedForBoardChoice,
     isValidTarget,

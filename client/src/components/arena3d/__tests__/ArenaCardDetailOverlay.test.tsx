@@ -72,6 +72,16 @@ describe("ArenaCardDetailOverlay", () => {
     expect(
       screen.getByText("Attacking doesn't cause this creature to tap."),
     ).toBeInTheDocument();
+    const infoRail = document.querySelector(
+      "[data-arena-card-detail-info-rail]",
+    );
+    expect(infoRail).toContainElement(screen.getByText("Vigilance"));
+    expect(infoRail).toContainElement(screen.getByText("Static parse node"));
+    expect(
+      screen.getByText("Vigilance").compareDocumentPosition(
+        screen.getByText("Static parse node"),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("switches between the live face, original printing, and parse details", () => {

@@ -549,7 +549,7 @@ export function PlayerHand() {
       if (!hasPriority) return;
 
       setSelectedCardId(objectId);
-      inspectObject(objectId);
+      if (!isMobile) inspectObject(objectId);
     },
     [isMobile, hasPriority, inspectObject],
   );

@@ -51,9 +51,7 @@ export function ArenaCardDetailOverlay({
     () => object && !object.face_down ? sortKeywords(object.keywords) : [],
     [object],
   );
-  const parseName = activeView === "parse" && object
-    ? object.name
-    : null;
+  const parseName = object && !object.face_down ? object.name : null;
   const parseDetails = useCardParseDetails(parseName);
   const engineFace = useEngineCardData(parseName);
 
@@ -198,8 +196,11 @@ export function ArenaCardDetailOverlay({
                 </div>
               )}
 
-              {activeView !== "parse" && visibleKeywords.length > 0 ? (
-                <div className="flex w-[min(86vw,380px)] max-h-[min(70dvh,620px)] flex-col gap-2 overflow-y-auto pr-1 md:pt-1">
+              {activeView !== "parse" && !object.face_down ? (
+                <div
+                  className="flex w-[min(86vw,380px)] max-h-[min(76dvh,680px)] flex-col gap-3 overflow-y-auto pr-1 md:pt-1"
+                  data-arena-card-detail-info-rail
+                >
                   {visibleKeywords.map((keyword, index) => {
                     const name = getKeywordName(keyword);
                     const iconClass = getKeywordIconClass(keyword);
@@ -244,6 +245,15 @@ export function ArenaCardDetailOverlay({
                       </motion.section>
                     );
                   })}
+                  <ParsedAbilitiesPanel
+                    name={engineFace?.name ?? object.name}
+                    cardTypes={engineFace?.card_type ?? object.card_types}
+                    keywords={object.keywords}
+                    localizedTypeLine={engineFace?.localized_type_line}
+                    parseDetails={parseDetails}
+                    maxHeight="min(42dvh, 360px)"
+                    className="!w-full shrink-0"
+                  />
                 </div>
               ) : null}
             </div>
