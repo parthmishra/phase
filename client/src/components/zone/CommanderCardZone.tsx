@@ -89,7 +89,7 @@ function CommanderCard({
   const isSignatureSpell = commander.signature_spell != null;
   const isCompactHeight = useIsCompactHeight();
   const isMobile = useIsMobile();
-  const usesMobileArtCrop = handPresentation && isMobile;
+  const usesMobileHandPlacement = handPresentation && isMobile;
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
   const effectiveCost = useGameStore(
     (s) => s.spellCosts[String(commander.id)],
@@ -230,10 +230,10 @@ function CommanderCard({
       dragSnapToOrigin
       onDragStart={startManaPaymentPreview}
       onDragEnd={onDragEnd}
-      initial={handPresentation ? { opacity: 0, y: usesMobileArtCrop ? 10 : 58 } : undefined}
-      animate={handPresentation ? { opacity: 1, y: usesMobileArtCrop ? 0 : 48 } : undefined}
+      initial={handPresentation ? { opacity: 0, y: usesMobileHandPlacement ? 10 : 58 } : undefined}
+      animate={handPresentation ? { opacity: 1, y: usesMobileHandPlacement ? 0 : 48 } : undefined}
       whileHover={
-        handPresentation && !usesMobileArtCrop
+        handPresentation && !usesMobileHandPlacement
           ? { y: 38, scale: 1.08, zIndex: 30 }
           : undefined
       }
@@ -265,7 +265,6 @@ function CommanderCard({
         height: handPresentation ? "var(--hand-card-h)" : "var(--card-h)",
       }}
       data-hand-command-card={handPresentation || undefined}
-      data-mobile-art-crop={usesMobileArtCrop || undefined}
     >
       {handPresentation && (canCast || canNinjutsu) && (
         <div

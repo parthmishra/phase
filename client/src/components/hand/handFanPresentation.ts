@@ -41,10 +41,9 @@ export function handFanVerticalMetrics(
   };
 }
 
-/** Desktop keeps the broad readable fan. Mobile uses the compact profile so a
- *  normal hand tucks inward and 8+ card overflow becomes an Arena-style
- *  accordion: cards retain their size while exposing progressively narrower
- *  neighboring strips. Both profiles keep the same card/animation surface. */
+/** Desktop keeps the broad readable fan. Mobile preserves that same shallow
+ *  curve and gentle rotation, changing only horizontal overlap so a normal
+ *  hand tucks inward and overflow hands expose progressively narrower strips. */
 export function handFanGeometry(
   totalCards: number,
   cardWidthVar = "--hand-card-w",
@@ -54,7 +53,7 @@ export function handFanGeometry(
   const geometry = fanGeometry(
     totalCards,
     cardWidthVar,
-    presentation === "mobile" ? "compact" : "wide",
+    presentation === "mobile" ? "tight" : "wide",
   );
   return {
     ...geometry,
@@ -64,13 +63,13 @@ export function handFanGeometry(
 
 /** Preserve normal card size until the fan reaches its reserved screen lane.
  *  Mobile's narrower 76vw lane keeps both lower corners clear for world-space
- *  piles and the command-zone crop; overflow is absorbed by accordion overlap
+ *  piles and the command zone; overflow is absorbed by horizontal overlap
  *  before card faces are reduced. */
 export function playerHandFanSizingStyle(
   totalCards: number,
   presentation: HandFanPresentation = "desktop",
 ): CSSProperties {
-  const profile = presentation === "mobile" ? "compact" : "wide";
+  const profile = presentation === "mobile" ? "tight" : "wide";
   const widthBudget = presentation === "mobile"
     ? MOBILE_HAND_FAN_WIDTH_BUDGET_VW
     : HAND_FAN_WIDTH_BUDGET_VW;

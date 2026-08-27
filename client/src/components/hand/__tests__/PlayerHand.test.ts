@@ -31,19 +31,20 @@ describe("player hand fan presentation", () => {
   it("tightens a normal mobile hand inward", () => {
     const mobileFan = handFanGeometry(7, "--hand-card-w", 1, "mobile");
 
-    expect(mobileFan.overlap).toBe("calc(var(--hand-card-w) * -0.45)");
-    expect(mobileFan.rotation(0)).toBeCloseTo(-18);
-    expect(mobileFan.rotation(6)).toBeCloseTo(18);
+    expect(mobileFan.overlap).toBe("calc(var(--hand-card-w) * -0.35)");
+    expect(mobileFan.rotation(0)).toBeCloseTo(-12);
+    expect(mobileFan.rotation(6)).toBeCloseTo(12);
+    expect(mobileFan.arc(0)).toBeCloseTo(31.5);
   });
 
   it("accordions overflow hands into the reserved mobile lane", () => {
     const mobileFan = handFanGeometry(12, "--hand-card-w", 1, "mobile");
 
     expect(mobileFan.overlap).toBe(
-      "calc(var(--hand-card-w) * -0.7272727272727273)",
+      "calc(var(--hand-card-w) * -0.6636363636363636)",
     );
     expect(playerHandFanSizingStyle(12, "mobile")).toMatchObject({
-      "--hand-card-w": "min(calc(var(--card-w) * var(--hand-card-scale)), 19.00vw)",
+      "--hand-card-w": "min(calc(var(--card-w) * var(--hand-card-scale)), 16.17vw)",
     });
   });
 

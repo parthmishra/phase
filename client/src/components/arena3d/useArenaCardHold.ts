@@ -22,6 +22,20 @@ function captureHandle(
   return event.target as PointerCaptureHandle | null;
 }
 
+function isPrimaryCardPress(event: ThreeEvent<PointerEvent>): boolean {
+  // R3F normally copies PointerEvent fields onto ThreeEvent, but WebKit-backed
+  // canvases and test hosts may expose them only on nativeEvent. Touch/pen
+  // pointerdown is a primary press even when `button` is omitted; the strict
+  // mouse check still prevents right-click from opening inspection.
+  const nativeEvent = event.nativeEvent;
+  const isPrimary = event.isPrimary ?? nativeEvent.isPrimary;
+  const pointerType = event.pointerType || nativeEvent.pointerType;
+  const button = event.button ?? nativeEvent.button;
+  if (isPrimary === false) return false;
+  if (pointerType === "touch" || pointerType === "pen") return true;
+  return button === 0;
+}
+
 /**
  * Pointer gesture controller for cards rendered inside the React Three Fiber
  * canvas. A completed hold consumes the synthetic click that follows it, while
@@ -53,7 +67,7 @@ export function useArenaCardHold({
 
   const onPointerDown = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
-      if (!event.isPrimary || event.button !== 0) return;
+      if (!isPrimaryCardPress(event)) return;
 
       event.stopPropagation();
       resetPointer();

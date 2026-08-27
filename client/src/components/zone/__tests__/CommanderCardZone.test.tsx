@@ -183,7 +183,7 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks the mobile hand commander for an art-only crop with a clipped viewport", () => {
+  it("renders the complete mobile hand commander without a clipped viewport", () => {
     const originalWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     seedStores([castAction()]);
@@ -195,9 +195,9 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
 
       expect(
         container.querySelector("[data-arena-hand-command-card-viewport]"),
-      ).toBeInTheDocument();
+      ).not.toBeInTheDocument();
       expect(container.querySelector("[data-hand-command-card]"))
-        .toHaveAttribute("data-mobile-art-crop", "true");
+        .not.toHaveAttribute("data-mobile-art-crop");
     } finally {
       cleanup();
       Object.defineProperty(window, "innerWidth", {

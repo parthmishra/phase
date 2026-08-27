@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 
 import { HAND_DRAG_PLAY_THRESHOLD } from "../../hooks/useDragToCast.ts";
+import { CARD_PREVIEW_LONG_PRESS_DELAY_MS } from "../../hooks/useLongPress.ts";
 import type { ReleasedCardMotion } from "../../stores/animationStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 
-const HOLD_DELAY_MS = 400;
+export const HAND_PREVIEW_HOLD_DELAY_MS = CARD_PREVIEW_LONG_PRESS_DELAY_MS;
 const PRE_HOLD_MOVE_THRESHOLD_PX = 12;
 // A held finger naturally drifts a few CSS pixels. Require a deliberate lift
 // before replacing the large inspection preview with the movable hand card.
@@ -42,10 +43,11 @@ function cardAtPoint(container: HTMLElement, x: number, y: number): HTMLElement 
  * - holding activates a non-blocking preview;
  * - horizontal movement while held scrubs across adjacent fanned cards;
  * - dragging a directly castable card above the hand arms release-to-cast;
- * - release elsewhere dismisses the preview without casting.
+ * - releasing a stationary hold keeps a modal preview open until the next tap;
+ * - releasing a dragged card either casts it or dismisses the drag preview.
  *
- * The fan cards stay pointer-events-none on mobile, so this hook owns one stable
- * pointer-captured surface instead of moving the gesture target as cards animate.
+ * The container captures the mobile pointer after card hit-testing, so one
+ * stable surface owns the gesture even while individual cards animate or drag.
  */
 export function useHandScrubPreview(
   containerRef: RefObject<HTMLElement | null>,
@@ -177,7 +179,10 @@ export function useHandScrubPreview(
     [canReleaseToCast, containerRef, isPlayable, setMobileHandGesture],
   );
 
-  const finishScrub = useCallback((allowCast = false) => {
+  const finishScrub = useCallback((
+    allowCast = false,
+    persistHeldPreview = false,
+  ) => {
     const wasScrubbing = scrubbingRef.current;
     const castObjectId =
       allowCast && castReadyRef.current ? activeObjectIdRef.current : null;
@@ -188,7 +193,9 @@ export function useHandScrubPreview(
     clearActiveCard();
     setMobileHandGesture(null);
     if (wasScrubbing) {
-      dismissPreview();
+      const keepsPreviewOpen = persistHeldPreview
+        && releasedGesture?.phase === "preview";
+      if (!keepsPreviewOpen) dismissPreview();
       suppressClickRef.current = true;
       if (suppressResetRef.current != null) clearTimeout(suppressResetRef.current);
       // WKWebView can dispatch the compatibility click well after pointerup.
@@ -290,7 +297,7 @@ export function useHandScrubPreview(
         const objectId = inspectAtPoint(x, y);
         scrubbingRef.current = objectId != null;
         if (objectId != null) updateGesture(objectId, x, y, "preview");
-      }, HOLD_DELAY_MS);
+      }, HAND_PREVIEW_HOLD_DELAY_MS);
     },
     [clearClickSuppression, clearHoldTimer, enabled, inspectAtPoint, setMobileHandGesture, updateGesture],
   );
@@ -359,7 +366,7 @@ export function useHandScrubPreview(
       } catch {
         // Ignore capture-release mismatches from WebKit and test harnesses.
       }
-      finishScrub(true);
+      finishScrub(true, true);
     },
     [finishScrub, updateGesture],
   );
@@ -367,7 +374,7 @@ export function useHandScrubPreview(
   const onPointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       if (pointerIdRef.current !== event.pointerId) return;
-      finishScrub(false);
+      finishScrub(false, false);
     },
     [finishScrub],
   );

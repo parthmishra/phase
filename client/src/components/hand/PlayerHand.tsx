@@ -61,6 +61,7 @@ import {
 } from "./handFanPresentation.ts";
 import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 import { StormCopyBadge } from "./StormCopyBadge.tsx";
+import { useHandScrubPreview } from "./useHandScrubPreview.ts";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -69,9 +70,9 @@ const EMPTY_STORM_COUNTS: Record<string, number> = {};
 
 // The whole-row fan geometry — the overlap / tilt / arc that lays hand cards
 // (plus the castable exile / graveyard "wings") out as one held hand — now
-// lives in the shared `card/fanGeometry` module. Desktop uses the broad profile;
-// mobile uses the compact/accordion profile so large hands keep full-size faces
-// without covering either lower pile lane. `k` is a card's absolute position
+// lives in the shared `card/fanGeometry` module. Mobile keeps the same shallow
+// silhouette as desktop, but overlaps cards more tightly so large hands avoid
+// both lower pile lanes. `k` is a card's absolute position
 // across the row:
 // exile cards
 // occupy [0, E), hand cards [E, E + H), graveyard [E + H, N). With no wings
@@ -261,6 +262,28 @@ export function PlayerHand() {
     },
     [hasPriority, objects, legalActionsByObject, inspectObject, setPendingAbilityChoice],
   );
+
+  const isMobileHandCardPlayable = useCallback(
+    (objectId: number) => hasPriority && playableObjectIds.has(objectId),
+    [hasPriority, playableObjectIds],
+  );
+  const canReleaseMobileHandCardToCast = useCallback(
+    (objectId: number) =>
+      hasPriority
+      && resolveDirectPlayOrCastAction(
+        legalActionsByObject,
+        objects?.[objectId],
+      ) != null,
+    [hasPriority, legalActionsByObject, objects],
+  );
+  const {
+    handlers: handScrubHandlers,
+    consumeClick: consumeHandScrubClick,
+  } = useHandScrubPreview(handContainerRef, isMobile, {
+    isPlayable: isMobileHandCardPlayable,
+    canReleaseToCast: canReleaseMobileHandCardToCast,
+    onReleaseToCast: playCard,
+  });
 
   const previewManaPayment = useCallback((objectId: number) => {
     const requestId = ++manaPaymentPreviewRequestId.current;
@@ -567,6 +590,17 @@ export function PlayerHand() {
     },
     [isMobile],
   );
+  const handleContainerClickCapture = useCallback(
+    (event: React.MouseEvent) => {
+      // Run before a HandCard's stopPropagation. A completed hold generates a
+      // compatibility click on that child; consuming it in capture phase keeps
+      // the persistent preview open without also lifting or selecting the card.
+      if (!consumeHandScrubClick()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [consumeHandScrubClick],
+  );
 
   const handleDragStart = useCallback(
     (id: number) => {
@@ -647,6 +681,8 @@ export function PlayerHand() {
         ...playerHandFanSizingStyle(totalFanCards, fanPresentation),
         zIndex: draggingCardId != null || expanded ? 40 : undefined,
       }}
+      {...handScrubHandlers}
+      onClickCapture={handleContainerClickCapture}
       onClick={handleContainerClick}
       onMouseLeave={() => {
         if (!isMobile) {
@@ -1149,7 +1185,7 @@ const HandCard = memo(function HandCard({
         onMouseEnter={() => onMouseEnter(objectId)}
         onMouseLeave={onMouseLeave}
         className="relative cursor-pointer"
-        {...longPressHandlers}
+        {...(enableHover ? longPressHandlers : {})}
       >
         <motion.div
           className={`relative rounded-lg ${glowClass} ${isSelected ? "ring-1 ring-[#d8cfb2]/75" : ""}`}

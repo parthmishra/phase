@@ -8,14 +8,25 @@ import {
 } from "../useArenaCardHold.ts";
 
 function pointerEvent(
-  overrides: Partial<PointerEvent> = {},
+  overrides: Partial<ThreeEvent<PointerEvent>> = {},
 ): ThreeEvent<PointerEvent> {
-  return {
+  const nativeEvent = {
     button: 0,
     clientX: 20,
     clientY: 30,
     isPrimary: true,
     pointerId: 7,
+    pointerType: "touch",
+    preventDefault: vi.fn(),
+  } as unknown as PointerEvent;
+  return {
+    button: 0,
+    clientX: 20,
+    clientY: 30,
+    isPrimary: true,
+    nativeEvent,
+    pointerId: 7,
+    pointerType: "touch",
     preventDefault: vi.fn(),
     stopPropagation: vi.fn(),
     target: {
@@ -48,6 +59,21 @@ describe("useArenaCardHold", () => {
     expect(onHold).toHaveBeenCalledTimes(1);
     expect(result.current.consumeClick()).toBe(true);
     expect(result.current.consumeClick()).toBe(false);
+  });
+
+  it("accepts a touch press whose pointer fields are exposed only by nativeEvent", () => {
+    const onHold = vi.fn();
+    const { result } = renderHook(() => useArenaCardHold({ onHold }));
+    const event = pointerEvent({
+      button: undefined,
+      isPrimary: undefined,
+      pointerType: undefined,
+    });
+
+    act(() => result.current.handlers.onPointerDown(event));
+    act(() => vi.advanceTimersByTime(ARENA_CARD_HOLD_DELAY_MS));
+
+    expect(onHold).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a short press available to the card's normal click", () => {

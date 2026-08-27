@@ -1229,38 +1229,10 @@ select.select-dark option {
    preserving the Arena silhouette while leaving more of each touch target
    exposed. */
 @media (width < 64rem) and (orientation: landscape) {
-  /* The command card is informational at the near edge, so show only its
-     crown/title/art half. The clipped viewport is also its pointer footprint:
-     the invisible rules-text half can no longer intercept taps meant for the
-     world-space graveyard behind it. */
-  [data-arena-hand-command-card-viewport] {
-    height: calc(var(--hand-card-h) * 0.52);
-    overflow: hidden;
-    border-radius: var(--card-radius);
-  }
-
-  [data-hand-command-card][data-mobile-art-crop="true"] [data-hand-command-tax] {
-    top: calc(var(--hand-card-h) * 0.52 - 1.125rem);
-    bottom: auto;
-  }
-
   [data-flex-zone="playerHandRow"] {
     transform: translateY(
       calc(-1 * max(env(safe-area-inset-bottom), 1.25rem))
     );
-  }
-}
-
-@media (width < 64rem) and (orientation: portrait) {
-  [data-arena-hand-command-card-viewport] {
-    height: calc(var(--hand-card-h) * 0.52);
-    overflow: hidden;
-    border-radius: var(--card-radius);
-  }
-
-  [data-hand-command-card][data-mobile-art-crop="true"] [data-hand-command-tax] {
-    top: calc(var(--hand-card-h) * 0.52 - 1.125rem);
-    bottom: auto;
   }
 }
 
