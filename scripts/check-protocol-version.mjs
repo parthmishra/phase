@@ -3,11 +3,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const EXPECTED_PROTOCOL_VERSION = 42;
+const EXPECTED_PROTOCOL_VERSION = 43;
 // The LOBBY message-set version. Deliberately separate from the full-game
 // number above and deliberately NOT derived from it: a GameState-only bump must
 // not move the lobby's compatibility window. See the assertions at the bottom.
-const EXPECTED_LOBBY_PROTOCOL_VERSION = 1;
+const EXPECTED_LOBBY_PROTOCOL_VERSION = 2;
 // The P2P wire version. A THIRD independent surface: host/guest first-contact
 // frames carry it, and the same GameState shape change that moves
 // EXPECTED_PROTOCOL_VERSION must move this one too. It was previously ungated
