@@ -69,9 +69,9 @@ const EMPTY_STORM_COUNTS: Record<string, number> = {};
 
 // The whole-row fan geometry — the overlap / tilt / arc that lays hand cards
 // (plus the castable exile / graveyard "wings") out as one held hand — now
-// lives in the shared `card/fanGeometry` module. Every viewport uses the same
-// wider, flatter profile so the hand silhouette stays consistent; responsive
-// sizing caps the whole fan to the viewport. `k` is a card's absolute position
+// lives in the shared `card/fanGeometry` module. Desktop uses the broad profile;
+// mobile uses the compact/accordion profile so large hands keep full-size faces
+// without covering either lower pile lane. `k` is a card's absolute position
 // across the row:
 // exile cards
 // occupy [0, E), hand cards [E, E + H), graveyard [E + H, N). With no wings
@@ -626,10 +626,14 @@ export function PlayerHand() {
   const handSize = handObjects.length;
   const exileCount = exileCards.length;
   const totalFanCards = exileCount + handSize + graveyardCards.length + companionCount;
-  // The player hand deliberately uses one geometry/animation profile on every
-  // viewport. Mobile changes only the wrapper's tap-to-lift interaction.
+  const fanPresentation = isMobile ? "mobile" : "desktop";
   const verticalMetrics = handFanVerticalMetrics(false);
-  const fan = handFanGeometry(totalFanCards, "--hand-card-w", verticalMetrics.arcScale);
+  const fan = handFanGeometry(
+    totalFanCards,
+    "--hand-card-w",
+    verticalMetrics.arcScale,
+    fanPresentation,
+  );
 
   return (
     <>
@@ -640,7 +644,7 @@ export function PlayerHand() {
       } ${isMobile ? "touch-none" : ""}`}
       style={{
         perspective: "800px",
-        ...playerHandFanSizingStyle(totalFanCards),
+        ...playerHandFanSizingStyle(totalFanCards, fanPresentation),
         zIndex: draggingCardId != null || expanded ? 40 : undefined,
       }}
       onClick={handleContainerClick}
@@ -1031,7 +1035,7 @@ const HandCard = memo(function HandCard({
 
   const setPreviewSticky = useUiStore((s) => s.setPreviewSticky);
   const { handlers: longPressHandlers, firedRef: longPressFired } = useLongPress(() => {
-    inspectObject(objectId);
+    inspectObject(objectId, undefined, "immediate");
     setPreviewSticky(true);
   });
 
@@ -1250,7 +1254,7 @@ const ZoneFanCard = memo(function ZoneFanCard({
   const setDragging = useUiStore((s) => s.setDragging);
   const setPreviewSticky = useUiStore((s) => s.setPreviewSticky);
   const { handlers: longPressHandlers, firedRef: longPressFired } = useLongPress(() => {
-    inspectObject(objectId);
+    inspectObject(objectId, undefined, "immediate");
     setPreviewSticky(true);
   });
 

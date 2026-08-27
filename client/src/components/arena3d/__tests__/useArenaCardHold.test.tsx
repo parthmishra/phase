@@ -34,6 +34,10 @@ describe("useArenaCardHold", () => {
     vi.useRealTimers();
   });
 
+  it("uses the short card-preview hold threshold", () => {
+    expect(ARENA_CARD_HOLD_DELAY_MS).toBe(300);
+  });
+
   it("opens after the hold delay and consumes the follow-up click", () => {
     const onHold = vi.fn();
     const { result } = renderHook(() => useArenaCardHold({ onHold }));

@@ -76,7 +76,7 @@ export function StackEntry({ entry, choiceObjectId = entry.id, index, isTop, isP
   // inspect-and-pin for every entry, so it never competes with the mobile
   // card-preview gesture and the yield control isn't a hidden gesture.
   const { handlers: longPressHandlers, firedRef: longPressFired } = useLongPress(() => {
-    inspectObject(entry.source_id);
+    inspectObject(entry.source_id, undefined, "immediate");
     setPreviewSticky(true);
     onHoverChange?.(true);
   });

@@ -3,6 +3,9 @@ import type { CSSProperties } from "react";
 import { fanGeometry, spreadFactor } from "../card/fanGeometry.ts";
 
 const HAND_FAN_WIDTH_BUDGET_VW = 92;
+const MOBILE_HAND_FAN_WIDTH_BUDGET_VW = 76;
+
+export type HandFanPresentation = "desktop" | "mobile";
 
 /** Resting cards sit mostly below the viewport edge, matching Arena's shallow
  *  bottom ribbon while leaving the battlefield vertically unobstructed. */
@@ -38,25 +41,40 @@ export function handFanVerticalMetrics(
   };
 }
 
-/** One authoritative wide, shallow geometry profile for the player hand on
- *  every viewport. Responsive sizing may fit the fan to the screen, but mobile
- *  and desktop share the exact same card transforms and animation path. */
+/** Desktop keeps the broad readable fan. Mobile uses the compact profile so a
+ *  normal hand tucks inward and 8+ card overflow becomes an Arena-style
+ *  accordion: cards retain their size while exposing progressively narrower
+ *  neighboring strips. Both profiles keep the same card/animation surface. */
 export function handFanGeometry(
   totalCards: number,
   cardWidthVar = "--hand-card-w",
   verticalScale = 1,
+  presentation: HandFanPresentation = "desktop",
 ) {
-  const geometry = fanGeometry(totalCards, cardWidthVar, "wide");
+  const geometry = fanGeometry(
+    totalCards,
+    cardWidthVar,
+    presentation === "mobile" ? "compact" : "wide",
+  );
   return {
     ...geometry,
     arc: (index: number) => geometry.arc(index) * verticalScale,
   };
 }
 
-/** Preserve the normal responsive hand-card size until the complete fan would
- *  exceed 92vw, then shrink cards just enough to fit smaller screens. */
-export function playerHandFanSizingStyle(totalCards: number): CSSProperties {
-  const widthCapVw = (HAND_FAN_WIDTH_BUDGET_VW / spreadFactor(totalCards, "wide")).toFixed(2);
+/** Preserve normal card size until the fan reaches its reserved screen lane.
+ *  Mobile's narrower 76vw lane keeps both lower corners clear for world-space
+ *  piles and the command-zone crop; overflow is absorbed by accordion overlap
+ *  before card faces are reduced. */
+export function playerHandFanSizingStyle(
+  totalCards: number,
+  presentation: HandFanPresentation = "desktop",
+): CSSProperties {
+  const profile = presentation === "mobile" ? "compact" : "wide";
+  const widthBudget = presentation === "mobile"
+    ? MOBILE_HAND_FAN_WIDTH_BUDGET_VW
+    : HAND_FAN_WIDTH_BUDGET_VW;
+  const widthCapVw = (widthBudget / spreadFactor(totalCards, profile)).toFixed(2);
   return {
     "--hand-card-w": `min(calc(var(--card-w) * var(--hand-card-scale)), ${widthCapVw}vw)`,
     "--hand-card-h": `calc(var(--hand-card-w) * ${HAND_CARD_HEIGHT_SCALE})`,

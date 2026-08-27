@@ -15,6 +15,7 @@ import {
   buildPlayers,
   buildPriorityWaitingFor,
 } from "../../../test/factories/gameStateFactory.ts";
+import { ArenaHandCommandZone } from "../../arena3d/ArenaHandCommandZone.tsx";
 import { CommanderCardZone } from "../CommanderCardZone.tsx";
 
 vi.mock("../../../game/dispatch.ts", () => ({
@@ -180,6 +181,30 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
     expect(
       container.querySelector(".arena-command-castable-aura"),
     ).toBeInTheDocument();
+  });
+
+  it("marks the mobile hand commander for an art-only crop with a clipped viewport", () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    seedStores([castAction()]);
+
+    try {
+      const { container } = render(
+        <ArenaHandCommandZone playerId={0} seat="player" />,
+      );
+
+      expect(
+        container.querySelector("[data-arena-hand-command-card-viewport]"),
+      ).toBeInTheDocument();
+      expect(container.querySelector("[data-hand-command-card]"))
+        .toHaveAttribute("data-mobile-art-crop", "true");
+    } finally {
+      cleanup();
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalWidth,
+      });
+    }
   });
 
   it("renders an Oathbreaker signature spell from the command zone", () => {

@@ -28,6 +28,25 @@ describe("player hand fan presentation", () => {
     expect(fan.arc(0)).toBeCloseTo(32);
   });
 
+  it("tightens a normal mobile hand inward", () => {
+    const mobileFan = handFanGeometry(7, "--hand-card-w", 1, "mobile");
+
+    expect(mobileFan.overlap).toBe("calc(var(--hand-card-w) * -0.45)");
+    expect(mobileFan.rotation(0)).toBeCloseTo(-18);
+    expect(mobileFan.rotation(6)).toBeCloseTo(18);
+  });
+
+  it("accordions overflow hands into the reserved mobile lane", () => {
+    const mobileFan = handFanGeometry(12, "--hand-card-w", 1, "mobile");
+
+    expect(mobileFan.overlap).toBe(
+      "calc(var(--hand-card-w) * -0.7272727272727273)",
+    );
+    expect(playerHandFanSizingStyle(12, "mobile")).toMatchObject({
+      "--hand-card-w": "min(calc(var(--card-w) * var(--hand-card-scale)), 19.00vw)",
+    });
+  });
+
   it("caps a large hand to the viewport width budget", () => {
     expect(playerHandFanSizingStyle(20)).toMatchObject({
       "--hand-card-w": "min(calc(var(--card-w) * var(--hand-card-scale)), 16.73vw)",

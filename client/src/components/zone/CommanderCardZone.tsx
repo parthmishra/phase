@@ -9,6 +9,7 @@ import { previewAutomaticManaPayment } from "../../game/manaPaymentPreview.ts";
 import { useCardHover } from "../../hooks/useCardHover.ts";
 import { useCardImage } from "../../hooks/useCardImage.ts";
 import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
+import { useIsMobile } from "../../hooks/useIsMobile.ts";
 import { getPlayerId, useCanActForWaitingState } from "../../hooks/usePlayerId.ts";
 import { useDragToCast } from "../../hooks/useDragToCast.ts";
 import { cardImageLookup } from "../../services/cardImageLookup.ts";
@@ -87,6 +88,8 @@ function CommanderCard({
   const { t } = useTranslation("game");
   const isSignatureSpell = commander.signature_spell != null;
   const isCompactHeight = useIsCompactHeight();
+  const isMobile = useIsMobile();
+  const usesMobileArtCrop = handPresentation && isMobile;
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
   const effectiveCost = useGameStore(
     (s) => s.spellCosts[String(commander.id)],
@@ -227,10 +230,10 @@ function CommanderCard({
       dragSnapToOrigin
       onDragStart={startManaPaymentPreview}
       onDragEnd={onDragEnd}
-      initial={handPresentation ? { opacity: 0, y: 58 } : undefined}
-      animate={handPresentation ? { opacity: 1, y: 48 } : undefined}
+      initial={handPresentation ? { opacity: 0, y: usesMobileArtCrop ? 10 : 58 } : undefined}
+      animate={handPresentation ? { opacity: 1, y: usesMobileArtCrop ? 0 : 48 } : undefined}
       whileHover={
-        handPresentation
+        handPresentation && !usesMobileArtCrop
           ? { y: 38, scale: 1.08, zIndex: 30 }
           : undefined
       }
@@ -262,6 +265,7 @@ function CommanderCard({
         height: handPresentation ? "var(--hand-card-h)" : "var(--card-h)",
       }}
       data-hand-command-card={handPresentation || undefined}
+      data-mobile-art-crop={usesMobileArtCrop || undefined}
     >
       {handPresentation && (canCast || canNinjutsu) && (
         <div
@@ -304,6 +308,7 @@ function CommanderCard({
           into two lines; centered overhang beats a wrapped pill. */}
       {tax > 0 && (
         <div
+          data-hand-command-tax
           className={`absolute -bottom-1 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-sm bg-amber-900 py-px font-bold text-amber-200 shadow ${
             splitOverview ? "px-1 text-[7px]" : "px-1.5 text-[8px]"
           }`}

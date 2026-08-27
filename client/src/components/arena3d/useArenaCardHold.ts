@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 
-export const ARENA_CARD_HOLD_DELAY_MS = 500;
+import { CARD_PREVIEW_LONG_PRESS_DELAY_MS } from "../../hooks/useLongPress.ts";
+
+export const ARENA_CARD_HOLD_DELAY_MS = CARD_PREVIEW_LONG_PRESS_DELAY_MS;
 export const ARENA_CARD_HOLD_MOVE_THRESHOLD_PX = 10;
 
 interface ArenaCardHoldOptions {
