@@ -14,6 +14,7 @@ import {
   HAND_FAN_HOVER_Y,
   HAND_FAN_RESTING_Y,
   MOBILE_HAND_FAN_LIFT_Y,
+  MOBILE_HAND_FAN_RESTING_Y,
   handFanGeometry,
   handFanVerticalMetrics,
   playerHandFanSizingStyle,
@@ -62,6 +63,16 @@ describe("player hand fan presentation", () => {
 
   it("keeps resting cards lower than their hover position", () => {
     expect(HAND_FAN_RESTING_Y).toBeGreaterThan(HAND_FAN_HOVER_Y);
+  });
+
+  it("shows a shallower resting ribbon on mobile than on larger screens", () => {
+    const desktopMetrics = handFanVerticalMetrics(false, 1, "desktop");
+    const mobileMetrics = handFanVerticalMetrics(false, 1, "mobile");
+
+    expect(MOBILE_HAND_FAN_RESTING_Y).toBeGreaterThan(HAND_FAN_RESTING_Y);
+    expect(mobileMetrics.restingY).toBeGreaterThan(desktopMetrics.restingY);
+    expect(mobileMetrics.hoverY).toBe(desktopMetrics.hoverY);
+    expect(mobileMetrics.arcScale).toBe(desktopMetrics.arcScale);
   });
 
   it("scales the complete vertical fan depth for compact-height screens", () => {

@@ -661,7 +661,7 @@ export function PlayerHand() {
   const exileCount = exileCards.length;
   const totalFanCards = exileCount + handSize + graveyardCards.length + companionCount;
   const fanPresentation = isMobile ? "mobile" : "desktop";
-  const verticalMetrics = handFanVerticalMetrics(false);
+  const verticalMetrics = handFanVerticalMetrics(false, 1, fanPresentation);
   const fan = handFanGeometry(
     totalFanCards,
     "--hand-card-w",

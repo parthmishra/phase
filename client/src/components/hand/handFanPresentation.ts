@@ -11,6 +11,9 @@ export type HandFanPresentation = "desktop" | "mobile";
  *  bottom ribbon while leaving the battlefield vertically unobstructed. */
 export const HAND_FAN_RESTING_Y = 42;
 export const HAND_FAN_HOVER_Y = 38;
+/** Phones expose a shallower resting ribbon; deliberate tap-to-lift still
+ *  reveals the same full-size, centered cards for interaction. */
+export const MOBILE_HAND_FAN_RESTING_Y = 64;
 export const MOBILE_HAND_FAN_LIFT_Y = -28;
 export const HAND_CARD_HEIGHT_SCALE = 1.4;
 export const OPPONENT_CARD_SCALE = 0.78;
@@ -31,13 +34,17 @@ export interface HandFanVerticalMetrics {
 export function handFanVerticalMetrics(
   isCompactHeight: boolean,
   cardScale = 1,
+  presentation: HandFanPresentation = "desktop",
 ): HandFanVerticalMetrics {
   const viewportScale = isCompactHeight ? COMPACT_HEIGHT_VERTICAL_SCALE : 1;
   const scale = viewportScale * cardScale;
+  const restingY = presentation === "mobile"
+    ? MOBILE_HAND_FAN_RESTING_Y
+    : HAND_FAN_RESTING_Y;
   return {
     arcScale: scale,
     hoverY: HAND_FAN_HOVER_Y * scale,
-    restingY: HAND_FAN_RESTING_Y * scale,
+    restingY: restingY * scale,
   };
 }
 

@@ -7,7 +7,7 @@ describe("arenaZoneLayout", () => {
     const local = arenaZoneLayout("local");
     const opponent = arenaZoneLayout("far");
 
-    expect(local.library).toEqual([-5.55, 0.08, 3.46]);
+    expect(local.library).toEqual([-5.55, 0.08, 4.85]);
     expect(local.graveyard[2]).toBe(local.library[2]);
     expect(local.exile[2]).toBe(local.library[2]);
     expect(opponent.library).toEqual([5.55, 0.08, -5.2]);
@@ -20,9 +20,9 @@ describe("arenaZoneLayout", () => {
     const local = arenaZoneLayout("local", "duel", "compact");
     const opponent = arenaZoneLayout("far", "duel", "compact");
 
-    expect(local.library).toEqual([-1.45, 0.08, 4.35]);
-    expect(local.graveyard).toEqual([0, 0.08, 4.35]);
-    expect(local.exile).toEqual([1.45, 0.08, 4.35]);
+    expect(local.library).toEqual([-1.45, 0.08, 4.85]);
+    expect(local.graveyard).toEqual([0, 0.08, 4.85]);
+    expect(local.exile).toEqual([1.45, 0.08, 4.85]);
     expect(opponent.library).toEqual([1.45, 0.08, -5.2]);
     expect(opponent.graveyard[0]).toBeCloseTo(0);
     expect(opponent.exile[0]).toBeCloseTo(-1.45);
@@ -71,6 +71,19 @@ describe("arenaZoneLayout", () => {
     expect(compactDuel.graveyard[2]).toBe(-5.2);
     expect(pod.library[2]).toBe(-6.15);
     expect(pod.graveyard[2]).toBe(-6.15);
+  });
+
+  it("keeps the user's pile row close to the near crop in every layout", () => {
+    const duel = arenaZoneLayout("local", "duel");
+    const compactDuel = arenaZoneLayout("local", "duel", "compact");
+    const pod = arenaZoneLayout("local", "pod");
+
+    expect(duel.library[2]).toBe(4.85);
+    expect(duel.graveyard[2]).toBe(4.85);
+    expect(compactDuel.library[2]).toBe(4.85);
+    expect(compactDuel.graveyard[2]).toBe(4.85);
+    expect(pod.library[2]).toBe(4.85);
+    expect(pod.graveyard[2]).toBe(4.85);
   });
 
   it("uses square side-seat orientation for the kitchen-table view", () => {

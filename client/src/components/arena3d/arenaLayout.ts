@@ -110,6 +110,7 @@ const POD_HAND_CENTERLINE_Z = 0;
 const POD_FAR_HAND_Z = -5.05;
 const OPPONENT_HAND_SCALE = 0.9;
 const ZONE_PILE_GAP = 1.45;
+const LOCAL_ZONE_Z = 4.85;
 const FAR_DUEL_ZONE_Z = -5.2;
 const FAR_POD_ZONE_Z = -6.15;
 
@@ -182,16 +183,10 @@ export function arenaZoneLayout(
 ): ArenaZoneLayout {
   if (seat === "local") {
     if (tableLayout === "duel" && viewportLayout === "compact") {
-      return arenaZoneRow(0, [-1.45, 0.08, 4.35]);
+      return arenaZoneRow(0, [-1.45, 0.08, LOCAL_ZONE_Z]);
     }
-    return tableLayout === "pod"
-      ? arenaZoneRow(0, [-6.35, 0.08, 4.35])
-      : {
-          faceAngle: 0,
-          library: [-5.55, 0.08, 3.46],
-          graveyard: [-4.1, 0.08, 3.46],
-          exile: [-2.65, 0.08, 3.46],
-        };
+    const libraryX = tableLayout === "pod" ? -6.35 : -5.55;
+    return arenaZoneRow(0, [libraryX, 0.08, LOCAL_ZONE_Z]);
   }
   if (seat === "far") {
     // The directly opposite player's piles belong behind their upright hand,
