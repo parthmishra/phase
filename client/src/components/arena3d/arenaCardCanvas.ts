@@ -17,7 +17,9 @@ const GEOMETRY = {
   rulesTop: 0.632,
   rulesBottom: 0.875,
   stats: { x: 0.762, y: 0.888, width: 0.198, height: 0.072 },
-  statsTextCenter: { x: 0.5, y: 0.5 },
+  // The badge PNG has a deeper lower rim and drop shadow, so its visible
+  // recessed field is optically centered above the transparent canvas center.
+  statsTextCenter: { x: 0.5, y: 0.44 },
 } as const;
 const STAT_VALUE_FONT_HEIGHT_RATIO = 0.52;
 const STAT_VALUE_MAX_WIDTH_RATIO = 0.64;
@@ -232,7 +234,7 @@ export async function renderArenaStatBadgeCanvas(
     context,
     statText,
     canvas.width / 2,
-    canvas.height / 2,
+    canvas.height * GEOMETRY.statsTextCenter.y,
     canvas.width,
     canvas.height,
   );
@@ -264,8 +266,6 @@ export function drawArenaStatText(
     context.save();
     traceRoundedRect(context, x, y, width, height, height * 0.28);
     context.clip();
-    context.fillStyle = "#17181b";
-    context.fillRect(x, y, width, height);
     context.drawImage(
       background,
       x - width * 0.03,
@@ -339,15 +339,18 @@ function drawArenaStatValue(
     },
   );
   context.font = arenaStatFont(fontSize);
-  context.textAlign = "center";
   context.fillStyle = "#050505";
-  drawVerticallyCenteredText(
-    context,
+  const metrics = context.measureText(statText);
+  const ascent = metrics.actualBoundingBoxAscent ?? 0;
+  const descent = metrics.actualBoundingBoxDescent ?? 0;
+  const inkLeft = metrics.actualBoundingBoxLeft ?? 0;
+  const inkRight = metrics.actualBoundingBoxRight ?? metrics.width;
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  context.fillText(
     statText,
-    centerX,
-    centerY,
-    undefined,
-    statText,
+    centerX + (inkLeft - inkRight) / 2,
+    centerY + (ascent - descent) / 2,
   );
 }
 
@@ -367,7 +370,7 @@ export function fitArenaStatFontSize(
 }
 
 function arenaStatFont(fontSize: number): string {
-  return `400 ${fontSize}px "Arena MPlantin", "Times New Roman", serif`;
+  return `600 ${fontSize}px "Arena MPlantin", "Times New Roman", serif`;
 }
 
 function traceRoundedRect(

@@ -71,6 +71,8 @@ describe("drawArenaStatText", () => {
       measureText: () => ({
         actualBoundingBoxAscent: 48,
         actualBoundingBoxDescent: 12,
+        actualBoundingBoxLeft: 4,
+        actualBoundingBoxRight: 96,
         width: 100,
       }),
       restore: () => calls.push("restore"),
@@ -95,10 +97,12 @@ describe("drawArenaStatText", () => {
     expect(calls.filter((call) => call === "stroke")).toHaveLength(2);
     expect(calls).toContain("fillText:12/12");
     expect(calls[calls.length - 1]).toBe("restore");
-    const fontSize = Number(context.font.match(/400 ([\d.]+)px/)?.[1]);
+    const fontSize = Number(context.font.match(/600 ([\d.]+)px/)?.[1]);
     expect(fontSize).toBeCloseTo(52.68, 1);
-    expect(textPositions[0]?.[0]).toBeCloseTo(0.861 * 1005);
-    expect(textPositions[0]?.[1]).toBeCloseTo(0.924 * 1407 + 18);
+    expect(textPositions[0]?.[0]).toBeCloseTo(0.861 * 1005 - 46);
+    expect(textPositions[0]?.[1]).toBeCloseTo(
+      (0.888 + 0.072 * 0.44) * 1407 + 18,
+    );
   });
 
   it("uses the preview badge asset as the background when available", () => {
@@ -107,7 +111,6 @@ describe("drawArenaStatText", () => {
       beginPath: () => calls.push("beginPath"),
       clip: () => calls.push("clip"),
       drawImage: () => calls.push("drawImage"),
-      fillRect: () => calls.push("fillRect"),
       fillText: () => calls.push("fillText"),
       measureText: () => ({
         actualBoundingBoxAscent: 48,
@@ -131,7 +134,6 @@ describe("drawArenaStatText", () => {
       "beginPath",
       "roundRect",
       "clip",
-      "fillRect",
       "drawImage",
       "restore",
       "fillText",

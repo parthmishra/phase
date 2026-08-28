@@ -41,8 +41,6 @@ const STAT_BADGE_TARGET_DEPTH_RATIO =
   / STAT_BADGE_SOURCE_ASPECT_RATIO
   / CARD_HEIGHT;
 const STAT_BADGE_RIGHT_MARGIN_RATIO = 0.018;
-const STAT_BADGE_SHELL_OUTSET_X = 0.008;
-const STAT_BADGE_SHELL_OUTSET_Z = 0.008;
 const CARD_FACE_GEOMETRY = makeRoundedCardFaceGeometry(
   CARD_WIDTH,
   CARD_HEIGHT,
@@ -55,7 +53,6 @@ const CARD_BODY_GEOMETRY = makeRoundedCardBodyGeometry(
 const CARD_BOTTOM_FRAME_GEOMETRY = makeBottomFrameGeometry();
 const CARD_STAT_BADGE_GEOMETRY = makeStatBadgeGeometry(false);
 const CARD_STAT_BADGE_FALLBACK_GEOMETRY = makeStatBadgeGeometry(true);
-const CARD_STAT_BADGE_SHELL_GEOMETRY = makeStatBadgeShellGeometry();
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
@@ -103,7 +100,6 @@ export function ArenaPermanent({
   const groupRef = useRef<THREE.Group>(null);
   const surfaceRef = useRef<THREE.Group>(null);
   const bottomFrameRef = useRef<THREE.Mesh>(null);
-  const statBadgeShellRef = useRef<THREE.Mesh>(null);
   const statBadgeRef = useRef<THREE.Mesh>(null);
   const faceMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const arrivalProgressRef = useRef(0);
@@ -134,7 +130,6 @@ export function ArenaPermanent({
     applyArenaCardCollapse(
       surfaceRef.current,
       bottomFrameRef.current,
-      statBadgeShellRef.current,
       statBadgeRef.current,
       faceGeometry,
       0,
@@ -168,7 +163,6 @@ export function ArenaPermanent({
     applyArenaCardCollapse(
       surfaceRef.current,
       bottomFrameRef.current,
-      statBadgeShellRef.current,
       statBadgeRef.current,
       faceGeometry,
       0,
@@ -229,7 +223,6 @@ export function ArenaPermanent({
     applyArenaCardCollapse(
       surfaceRef.current,
       bottomFrameRef.current,
-      statBadgeShellRef.current,
       statBadgeRef.current,
       faceGeometry,
       collapseProgress,
@@ -418,38 +411,27 @@ export function ArenaPermanent({
         )}
 
         {showStatBadge && (
-          <>
-            <mesh
-              ref={statBadgeShellRef}
-              geometry={CARD_STAT_BADGE_SHELL_GEOMETRY}
-              rotation={[-Math.PI / 2, 0, 0]}
-              position={[0, 0.005, 0]}
-              renderOrder={2}
-            >
-              <meshBasicMaterial color="#17181b" toneMapped={false} />
-            </mesh>
-            <mesh
-              ref={statBadgeRef}
-              geometry={
-                textures.statBadge
-                  ? CARD_STAT_BADGE_GEOMETRY
-                  : CARD_STAT_BADGE_FALLBACK_GEOMETRY
-              }
-              rotation={[-Math.PI / 2, 0, 0]}
-              position={[0, 0.007, 0]}
-              renderOrder={3}
-            >
-              <meshBasicMaterial
-                key={statBadgeTexture?.uuid ?? "arena-stat-loading"}
-                map={statBadgeTexture}
-                color={statBadgeTexture ? "#ffffff" : "#171a20"}
-                transparent
-                alphaTest={0.04}
-                alphaToCoverage
-                toneMapped={false}
-              />
-            </mesh>
-          </>
+          <mesh
+            ref={statBadgeRef}
+            geometry={
+              textures.statBadge
+                ? CARD_STAT_BADGE_GEOMETRY
+                : CARD_STAT_BADGE_FALLBACK_GEOMETRY
+            }
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.007, 0]}
+            renderOrder={3}
+          >
+            <meshBasicMaterial
+              key={statBadgeTexture?.uuid ?? "arena-stat-loading"}
+              map={statBadgeTexture}
+              color={statBadgeTexture ? "#ffffff" : "#171a20"}
+              transparent
+              alphaTest={0.04}
+              alphaToCoverage
+              toneMapped={false}
+            />
+          </mesh>
         )}
       </group>
     </group>
@@ -582,23 +564,9 @@ function makeStatBadgeGeometry(
   return geometry;
 }
 
-function makeStatBadgeShellGeometry(): THREE.ShapeGeometry {
-  const width =
-    CARD_WIDTH * STAT_BADGE_TARGET_WIDTH_RATIO
-    + STAT_BADGE_SHELL_OUTSET_X * 2;
-  const height =
-    CARD_HEIGHT * STAT_BADGE_TARGET_DEPTH_RATIO
-    + STAT_BADGE_SHELL_OUTSET_Z * 2;
-  return new THREE.ShapeGeometry(
-    makeRoundedRectangleShape(width, height, height * 0.28),
-    8,
-  );
-}
-
 function applyArenaCardCollapse(
   surface: THREE.Group | null,
   bottomFrame: THREE.Mesh | null,
-  statBadgeShell: THREE.Mesh | null,
   statBadge: THREE.Mesh | null,
   faceGeometry: THREE.ShapeGeometry,
   progress: number,
@@ -623,7 +591,7 @@ function applyArenaCardCollapse(
     bottomFrame.position.z = bottomEdge - frameHeight / 2;
   }
 
-  if (statBadge || statBadgeShell) {
+  if (statBadge) {
     const sourceScaleX =
       ARENA_CARD_STAT_RECT.width / STAT_BADGE_TARGET_WIDTH_RATIO;
     const sourceScaleZ =
@@ -669,13 +637,6 @@ function applyArenaCardCollapse(
       sourceCenterZ,
       targetCenterZ,
       transform.easedProgress,
-    );
-    applyStatBadgeTransform(
-      statBadgeShell,
-      scaleX,
-      scaleZ,
-      positionX,
-      positionZ,
     );
     applyStatBadgeTransform(statBadge, scaleX, scaleZ, positionX, positionZ);
   }
