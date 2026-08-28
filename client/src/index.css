@@ -906,9 +906,10 @@ select.select-dark option {
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] {
-    --mobile-player-hud-body-width: var(--arena-life-pill-width);
     --mobile-player-hud-body-height:
       clamp(2.25rem, min(6dvw, 10dvh), 2.5rem);
+    --mobile-player-hud-body-width:
+      clamp(3.5rem, calc(var(--mobile-player-hud-body-height) * 1.55), 4rem);
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate] {
@@ -927,14 +928,25 @@ select.select-dark option {
 
   [data-major-phase-stop-rail] {
     display: flex;
-    width: 100%;
-    max-width: 100%;
+    width: auto;
+    max-width: none;
     min-height: 2.5rem;
-    align-self: flex-end;
     justify-content: center;
     gap: 0;
-    margin-inline: auto 0;
+    margin: 0;
     padding: 0.25rem 0.3125rem;
+  }
+
+  [data-player-hud-phase-stop-flank] {
+    bottom: max(0.25rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  [data-player-hud-phase-stop-flank="left"] {
+    margin-right: 0.375rem;
+  }
+
+  [data-player-hud-phase-stop-flank="right"] {
+    margin-left: 0.375rem;
   }
 
   [data-major-phase-stop-rail] [data-phase-stop-dot] {
@@ -1077,9 +1089,8 @@ select.select-dark option {
   }
 }
 
-/* Dock phase stops directly below one compact row of advance/pass actions at
-   every landscape resolution. The cluster grows inward from the lower-right
-   edge and ends before the centered hand fan. */
+/* Dock one compact row of advance/pass actions at every landscape resolution.
+   The phase-stop groups now flank the centered local life badge. */
 @media (orientation: landscape) {
   [data-touch-action-cluster] {
     width: clamp(10.25rem, 18dvw, 11.5rem);

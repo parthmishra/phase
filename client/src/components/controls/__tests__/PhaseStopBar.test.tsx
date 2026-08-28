@@ -108,4 +108,27 @@ describe("PhaseStopBar", () => {
     expect(activePhase).toHaveClass("bg-transparent", "text-cyan-200");
     expect(activePhase).not.toHaveClass("bg-cyan-950/82");
   });
+
+  it("splits the major phases chronologically around the life badge", () => {
+    const { container } = render(
+      <>
+        <MajorPhaseStopRail side="left" />
+        <MajorPhaseStopRail side="right" />
+      </>,
+    );
+
+    const left = container.querySelector('[data-major-phase-stop-rail="left"]');
+    const right = container.querySelector('[data-major-phase-stop-rail="right"]');
+
+    expect(
+      Array.from(left?.querySelectorAll("[data-phase-stop-dot]") ?? []).map(
+        (dot) => dot.getAttribute("data-phase-stop-dot"),
+      ),
+    ).toEqual(["Upkeep", "PreCombatMain"]);
+    expect(
+      Array.from(right?.querySelectorAll("[data-phase-stop-dot]") ?? []).map(
+        (dot) => dot.getAttribute("data-phase-stop-dot"),
+      ),
+    ).toEqual(["BeginCombat", "PostCombatMain", "End"]);
+  });
 });

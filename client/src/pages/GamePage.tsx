@@ -64,10 +64,7 @@ import { GameCardPreview } from "../components/card/GameCardPreview.tsx";
 import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
 import { ActionButton } from "../components/board/ActionButton.tsx";
 import { FullControlToggle } from "../components/controls/FullControlToggle.tsx";
-import {
-  CombatPhaseIndicator,
-  MajorPhaseStopRail,
-} from "../components/controls/PhaseStopBar.tsx";
+import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
 import { MayTriggerAutoChoiceList } from "../components/board/MayTriggerAutoChoiceList.tsx";
 import { PriorityYieldList } from "../components/board/PriorityYieldList.tsx";
 import { PlayerHand } from "../components/hand/PlayerHand.tsx";
@@ -1540,7 +1537,6 @@ function GamePageContent({
               </div>
               <div className="flex flex-col items-end gap-1" data-touch-action-cluster="">
                 <ActionButton />
-                <MajorPhaseStopRail />
               </div>
             </>
           )}

@@ -13,6 +13,7 @@ import { ManualManaToggle } from "../board/ManualManaToggle.tsx";
 import { UndoButton } from "../board/UndoButton.tsx";
 import { FullControlToggle } from "../controls/FullControlToggle.tsx";
 import { LifeTotal } from "../controls/LifeTotal.tsx";
+import { MajorPhaseStopRail } from "../controls/PhaseStopBar.tsx";
 import { ManaPoolSummary } from "./ManaPoolSummary.tsx";
 import { CityBlessingBadge, ConditionBadge, CounterBadge, DungeonBadge, EnduringStoryBadge, InitiativeBadge, MonarchBadge, PendingSpellBadge, RingBenefitsBadge, StatusBadge, UnboundedBadge } from "./HudBadges.tsx";
 import { EnchantmentsBadge } from "./EnchantmentsBadge.tsx";
@@ -138,6 +139,12 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
         isPhasedOut ? "opacity-40 grayscale" : ""
       }`}
     >
+      <div
+        className="pointer-events-auto absolute right-full z-10 flex items-center"
+        data-player-hud-phase-stop-flank="left"
+      >
+        <MajorPhaseStopRail side="left" />
+      </div>
       <HudPlate
         label={getPlayerDisplayName(playerId, playerId)}
         hideLabel={alignNameplateToAnchor}
@@ -154,6 +161,12 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
           <LifeTotal playerId={playerId} size="lg" hideLabel />
         </div>
       </HudPlate>
+      <div
+        className="pointer-events-auto absolute left-full z-10 flex items-center"
+        data-player-hud-phase-stop-flank="right"
+      >
+        <MajorPhaseStopRail side="right" />
+      </div>
       <div
         className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center justify-center gap-1 [&>*]:pointer-events-auto"
         data-player-hud-edge-statuses=""

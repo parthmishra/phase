@@ -313,7 +313,11 @@ describe("PlayerHud", () => {
       "src",
       "/player-avatar.jpg",
     );
-    expect(container.querySelector('[data-major-phase-stop-rail]')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-major-phase-stop-rail]')).toHaveLength(2);
+    expect(container.querySelector('[data-player-hud-phase-stop-flank="left"]'))
+      .toContainElement(container.querySelector('[data-major-phase-stop-rail="left"]'));
+    expect(container.querySelector('[data-player-hud-phase-stop-flank="right"]'))
+      .toContainElement(container.querySelector('[data-major-phase-stop-rail="right"]'));
     expect(container.querySelector('[data-hud-plate-corner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-hud-plate-trailing]')).not.toBeInTheDocument();
     const manualMana = screen.getByRole("button", { name: "Manual" });
@@ -351,7 +355,7 @@ describe("PlayerHud", () => {
     expect(container.querySelector('[data-player-hud-undo-control]')).toContainElement(
       screen.getByRole("button", { name: "Undo" }),
     );
-    expect(container.querySelector('[data-major-phase-stop-rail]')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-major-phase-stop-rail]')).toHaveLength(2);
     expect(container.querySelector('[data-hud-plate-corner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-hud-plate-trailing]')).not.toBeInTheDocument();
 

@@ -106,6 +106,10 @@ const MAJOR_PHASES: Phase[] = [
   "PostCombatMain",
   "End",
 ];
+const MAJOR_PHASES_BY_SIDE: Record<"left" | "right", Phase[]> = {
+  left: ["Upkeep", "PreCombatMain"],
+  right: ["BeginCombat", "PostCombatMain", "End"],
+};
 
 // i18n key suffix per phase, used to look up the localized label/description
 // from the `phaseStop` group in game.json (e.g. `phaseStop.untapLabel`).
@@ -237,16 +241,21 @@ function PhaseDot({ phase }: { phase: Phase }) {
   );
 }
 
-/** Compact major-phase stop rail for the shared Arena HUD. GamePage docks it
- *  with the transient action buttons so the life pill can remain independently
- *  centered at the bottom edge. */
-export function MajorPhaseStopRail() {
+/** Compact major-phase stops for the shared Arena HUD. Passing a side splits
+ *  the chronological rail around the independently centered local life badge. */
+export function MajorPhaseStopRail({
+  side,
+}: {
+  side?: "left" | "right";
+} = {}) {
+  const phases = side ? MAJOR_PHASES_BY_SIDE[side] : MAJOR_PHASES;
+
   return (
     <div
       className="arena-liquid-glass-rail hidden items-center"
-      data-major-phase-stop-rail=""
+      data-major-phase-stop-rail={side ?? "all"}
     >
-      {MAJOR_PHASES.map((phase) => (
+      {phases.map((phase) => (
         <PhaseDot key={phase} phase={phase} />
       ))}
     </div>
