@@ -88,7 +88,7 @@ export function ArenaCardDetailOverlay({
           role="dialog"
           aria-modal="true"
           aria-label={t("preview.detailAriaLabel", { name: displayName })}
-          className="fixed inset-0 z-[140] flex items-center justify-center overflow-y-auto bg-black/80 px-4 py-5 backdrop-blur-[2px]"
+          className="game-no-select fixed inset-0 z-[140] flex items-center justify-center overflow-y-auto bg-black/80 px-4 py-5 backdrop-blur-[2px]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -97,6 +97,11 @@ export function ArenaCardDetailOverlay({
           onPointerDown={(event) => {
             if (event.target === event.currentTarget) onClose();
           }}
+          // The portal lives directly under document.body rather than inside
+          // GamePage's protected game surface. Cancel WebKit's native long-
+          // press callout here too, so inspection cannot turn into the iOS
+          // text-selection loupe after the overlay mounts beneath the finger.
+          onContextMenu={(event) => event.preventDefault()}
         >
           <button
             ref={closeButtonRef}

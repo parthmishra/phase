@@ -84,6 +84,19 @@ describe("ArenaCardDetailOverlay", () => {
     ).toBeTruthy();
   });
 
+  it("suppresses native iOS selection and callouts across the portal", () => {
+    const card = gameObjectFactory.withId(18).named("Touch Relic").build();
+    useGameStore.setState({
+      gameState: gameStateFactory.withPlayers(0, 1).withObjects(card).build(),
+    });
+
+    render(<ArenaCardDetailOverlay objectId={card.id} onClose={vi.fn()} />);
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveClass("game-no-select");
+    expect(fireEvent.contextMenu(dialog)).toBe(false);
+  });
+
   it("switches between the live face, original printing, and parse details", () => {
     const card = gameObjectFactory
       .withId(19)
