@@ -29,7 +29,7 @@ export function ArenaHandCommandZone({
 
   return (
     <div
-      className="relative mr-2 flex shrink-0 items-end overflow-visible"
+      className="pointer-events-none relative mr-2 flex shrink-0 items-end overflow-visible"
       data-arena-hand-command-zone={seat}
     >
       <CommanderCardZone playerId={playerId} handPresentation />

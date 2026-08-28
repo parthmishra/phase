@@ -1220,17 +1220,15 @@ select.select-dark option {
   }
 }
 
-/* Keep the landscape-phone fan comfortably above the pinned life nameplate and
-   the system gesture region. The lower card frames may still trail offscreen,
-   preserving the Arena silhouette while leaving more of each touch target
-   exposed. */
+/* Keep the mobile command card at the physical lower edge, separate from the
+   centered hand fan and the nearby world-space zone piles. */
 @media (width < 64rem) {
-  /* Let the command card trail naturally through the bottom edge: its upper
-     art half remains readable beneath the library while the rules half stays
-     outside the viewport. This is a positional cut, not an overflow crop, so
-     the same complete card still owns inspection and drag interactions. */
+  /* Let the command card trail naturally through the bottom edge: only its
+     upper art remains visible beneath the library, keeping its touch surface
+     clear of the adjacent graveyard. This is a positional cut, not an overflow
+     crop, so the same complete card still owns inspection and drag interactions. */
   [data-arena-hand-command-zone="player"] {
-    transform: translateY(calc(var(--hand-card-h) * 0.42));
+    transform: translateY(calc(var(--hand-card-h) * 0.58));
   }
 }
 
@@ -1246,7 +1244,7 @@ select.select-dark option {
   [data-arena-hand-command-zone="player"] {
     transform: translate(
       calc(var(--hand-card-w) * 0.42),
-      calc(var(--hand-card-h) * 0.42)
+      calc(var(--hand-card-h) * 0.58)
     );
   }
 }

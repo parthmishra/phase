@@ -1468,7 +1468,10 @@ function GamePageContent({
             className="grid h-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end pb-[env(safe-area-inset-bottom)]"
             data-flex-zone="playerHandRow"
           >
-            <div className="pointer-events-auto flex min-w-0 items-end justify-end pb-1">
+            {/* Keep the transparent command-zone grid cell permeable so the
+                Three.js library/graveyard piles remain touchable beneath it.
+                CommanderCardZone restores pointer events on the card itself. */}
+            <div className="pointer-events-none flex min-w-0 items-end justify-end pb-1">
               <ArenaHandCommandZone playerId={playerId} seat="player" />
             </div>
             <div className="pointer-events-none min-w-0">

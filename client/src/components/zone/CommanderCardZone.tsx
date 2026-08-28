@@ -238,7 +238,7 @@ function CommanderCard({
           : undefined
       }
       whileDrag={{ cursor: "grabbing", scale: 1.04 }}
-      className={`group relative isolate ${
+      className={`group pointer-events-auto relative isolate ${
         canCast ? "cursor-grab" : canNinjutsu ? "cursor-pointer" : "cursor-default"
       }`}
       title={

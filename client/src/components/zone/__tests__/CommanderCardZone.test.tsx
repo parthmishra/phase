@@ -198,6 +198,11 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
       ).not.toBeInTheDocument();
       expect(container.querySelector("[data-hand-command-card]"))
         .not.toHaveAttribute("data-mobile-art-crop");
+      expect(
+        container.querySelector("[data-arena-hand-command-zone='player']"),
+      ).toHaveClass("pointer-events-none");
+      expect(container.querySelector("[data-hand-command-card]"))
+        .toHaveClass("pointer-events-auto");
     } finally {
       cleanup();
       Object.defineProperty(window, "innerWidth", {
