@@ -110,6 +110,8 @@ const POD_HAND_CENTERLINE_Z = 0;
 const POD_FAR_HAND_Z = -5.05;
 const OPPONENT_HAND_SCALE = 0.9;
 const ZONE_PILE_GAP = 1.45;
+const FAR_DUEL_ZONE_Z = -5.2;
+const FAR_POD_ZONE_Z = -6.15;
 
 const DUEL_WIDTHS: Record<ArenaLane, number> = {
   creatures: 9.4,
@@ -192,20 +194,18 @@ export function arenaZoneLayout(
         };
   }
   if (seat === "far") {
-    if (tableLayout === "duel" && viewportLayout === "compact") {
-      return arenaZoneRow(Math.PI, [1.45, 0.08, -3.9]);
-    }
-    return tableLayout === "pod"
-      ? arenaZoneRow(
-          Math.PI,
-          [6.2, 0.08, -5.35],
-        )
-      : {
-          faceAngle: Math.PI,
-          library: [5.55, 0.08, -3.46],
-          graveyard: [4.1, 0.08, -3.46],
-          exile: [2.65, 0.08, -3.46],
-        };
+    // The directly opposite player's piles belong behind their upright hand,
+    // near the rear camera crop. Wide screens intentionally trim the outer
+    // card edge instead of pulling this public zone into the play lanes.
+    const libraryX = tableLayout === "pod"
+      ? 6.2
+      : viewportLayout === "compact"
+        ? 1.45
+        : 5.55;
+    const rowZ = tableLayout === "pod"
+      ? FAR_POD_ZONE_Z
+      : FAR_DUEL_ZONE_Z;
+    return arenaZoneRow(Math.PI, [libraryX, 0.08, rowZ]);
   }
   if (seat === "left") {
     const faceAngle = -CARDINAL_SIDE_SEAT_ANGLE;

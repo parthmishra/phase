@@ -10,7 +10,7 @@ describe("arenaZoneLayout", () => {
     expect(local.library).toEqual([-5.55, 0.08, 3.46]);
     expect(local.graveyard[2]).toBe(local.library[2]);
     expect(local.exile[2]).toBe(local.library[2]);
-    expect(opponent.library).toEqual([5.55, 0.08, -3.46]);
+    expect(opponent.library).toEqual([5.55, 0.08, -5.2]);
     expect(opponent.graveyard[2]).toBe(opponent.library[2]);
     expect(opponent.exile[2]).toBe(opponent.library[2]);
     expect(opponent.faceAngle).toBe(Math.PI);
@@ -23,7 +23,7 @@ describe("arenaZoneLayout", () => {
     expect(local.library).toEqual([-1.45, 0.08, 4.35]);
     expect(local.graveyard).toEqual([0, 0.08, 4.35]);
     expect(local.exile).toEqual([1.45, 0.08, 4.35]);
-    expect(opponent.library).toEqual([1.45, 0.08, -3.9]);
+    expect(opponent.library).toEqual([1.45, 0.08, -5.2]);
     expect(opponent.graveyard[0]).toBeCloseTo(0);
     expect(opponent.exile[0]).toBeCloseTo(-1.45);
   });
@@ -60,8 +60,17 @@ describe("arenaZoneLayout", () => {
     },
   );
 
-  it("pushes the top library farther toward the far edge", () => {
-    expect(arenaZoneLayout("far", "pod").library[2]).toBe(-5.35);
+  it("pushes the opposite player's pile row behind their hand toward the far crop", () => {
+    const duel = arenaZoneLayout("far", "duel");
+    const compactDuel = arenaZoneLayout("far", "duel", "compact");
+    const pod = arenaZoneLayout("far", "pod");
+
+    expect(duel.library[2]).toBe(-5.2);
+    expect(duel.graveyard[2]).toBe(-5.2);
+    expect(compactDuel.library[2]).toBe(-5.2);
+    expect(compactDuel.graveyard[2]).toBe(-5.2);
+    expect(pod.library[2]).toBe(-6.15);
+    expect(pod.graveyard[2]).toBe(-6.15);
   });
 
   it("uses square side-seat orientation for the kitchen-table view", () => {
