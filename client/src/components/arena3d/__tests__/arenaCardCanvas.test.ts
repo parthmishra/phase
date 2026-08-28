@@ -113,7 +113,9 @@ describe("drawArenaStatText", () => {
     expect(calls[calls.length - 1]).toBe("restore");
     const fontSize = Number(context.font.match(/600 ([\d.]+)px/)?.[1]);
     expect(fontSize).toBeCloseTo(52.68, 1);
-    expect(textPositions[0]?.[0]).toBeCloseTo(0.861 * 1005 - 46);
+    expect(textPositions[0]?.[0]).toBeCloseTo(
+      (0.762 + 0.198 * 0.51) * 1005 - 46,
+    );
     expect(textPositions[0]?.[1]).toBeCloseTo(
       (0.888 + 0.072 * 0.44) * 1407 + 18,
     );

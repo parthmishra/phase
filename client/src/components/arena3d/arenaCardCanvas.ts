@@ -17,9 +17,9 @@ const GEOMETRY = {
   rulesTop: 0.632,
   rulesBottom: 0.875,
   stats: { x: 0.762, y: 0.888, width: 0.198, height: 0.072 },
-  // The badge PNG has a deeper lower rim and drop shadow, so its visible
-  // recessed field is optically centered above the transparent canvas center.
-  statsTextCenter: { x: 0.5, y: 0.44 },
+  // The badge PNG has a deeper lower rim, drop shadow, and heavier left bevel,
+  // so its visible recessed field is optically above and right of canvas center.
+  statsTextCenter: { x: 0.51, y: 0.44 },
 } as const;
 const STAT_VALUE_FONT_HEIGHT_RATIO = 0.52;
 const STAT_VALUE_MAX_WIDTH_RATIO = 0.64;
@@ -234,7 +234,7 @@ export async function renderArenaStatBadgeCanvas(
   drawArenaStatValue(
     context,
     statText,
-    canvas.width / 2,
+    canvas.width * GEOMETRY.statsTextCenter.x,
     canvas.height * GEOMETRY.statsTextCenter.y,
     canvas.width,
     canvas.height,
