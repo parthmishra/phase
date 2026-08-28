@@ -1468,19 +1468,22 @@ function GamePageContent({
             className="grid h-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end pb-[env(safe-area-inset-bottom)]"
             data-flex-zone="playerHandRow"
           >
-            {/* Keep the transparent command-zone grid cell permeable so the
-                Three.js library/graveyard piles remain touchable beneath it.
-                CommanderCardZone restores pointer events on the card itself. */}
-            <div className="pointer-events-none flex min-w-0 items-end justify-end pb-1">
-              <ArenaHandCommandZone playerId={playerId} seat="player" />
-            </div>
-            <div className="pointer-events-none min-w-0">
+            <div aria-hidden className="pointer-events-none min-w-0" />
+            <div className="pointer-events-none min-w-[var(--hand-card-w)]">
               {/* Castable graveyard/exile cards remain colored wings inside the
                   main hand fan; the command zone has its own adjacent dock. */}
               <PlayerHand />
             </div>
-            <div className="pointer-events-auto flex min-w-0 items-end justify-start gap-2 pb-3 pl-4">
-              <div className="mb-20 hidden lg:block">
+            {/* Keep the transparent right-side slot permeable to the Three.js
+                battlefield. The command card and desktop phase controls restore
+                pointer events only on their own surfaces. The fixed action rail
+                remains above this z-30 dock at z-45 on compact screens. */}
+            <div
+              className="pointer-events-none flex min-w-0 items-end justify-start gap-2 pb-3 pl-4"
+              data-arena-hand-command-slot="right"
+            >
+              <ArenaHandCommandZone playerId={playerId} seat="player" />
+              <div className="pointer-events-auto mb-20 hidden lg:block">
                 <CombatPhaseIndicator />
               </div>
             </div>

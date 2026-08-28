@@ -1220,22 +1220,30 @@ select.select-dark option {
   }
 }
 
-/* Keep the mobile command card at the physical lower edge, separate from the
-   centered hand fan and the nearby world-space zone piles. */
+/* Keep the mobile command card at the physical lower edge on the hand's right.
+   Its transparent slot never intercepts the Three.js battlefield, while the
+   fixed z-45 action rail remains above this z-30 dock for reliable controls. */
 @media (width < 64rem) {
-  /* Let the command card trail naturally through the bottom edge: only its
-     upper art remains visible beneath the library, keeping its touch surface
-     clear of the adjacent graveyard. This is a positional cut, not an overflow
-     crop, so the same complete card still owns inspection and drag interactions. */
+  /* Tuck the card slightly back toward the fan and let it trail naturally
+     through the bottom edge. This is a positional cut, not an overflow crop,
+     so its visible crown still owns inspection and drag interactions. */
   [data-arena-hand-command-zone="player"] {
+    margin-left: 0.5rem;
     transform: translate(
-      calc(var(--hand-card-w) * -0.12),
+      calc(var(--hand-card-w) * -0.18),
       calc(var(--hand-card-h) * 0.58)
     );
   }
 }
 
 @media (width < 64rem) and (orientation: landscape) {
+  [data-arena-hand-command-zone="player"] {
+    transform: translate(
+      calc(var(--hand-card-w) * -0.18),
+      calc(var(--hand-card-h) * 0.64)
+    );
+  }
+
   [data-flex-zone="playerHandRow"] {
     transform: translateY(
       calc(-1 * max(env(safe-area-inset-bottom), 1.25rem))
