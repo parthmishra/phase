@@ -23,6 +23,7 @@ const GEOMETRY = {
 } as const;
 const STAT_VALUE_FONT_HEIGHT_RATIO = 0.52;
 const STAT_VALUE_MAX_WIDTH_RATIO = 0.64;
+const STAT_POWER_TOUGHNESS_SEPARATOR = "\u200a/\u200a";
 
 /** Shared crop boundaries used by the Three.js battlefield presentation. */
 export const ARENA_CARD_ART_BOTTOM_RATIO =
@@ -209,7 +210,7 @@ export function arenaCardStatText(
       ? null
       : presentation.toughness - presentation.damageMarked;
   return presentation.power != null && effectiveToughness != null
-    ? `${presentation.power}/${effectiveToughness}`
+    ? `${presentation.power}${STAT_POWER_TOUGHNESS_SEPARATOR}${effectiveToughness}`
     : presentation.loyalty == null
       ? null
       : String(presentation.loyalty);

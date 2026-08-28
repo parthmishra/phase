@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  arenaCardStatText,
   arenaFrameLetter,
   drawArenaStatText,
   fitArenaStatFontSize,
   fitArenaCardTitle,
   tokenizeArenaRulesParagraph,
 } from "../arenaCardCanvas.ts";
+
+describe("arenaCardStatText", () => {
+  it("uses narrow typographic spacing around the P/T separator", () => {
+    expect(
+      arenaCardStatText({
+        damageMarked: 1,
+        loyalty: null,
+        power: 12,
+        toughness: 13,
+      }),
+    ).toBe("12\u200a/\u200a12");
+  });
+});
 
 describe("arenaFrameLetter", () => {
   it("selects the matching monocolor frame", () => {

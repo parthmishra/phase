@@ -348,21 +348,11 @@ async function renderArenaBattlefieldCardCanvas(
 
   drawManaSymbols(context, presentation.manaSymbols, TEXTURE_WIDTH - 16, 27);
 
-  const toughness =
-    presentation.toughness == null
-      ? null
-      : presentation.toughness - presentation.damageMarked;
-  if (presentation.power != null && toughness != null) {
+  const statText = arenaCardStatText(presentation);
+  if (statText) {
     drawStatBadge(
       context,
-      `${presentation.power}/${toughness}`,
-      TEXTURE_WIDTH - 18,
-      TEXTURE_HEIGHT - 27,
-    );
-  } else if (presentation.loyalty != null) {
-    drawStatBadge(
-      context,
-      String(presentation.loyalty),
+      statText,
       TEXTURE_WIDTH - 18,
       TEXTURE_HEIGHT - 27,
     );
