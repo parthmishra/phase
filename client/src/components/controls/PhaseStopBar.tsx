@@ -107,8 +107,8 @@ const MAJOR_PHASES: Phase[] = [
   "End",
 ];
 const MAJOR_PHASES_BY_SIDE: Record<"left" | "right", Phase[]> = {
-  left: ["Upkeep", "PreCombatMain"],
-  right: ["BeginCombat", "PostCombatMain", "End"],
+  left: MAJOR_PHASES.slice(0, 2),
+  right: MAJOR_PHASES.slice(2),
 };
 
 // i18n key suffix per phase, used to look up the localized label/description
@@ -241,23 +241,26 @@ function PhaseDot({ phase }: { phase: Phase }) {
   );
 }
 
-/** Compact major-phase stops for the shared Arena HUD. Passing a side splits
- *  the chronological rail around the independently centered local life badge. */
-export function MajorPhaseStopRail({
-  side,
-}: {
-  side?: "left" | "right";
-} = {}) {
-  const phases = side ? MAJOR_PHASES_BY_SIDE[side] : MAJOR_PHASES;
-
+/** One continuous major-phase rail for the shared Arena HUD. The empty center
+ *  lane sits beneath the independently centered local life badge; equal-width
+ *  phase groups keep the rail itself centered despite the 2/3 phase split. */
+export function MajorPhaseStopRail() {
   return (
     <div
       className="arena-liquid-glass-rail hidden items-center"
-      data-major-phase-stop-rail={side ?? "all"}
+      data-major-phase-stop-rail="all"
     >
-      {phases.map((phase) => (
-        <PhaseDot key={phase} phase={phase} />
-      ))}
+      <div data-phase-stop-rail-section="left">
+        {MAJOR_PHASES_BY_SIDE.left.map((phase) => (
+          <PhaseDot key={phase} phase={phase} />
+        ))}
+      </div>
+      <span aria-hidden data-phase-stop-rail-center-gap="" />
+      <div data-phase-stop-rail-section="right">
+        {MAJOR_PHASES_BY_SIDE.right.map((phase) => (
+          <PhaseDot key={phase} phase={phase} />
+        ))}
+      </div>
     </div>
   );
 }

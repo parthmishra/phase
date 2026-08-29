@@ -109,17 +109,15 @@ describe("PhaseStopBar", () => {
     expect(activePhase).not.toHaveClass("bg-cyan-950/82");
   });
 
-  it("splits the major phases chronologically around the life badge", () => {
-    const { container } = render(
-      <>
-        <MajorPhaseStopRail side="left" />
-        <MajorPhaseStopRail side="right" />
-      </>,
-    );
+  it("keeps one continuous rail with a center lane for the life badge", () => {
+    const { container } = render(<MajorPhaseStopRail />);
 
-    const left = container.querySelector('[data-major-phase-stop-rail="left"]');
-    const right = container.querySelector('[data-major-phase-stop-rail="right"]');
+    const rail = container.querySelector('[data-major-phase-stop-rail="all"]');
+    const left = rail?.querySelector('[data-phase-stop-rail-section="left"]');
+    const right = rail?.querySelector('[data-phase-stop-rail-section="right"]');
 
+    expect(container.querySelectorAll("[data-major-phase-stop-rail]")).toHaveLength(1);
+    expect(rail?.querySelector("[data-phase-stop-rail-center-gap]")).toBeInTheDocument();
     expect(
       Array.from(left?.querySelectorAll("[data-phase-stop-dot]") ?? []).map(
         (dot) => dot.getAttribute("data-phase-stop-dot"),

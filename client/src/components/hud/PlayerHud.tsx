@@ -140,10 +140,10 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
       }`}
     >
       <div
-        className="pointer-events-auto absolute right-full z-10 flex items-center"
-        data-player-hud-phase-stop-flank="left"
+        className="pointer-events-auto absolute left-1/2 z-[1] flex -translate-x-1/2 items-center"
+        data-player-hud-phase-stop-rail=""
       >
-        <MajorPhaseStopRail side="left" />
+        <MajorPhaseStopRail />
       </div>
       <HudPlate
         label={getPlayerDisplayName(playerId, playerId)}
@@ -161,12 +161,6 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
           <LifeTotal playerId={playerId} size="lg" hideLabel />
         </div>
       </HudPlate>
-      <div
-        className="pointer-events-auto absolute left-full z-10 flex items-center"
-        data-player-hud-phase-stop-flank="right"
-      >
-        <MajorPhaseStopRail side="right" />
-      </div>
       <div
         className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center justify-center gap-1 [&>*]:pointer-events-auto"
         data-player-hud-edge-statuses=""

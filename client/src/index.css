@@ -910,6 +910,10 @@ select.select-dark option {
       clamp(2.25rem, min(6dvw, 10dvh), 2.5rem);
     --mobile-player-hud-body-width:
       clamp(3.5rem, calc(var(--mobile-player-hud-body-height) * 1.55), 4rem);
+    --player-phase-rail-height:
+      calc(var(--mobile-player-hud-body-height) - 0.5rem);
+    --player-phase-dot-size:
+      calc(var(--player-phase-rail-height) - 0.125rem);
   }
 
   [data-local-player-hud][data-edge-pill-layout="true"] [data-hud-plate] {
@@ -927,26 +931,47 @@ select.select-dark option {
   }
 
   [data-major-phase-stop-rail] {
-    display: flex;
+    display: grid;
+    grid-template-columns:
+      calc(var(--player-phase-dot-size) * 3)
+      var(--mobile-player-hud-body-width)
+      calc(var(--player-phase-dot-size) * 3);
     width: auto;
     max-width: none;
-    height: var(--mobile-player-hud-body-height, 2.5rem);
-    min-height: var(--mobile-player-hud-body-height, 2.5rem);
+    height: var(--player-phase-rail-height);
+    min-height: var(--player-phase-rail-height);
     justify-content: center;
     gap: 0;
     margin: 0;
-    padding: 0.125rem 0.3125rem;
+    padding: 0 0.25rem;
   }
 
-  [data-player-hud-phase-stop-flank] {
-    bottom: 0;
-    margin-inline: 0;
+  [data-player-hud-phase-stop-rail] {
+    bottom:
+      calc(
+        (var(--mobile-player-hud-body-height) - var(--player-phase-rail-height))
+        / 2
+      );
+  }
+
+  [data-phase-stop-rail-section] {
+    display: flex;
+    width: calc(var(--player-phase-dot-size) * 3);
+    height: 100%;
+    align-items: center;
+    justify-content: space-evenly;
+  }
+
+  [data-phase-stop-rail-center-gap] {
+    display: block;
+    width: var(--mobile-player-hud-body-width);
+    height: 100%;
   }
 
   [data-major-phase-stop-rail] [data-phase-stop-dot] {
-    width: clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem) !important;
-    height: clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem) !important;
-    flex: 0 0 clamp(1.75rem, min(4.5dvw, 5.5dvh), 2rem);
+    width: var(--player-phase-dot-size) !important;
+    height: var(--player-phase-dot-size) !important;
+    flex: 0 0 var(--player-phase-dot-size);
     border-radius: 9999px;
   }
 
