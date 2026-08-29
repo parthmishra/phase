@@ -12,7 +12,9 @@ import {
   arenaLaneZoneLayouts,
   arenaZoneLayout,
   assignArenaOpponentSeats,
+  expandArenaAttachmentPlacements,
   fitArenaLaneCards,
+  layoutArenaAttachmentStaircase,
   layoutArenaSeat,
   spreadPositions,
   type ArenaPlacement,
@@ -223,6 +225,70 @@ describe("fitArenaLaneCards", () => {
         expect(separation).toBeGreaterThan(previous.depth);
       }
     }
+  });
+});
+
+describe("arena attachment staircases", () => {
+  const host: ArenaPlacement = {
+    objectId: 1,
+    pileCount: 1,
+    lane: "creatures",
+    position: [2, 0.16, 3],
+    faceAngle: 0,
+    attackVector: [0, -1],
+    cardScale: 1,
+  };
+
+  it("steps successive attachments along local depth and world height", () => {
+    const stairs = layoutArenaAttachmentStaircase(host, [2, 3, 4]);
+
+    expect(stairs).toHaveLength(3);
+    expect(stairs[0].position[1]).toBeGreaterThan(host.position[1]);
+    expect(stairs[0].position[2]).toBeGreaterThan(host.position[2]);
+    expect(stairs[1].position[1]).toBeGreaterThan(stairs[0].position[1]);
+    expect(stairs[1].position[2]).toBeGreaterThan(stairs[0].position[2]);
+    expect(stairs[2].position[1]).toBeGreaterThan(stairs[1].position[1]);
+    expect(stairs[2].position[2]).toBeGreaterThan(stairs[1].position[2]);
+    expect(stairs[0].position[0]).not.toBe(stairs[1].position[0]);
+    expect(stairs.every(({ pileCount }) => pileCount === 1)).toBe(true);
+  });
+
+  it("rotates the local staircase axis with side and far seats", () => {
+    const far = layoutArenaAttachmentStaircase(
+      { ...host, faceAngle: Math.PI },
+      [2],
+    )[0];
+    const side = layoutArenaAttachmentStaircase(
+      { ...host, faceAngle: Math.PI / 2 },
+      [2],
+    )[0];
+
+    expect(far.position[2]).toBeLessThan(host.position[2]);
+    expect(side.position[0]).toBeGreaterThan(host.position[0]);
+  });
+
+  it("keeps large attachment stacks within a bounded footprint", () => {
+    const stairs = layoutArenaAttachmentStaircase(
+      host,
+      Array.from({ length: 20 }, (_, index) => index + 2),
+    );
+    const top = stairs[stairs.length - 1];
+
+    expect(top.position[2] - host.position[2]).toBeCloseTo(1.36);
+    expect(top.position[1] - host.position[1]).toBeCloseTo(0.44);
+  });
+
+  it("recursively expands engine-authored attachment trees once", () => {
+    const expanded = expandArenaAttachmentPlacements([host], {
+      1: { cards: [{ objectId: 2 }, { objectId: 3 }] },
+      2: { cards: [{ objectId: 4 }] },
+      4: { cards: [{ objectId: 1 }] },
+    });
+
+    expect(expanded.map(({ objectId }) => objectId)).toEqual([1, 2, 4, 3]);
+    const nested = expanded.find(({ objectId }) => objectId === 4);
+    const parent = expanded.find(({ objectId }) => objectId === 2);
+    expect(nested?.position[1]).toBeGreaterThan(parent?.position[1] ?? 0);
   });
 });
 

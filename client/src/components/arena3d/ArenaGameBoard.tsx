@@ -19,6 +19,7 @@ import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
 import {
   assignArenaOpponentSeats,
+  expandArenaAttachmentPlacements,
   layoutArenaSeat,
   type ArenaSeatAssignment,
   type ArenaTableLayout,
@@ -48,6 +49,9 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
   props: ArenaGameBoardProps,
 ) {
   const gameState = useGameStore((state) => state.gameState);
+  const attachmentViews = useGameStore(
+    (state) => state.viewerInteraction?.attachmentViews,
+  );
   const dismissPreview = useUiStore((state) => state.dismissPreview);
   const [detailObjectId, setDetailObjectId] = useState<ObjectId | null>(null);
   const perspectivePlayerId = usePerspectivePlayerId();
@@ -87,16 +91,22 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
       ),
     [gameState, opponentSeats],
   );
-  const placements = useMemo(
-    () => [
+  const placements = useMemo(() => {
+    const hosts = [
       ...layoutArenaSeat(playerView, "local", tableLayout),
       ...opponentSeats.flatMap(({ playerId, seat }) => {
         const view = opponentViews.get(playerId);
         return view ? layoutArenaSeat(view, seat, tableLayout) : [];
       }),
-    ],
-    [opponentSeats, opponentViews, playerView, tableLayout],
-  );
+    ];
+    return expandArenaAttachmentPlacements(hosts, attachmentViews ?? {});
+  }, [
+    attachmentViews,
+    opponentSeats,
+    opponentViews,
+    playerView,
+    tableLayout,
+  ]);
   const showCardDetails = useCallback(
     (objectId: ObjectId) => {
       dismissPreview();

@@ -59,6 +59,17 @@ export interface ArenaPlacement {
   cardScale: number;
 }
 
+interface ArenaAttachmentViewLike {
+  cards: readonly { objectId: ObjectId }[];
+}
+
+const ATTACHMENT_DEPTH_STRIDE = 0.34;
+const ATTACHMENT_RISE_STRIDE = 0.11;
+const ATTACHMENT_MAX_DEPTH_SPAN = 1.36;
+const ATTACHMENT_MAX_RISE = 0.44;
+const ATTACHMENT_LATERAL_SWAY = 0.035;
+const ATTACHMENT_ANGLE_SWAY = 0.035;
+
 export interface ArenaZoneLayout {
   faceAngle: number;
   library: [number, number, number];
@@ -145,6 +156,86 @@ export function layoutArenaSeat(
     ...layoutLane(support, "support", frame),
     ...layoutLane(view.lands, "lands", frame),
   ];
+}
+
+/**
+ * Expands engine-authored attachment trees into shallow, seat-relative 3D
+ * staircases. Every child remains an independent placement and therefore an
+ * independent interaction surface; this helper changes presentation only.
+ */
+export function expandArenaAttachmentPlacements(
+  hosts: readonly ArenaPlacement[],
+  attachmentViews: Readonly<Record<number, ArenaAttachmentViewLike>>,
+): ArenaPlacement[] {
+  const expanded: ArenaPlacement[] = [];
+  const placed = new Set<ObjectId>();
+
+  const appendTree = (host: ArenaPlacement) => {
+    if (placed.has(host.objectId)) return;
+    placed.add(host.objectId);
+    expanded.push(host);
+
+    const attachmentIds = attachmentViews[host.objectId]?.cards.map(
+      ({ objectId }) => objectId,
+    ) ?? [];
+    for (const attachment of layoutArenaAttachmentStaircase(
+      host,
+      attachmentIds,
+    )) {
+      appendTree(attachment);
+    }
+  };
+
+  for (const host of hosts) appendTree(host);
+  return expanded;
+}
+
+/**
+ * Steps attachments toward their controller's seat along the host card's local
+ * depth axis while lifting each successive card. A small alternating sway
+ * keeps the stack from reading as one thick rectangular block.
+ */
+export function layoutArenaAttachmentStaircase(
+  host: ArenaPlacement,
+  attachmentIds: readonly ObjectId[],
+): ArenaPlacement[] {
+  if (attachmentIds.length === 0) return [];
+
+  const depthStride = Math.min(
+    ATTACHMENT_DEPTH_STRIDE,
+    ATTACHMENT_MAX_DEPTH_SPAN / attachmentIds.length,
+  ) * host.cardScale;
+  const riseStride = Math.min(
+    ATTACHMENT_RISE_STRIDE,
+    ATTACHMENT_MAX_RISE / attachmentIds.length,
+  ) * host.cardScale;
+  const tangentX = Math.cos(host.faceAngle);
+  const tangentZ = -Math.sin(host.faceAngle);
+  const depthX = Math.sin(host.faceAngle);
+  const depthZ = Math.cos(host.faceAngle);
+
+  return attachmentIds.map((objectId, index) => {
+    const level = index + 1;
+    const swayDirection = index % 2 === 0 ? -1 : 1;
+    const lateralOffset =
+      swayDirection * ATTACHMENT_LATERAL_SWAY * host.cardScale;
+    return {
+      ...host,
+      objectId,
+      pileCount: 1,
+      position: [
+        host.position[0]
+          + depthX * depthStride * level
+          + tangentX * lateralOffset,
+        host.position[1] + riseStride * level,
+        host.position[2]
+          + depthZ * depthStride * level
+          + tangentZ * lateralOffset,
+      ],
+      faceAngle:
+        host.faceAngle + swayDirection * ATTACHMENT_ANGLE_SWAY,
+    };
+  });
 }
 
 export function assignArenaOpponentSeats(
