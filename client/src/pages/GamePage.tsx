@@ -1498,7 +1498,7 @@ function GamePageContent({
         className="arena-command-shelf fixed z-[45] flex flex-col items-end gap-1.5 p-0 max-lg:portrait:w-[calc(100%-1rem-env(safe-area-inset-left)-env(safe-area-inset-right))] max-lg:portrait:flex-row max-lg:portrait:items-stretch max-lg:portrait:justify-between max-lg:portrait:gap-2"
         style={{
           bottom:
-            "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + 0.4rem)",
+            "calc(env(safe-area-inset-bottom) + var(--action-btn-bottom) + var(--action-btn-commander-clearance, 0rem) + 0.4rem)",
           right:
             "calc(var(--game-control-lower-inline) + var(--game-right-rail-offset, 0px))",
           // Anchor box-scale to the docked corner so it grows inward, not off-screen.

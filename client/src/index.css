@@ -947,11 +947,7 @@ select.select-dark option {
   }
 
   [data-player-hud-phase-stop-rail] {
-    bottom:
-      calc(
-        (var(--mobile-player-hud-body-height) - var(--player-phase-rail-height))
-        / 2
-      );
+    bottom: 0;
   }
 
   [data-phase-stop-rail-section] {
@@ -1267,6 +1263,16 @@ select.select-dark option {
 }
 
 @media (width < 64rem) and (orientation: landscape) {
+  /* The command card deliberately trails through the near edge. On compact
+     landscape viewports its visible crown shares the lower-right lane with
+     transient game actions, so reserve that crown's height before positioning
+     Next/Pass (and the equivalent stack-resolution actions). */
+  body:has([data-arena-hand-command-zone="player"])
+    [data-flex-zone="actionRail"]:has([data-action-button-panel]) {
+    --action-btn-commander-clearance:
+      clamp(4rem, calc(var(--hand-card-h) * 0.6), 5rem);
+  }
+
   [data-arena-hand-command-zone="player"] {
     transform: translate(
       calc(var(--hand-card-w) * -0.18),
