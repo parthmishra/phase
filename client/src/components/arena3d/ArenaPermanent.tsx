@@ -346,8 +346,6 @@ export function ArenaPermanent({
           {lane === "lands" && pilePresentation.visibleCardCount > 1 && (
             <ArenaLandPileLayers
               count={pilePresentation.visibleCardCount - 1}
-              faceGeometry={faceGeometry}
-              faceTexture={faceTexture}
             />
           )}
           {visualState.underglow && (
@@ -523,16 +521,10 @@ function makePileBadgeTexture(text: string): THREE.CanvasTexture {
 
 interface ArenaLandPileLayersProps {
   count: number;
-  faceGeometry: THREE.ShapeGeometry;
-  faceTexture: THREE.Texture | null;
 }
 
-/** Decorative, non-interactive copies underneath the authoritative top card. */
-function ArenaLandPileLayers({
-  count,
-  faceGeometry,
-  faceTexture,
-}: ArenaLandPileLayersProps) {
+/** Decorative, non-interactive black card silhouettes beneath the top card. */
+function ArenaLandPileLayers({ count }: ArenaLandPileLayersProps) {
   const layers = [
     { x: -0.032, y: -0.008, z: 0.042, rotation: -0.014 },
     { x: 0.047, y: -0.016, z: 0.084, rotation: 0.021 },
@@ -554,20 +546,9 @@ function ArenaLandPileLayers({
             receiveShadow
           >
             <meshStandardMaterial
-              color="#070808"
-              roughness={0.8}
+              color="#030405"
+              roughness={0.84}
               metalness={0}
-            />
-          </mesh>
-          <mesh
-            geometry={faceGeometry}
-            rotation={[-Math.PI / 2, 0, 0]}
-            position={[0, 0.003, 0]}
-          >
-            <meshBasicMaterial
-              map={faceTexture}
-              color={faceTexture ? "#ffffff" : "#171a20"}
-              toneMapped={false}
             />
           </mesh>
         </group>
