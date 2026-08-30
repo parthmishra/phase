@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import type { PanInfo } from "framer-motion";
 import { useTranslation } from "react-i18next";
 
@@ -14,6 +14,7 @@ import { getPlayerId, useCanActForWaitingState } from "../../hooks/usePlayerId.t
 import { useDragToCast } from "../../hooks/useDragToCast.ts";
 import { cardImageLookup } from "../../services/cardImageLookup.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
+import { usePreferencesStore } from "../../stores/preferencesStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import {
   collectObjectActions,
@@ -98,6 +99,18 @@ function CommanderCard({
   const setPendingAbilityChoice = useUiStore((s) => s.setPendingAbilityChoice);
   const { handlers: hoverHandlers, firedRef } = useCardHover(commander.id);
   const tax = commander.commander_tax ?? 0;
+  const shouldReduceMotion = useReducedMotion();
+  const animationSpeedMultiplier = usePreferencesStore(
+    (state) => state.animationSpeedMultiplier,
+  );
+  const animateSteam = !shouldReduceMotion && animationSpeedMultiplier > 0;
+  const steamStyle = animateSteam
+    ? { animationDuration: `${2.7 * animationSpeedMultiplier}s` }
+    : {
+        animation: "none",
+        opacity: 0.16,
+        transform: "translate3d(0, -8%, 0)",
+      };
 
   // Engine authority (GameAction::source_object): both CastSpell (cast from the
   // command zone) and ActivateNinjutsu (commander ninjutsu, CR 702.49d) anchor
@@ -266,11 +279,25 @@ function CommanderCard({
       }}
       data-hand-command-card={handPresentation || undefined}
     >
-      {handPresentation && (canCast || canNinjutsu) && (
+      {canCast && (
         <div
           aria-hidden
-          className="arena-command-castable-aura absolute -inset-[8%] -z-10 rounded-[12%] opacity-80"
-        />
+          data-commander-cast-aura
+          className="arena-command-castable-aura pointer-events-none absolute -inset-x-[12%] -inset-y-[8%] z-20 rounded-[14%]"
+        >
+          <span
+            className="arena-command-castable-steam arena-command-castable-steam--one"
+            style={steamStyle}
+          />
+          <span
+            className="arena-command-castable-steam arena-command-castable-steam--two"
+            style={steamStyle}
+          />
+          <span
+            className="arena-command-castable-steam arena-command-castable-steam--three"
+            style={steamStyle}
+          />
+        </div>
       )}
 
       {handPresentation ? (
@@ -279,7 +306,7 @@ function CommanderCard({
           objectId={commander.id}
           displayCost={displayCost}
           isCostReduced={isReduced}
-          className="h-full w-full shadow-[0_10px_22px_rgba(0,0,0,0.46)]"
+          className="relative z-10 h-full w-full shadow-[0_10px_22px_rgba(0,0,0,0.46)]"
           style={{ height: "100%", width: "100%" }}
         />
       ) : (
@@ -298,7 +325,7 @@ function CommanderCard({
       )}
 
       {/* Actionable glow ring — castable or commander-ninjutsu available */}
-      {!handPresentation && (canCast || canNinjutsu) && (
+      {!handPresentation && canNinjutsu && (
         <div className={`absolute inset-0 rounded-lg ${CASTABLE_AFFORDANCE_ACTIVE}`} />
       )}
 

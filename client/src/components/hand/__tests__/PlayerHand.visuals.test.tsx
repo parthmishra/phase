@@ -30,8 +30,8 @@ afterEach(() => {
   });
 });
 
-describe("PlayerHand playable edge", () => {
-  it("renders a dedicated thick cyan edge over a playable card", () => {
+describe("PlayerHand castable glow", () => {
+  it("renders a cyan shimmer outside a castable card without recoloring its frame", () => {
     const card = gameObjectFactory
       .withId(401)
       .inHand()
@@ -58,10 +58,12 @@ describe("PlayerHand playable edge", () => {
     });
 
     const { container } = render(<PlayerHand />);
-    const edge = container.querySelector("[data-playable-hand-card-edge]");
+    const glow = container.querySelector("[data-castable-card-glow]");
 
-    expect(edge).not.toBeNull();
-    expect(edge).toHaveClass("border-[3px]", "border-cyan-300/95");
+    expect(glow).not.toBeNull();
+    expect(glow).toHaveClass("-inset-[6px]");
+    expect(glow?.className).not.toContain("border");
+    expect(glow?.className).not.toContain("ring-");
   });
 
   it("does not apply the spell-cast edge to a playable land", () => {
@@ -94,7 +96,7 @@ describe("PlayerHand playable edge", () => {
     const { container } = render(<PlayerHand />);
 
     expect(
-      container.querySelector("[data-playable-hand-card-edge]"),
+      container.querySelector("[data-castable-card-glow]"),
     ).toBeNull();
   });
 });

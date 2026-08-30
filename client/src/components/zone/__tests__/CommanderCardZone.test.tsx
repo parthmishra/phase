@@ -178,9 +178,10 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
     );
 
     expect(container.querySelector("[data-hand-command-card]")).toBeInTheDocument();
-    expect(
-      container.querySelector(".arena-command-castable-aura"),
-    ).toBeInTheDocument();
+    expect(container.querySelector("[data-commander-cast-aura]"))
+      .toBeInTheDocument();
+    expect(container.querySelectorAll(".arena-command-castable-steam"))
+      .toHaveLength(3);
   });
 
   it("renders the complete mobile hand commander without a clipped viewport", () => {

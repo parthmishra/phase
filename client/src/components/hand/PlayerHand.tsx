@@ -62,6 +62,7 @@ import {
 import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 import { StormCopyBadge } from "./StormCopyBadge.tsx";
 import { useHandScrubPreview } from "./useHandScrubPreview.ts";
+import { CastableCardGlow } from "./CastableCardGlow.tsx";
 
 // Stable empty lookup so an undefined `objects` (pre-game) never busts the
 // organizer's filter memo with a fresh `{}` each render.
@@ -1075,12 +1076,6 @@ const HandCard = memo(function HandCard({
     setPreviewSticky(true);
   });
 
-  const glowClass = hasPriority
-    ? isCastable
-      ? "shadow-[0_0_20px_4px_rgba(94,184,198,0.42)]"
-      : ""
-    : "";
-
   // `rotation`, `arcOffset` and `marginLeft` come from the parent's whole-row
   // `fanGeometry` (sized by hand + wing count) so the hand stays continuous with
   // any castable wings. `index`/`handSize` remain purely for the reorder system.
@@ -1188,7 +1183,7 @@ const HandCard = memo(function HandCard({
         {...(enableHover ? longPressHandlers : {})}
       >
         <motion.div
-          className={`relative rounded-lg ${glowClass} ${isSelected ? "ring-1 ring-[#d8cfb2]/75" : ""}`}
+          className={`relative isolate rounded-lg ${isSelected ? "ring-1 ring-[#d8cfb2]/75" : ""}`}
           style={{
             x: displaceX,
             rotate: shouldReduceMotion ? 0 : dragRoll,
@@ -1197,18 +1192,15 @@ const HandCard = memo(function HandCard({
             transformOrigin: "50% 82%",
           }}
         >
+          {hasPriority && isCastable && (
+            <CastableCardGlow className="z-0" />
+          )}
           <ArenaCardFace
             objectId={objectId}
             displayCost={displayCost}
             isCostReduced={isReduced}
+            className="relative z-10"
           />
-          {hasPriority && isCastable && (
-            <div
-              aria-hidden
-              data-playable-hand-card-edge
-              className="pointer-events-none absolute inset-[1px] z-40 rounded-[4.4%/3.15%] border-[3px] border-cyan-300/95 shadow-[inset_0_0_5px_rgba(255,255,255,0.65),0_0_12px_2px_rgba(34,211,238,0.72)]"
-            />
-          )}
           {stormCopyCount !== undefined && (
             <StormCopyBadge count={stormCopyCount} variant="fan" />
           )}

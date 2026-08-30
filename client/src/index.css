@@ -701,24 +701,62 @@ select.select-dark option {
   }
 }
 
-/* Castability is a quiet sea-glass underlight. It stays behind the matte card
-   and avoids rotating borders or motion that could compete with game state. */
+/* Castable commanders carry a restrained gold heat haze behind the card. The
+   printed frame stays untouched; three wisps drift upward without taking input. */
 .arena-command-castable-aura {
-  background:
-    radial-gradient(ellipse at 50% 90%, rgb(105 190 198 / 38%), transparent 64%),
-    linear-gradient(
-      180deg,
-      transparent 42%,
-      rgb(91 166 181 / 16%) 78%,
-      rgb(115 202 204 / 28%)
-    );
   box-shadow:
-    0 7px 16px rgb(88 179 191 / 24%),
-    0 0 24px rgb(88 179 191 / 12%);
-  filter: blur(7px);
+    0 7px 15px 5px rgb(245 158 11 / 34%),
+    0 0 27px 8px rgb(251 191 36 / 22%);
+  filter: blur(5px);
+}
+
+.arena-command-castable-steam {
+  position: absolute;
+  bottom: 8%;
+  width: 18%;
+  height: 58%;
+  border-radius: 999px;
+  background: linear-gradient(0deg, rgb(251 191 36 / 34%), rgb(254 240 138 / 5%));
+  filter: blur(6px);
+  opacity: 0;
+  animation: arena-command-steam 2.7s ease-in-out infinite;
+}
+
+.arena-command-castable-steam--one {
+  left: 21%;
+}
+
+.arena-command-castable-steam--two {
+  left: 43%;
+  animation-delay: -0.9s;
+}
+
+.arena-command-castable-steam--three {
+  left: 64%;
+  animation-delay: -1.8s;
+}
+
+@keyframes arena-command-steam {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8%, 0) scaleX(0.72);
+  }
+  34% {
+    opacity: 0.48;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(10%, -38%, 0) scaleX(1.18);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .arena-command-castable-steam {
+    animation: none;
+    opacity: 0.16;
+    transform: translate3d(0, -8%, 0);
+  }
+
   .menu-scene::before {
     animation: none;
     opacity: 0.08;

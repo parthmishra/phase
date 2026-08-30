@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useReducedMotion } from "framer-motion";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -30,6 +31,10 @@ import { ArenaCardGlow } from "./ArenaCardGlow.tsx";
 import { useArenaCardTextures } from "./useArenaCardTexture.ts";
 import { useArenaCardHold } from "./useArenaCardHold.ts";
 import { useArenaPermanentInteraction } from "./useArenaPermanentInteraction.ts";
+import {
+  arenaFlyingBobOffset,
+  isFlyingCreature,
+} from "./arenaAmbientMotion.ts";
 import type { ObjectId } from "../../adapter/types.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
@@ -107,6 +112,10 @@ export function ArenaPermanent({
   const animationSpeedMultiplier = usePreferencesStore(
     (state) => state.animationSpeedMultiplier,
   );
+  const shouldReduceMotion = useReducedMotion();
+  const floats = isFlyingCreature(object)
+    && !shouldReduceMotion
+    && animationSpeedMultiplier > 0;
   const groupRef = useRef<THREE.Group>(null);
   const surfaceRef = useRef<THREE.Group>(null);
   const bottomFrameRef = useRef<THREE.Mesh>(null);
@@ -205,11 +214,12 @@ export function ArenaPermanent({
     object?.tapped,
     position,
     faceTexture,
+    floats,
   ]);
 
   const visuallyTapped = object?.tapped === true || interaction.isAttacking;
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
@@ -263,7 +273,15 @@ export function ArenaPermanent({
       interaction.isHovered,
     );
     const targetX = targetPose.x;
-    const targetY = targetPose.y;
+    const targetY = targetPose.y + (
+      floats
+        ? arenaFlyingBobOffset(
+            state.clock.elapsedTime,
+            objectId,
+            animationSpeedMultiplier,
+          )
+        : 0
+    );
     const targetZ = targetPose.z;
     const targetRotation = targetPose.rotationY;
     const targetScale = cardScale;
@@ -285,7 +303,7 @@ export function ArenaPermanent({
       || Math.abs(group.position.z - targetZ) > 0.001
       || Math.abs(angleDelta(group.rotation.y, targetRotation)) > 0.001
       || Math.abs(group.scale.x - targetScale) > 0.001;
-    if (unsettled || (arrivalReady && arrivalProgress < 1)) invalidate();
+    if (floats || unsettled || (arrivalReady && arrivalProgress < 1)) invalidate();
   });
 
   if (!object) return null;

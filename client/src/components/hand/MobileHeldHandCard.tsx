@@ -14,6 +14,7 @@ import { useGameStore } from "../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
 import type { MobileHandGesture } from "../../stores/uiStore.ts";
 import { spellCostDisplay } from "../../viewmodel/costLabel.ts";
+import { castActionsForObject } from "../../viewmodel/cardActionChoice.ts";
 import { CardImage } from "../card/CardImage.tsx";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 import { StormCopyBadge } from "./StormCopyBadge.tsx";
@@ -35,6 +36,7 @@ export function MobileHeldHandCard({ gesture, object, stormCopyCount }: MobileHe
   const effectiveCost = useGameStore((s) =>
     object ? s.spellCosts[String(object.id)] : undefined,
   );
+  const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
   const shouldReduceMotion = useReducedMotion();
   const animationSpeedMultiplier = usePreferencesStore((s) => s.animationSpeedMultiplier);
   const dragOffsetX = useMotionValue(gesture?.offsetX ?? 0);
@@ -84,11 +86,15 @@ export function MobileHeldHandCard({ gesture, object, stormCopyCount }: MobileHe
   }
 
   const { displayCost, isReduced } = spellCostDisplay(effectiveCost, object.mana_cost);
+  const isCastable = castActionsForObject(
+    legalActionsByObject,
+    object.id,
+  ).length > 0;
   const { sourceOrigin } = gesture;
   const highlightClass = gesture.castReady
     ? "ring-2 ring-amber-300 shadow-[0_0_22px_6px_rgba(251,191,36,0.72)]"
-    : gesture.playable
-      ? "ring-2 ring-cyan-400 shadow-[0_0_16px_4px_rgba(34,211,238,0.6)]"
+    : gesture.playable && isCastable
+      ? "shadow-[0_0_16px_5px_rgba(34,211,238,0.68),0_0_28px_9px_rgba(14,165,233,0.28)]"
       : "";
 
   return createPortal(
