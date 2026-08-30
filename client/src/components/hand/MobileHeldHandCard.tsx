@@ -94,7 +94,7 @@ export function MobileHeldHandCard({ gesture, object, stormCopyCount }: MobileHe
   const highlightClass = gesture.castReady
     ? "ring-2 ring-amber-300 shadow-[0_0_22px_6px_rgba(251,191,36,0.72)]"
     : gesture.playable && isCastable
-      ? "shadow-[0_0_16px_5px_rgba(34,211,238,0.68),0_0_28px_9px_rgba(14,165,233,0.28)]"
+      ? "shadow-[0_0_7px_3px_rgba(34,211,238,0.62),0_0_14px_4px_rgba(14,165,233,0.24)]"
       : "";
 
   return createPortal(

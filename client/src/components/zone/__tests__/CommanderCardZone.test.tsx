@@ -179,7 +179,7 @@ describe("CommanderCardZone commander ninjutsu (issue #5239)", () => {
 
     expect(container.querySelector("[data-hand-command-card]")).toBeInTheDocument();
     expect(container.querySelector("[data-commander-cast-aura]"))
-      .toBeInTheDocument();
+      .toHaveClass("-inset-[2px]", "rounded-[4.8%/3.4%]");
     expect(container.querySelectorAll(".arena-command-castable-steam"))
       .toHaveLength(3);
   });

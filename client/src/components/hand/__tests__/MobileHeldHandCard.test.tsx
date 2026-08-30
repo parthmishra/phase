@@ -79,7 +79,7 @@ describe("MobileHeldHandCard", () => {
     );
 
     const heldCard = document.querySelector("[data-mobile-held-card]");
-    expect(heldCard?.className).toContain("shadow-[0_0_16px_5px");
+    expect(heldCard?.className).toContain("shadow-[0_0_7px_3px");
     expect(heldCard?.className).not.toContain("ring-cyan");
   });
 
