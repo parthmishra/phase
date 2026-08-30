@@ -162,7 +162,7 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
         </div>
       </HudPlate>
       <div
-        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center justify-center gap-1 [&>*]:pointer-events-auto"
+        className="pointer-events-none absolute right-0 top-0 z-20 flex max-w-[calc(100vw-1rem)] translate-x-1/2 -translate-y-1/2 items-center justify-center gap-1 [&>*]:pointer-events-auto"
         data-player-hud-edge-statuses=""
       >
         {cornerBadges}

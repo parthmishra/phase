@@ -58,6 +58,13 @@ describe("PlayerHud", () => {
     const statuses = document.querySelector('[data-player-hud-edge-statuses]');
     expect(statuses).toContainElement(screen.getByLabelText("8 poison counters"));
     expect(statuses).toContainElement(screen.getByLabelText("Speed 3"));
+    expect(statuses).toHaveClass(
+      "right-0",
+      "top-0",
+      "translate-x-1/2",
+      "-translate-y-1/2",
+    );
+    expect(statuses).not.toHaveClass("left-1/2", "bottom-full");
     expect(plate).not.toContainElement(screen.getByLabelText("8 poison counters"));
     expect(plate).not.toContainElement(screen.getByLabelText("Speed 3"));
   });
