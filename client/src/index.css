@@ -944,6 +944,11 @@ select.select-dark option {
     gap: 0;
     margin: 0;
     padding: 0 0.25rem;
+    border-bottom: 0;
+    border-radius: 9999px 9999px 0 0;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.13),
+      0 -4px 18px rgba(0, 0, 0, 0.26);
   }
 
   [data-player-hud-phase-stop-rail] {
