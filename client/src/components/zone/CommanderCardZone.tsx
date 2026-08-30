@@ -283,7 +283,7 @@ function CommanderCard({
         <div
           aria-hidden
           data-commander-cast-aura
-          className="arena-command-castable-aura pointer-events-none absolute -inset-[2px] z-20 rounded-[4.8%/3.4%]"
+          className="arena-command-castable-aura pointer-events-none absolute -inset-px z-20 rounded-[4.4%/3.2%]"
         >
           <span
             className="arena-command-castable-steam arena-command-castable-steam--one"

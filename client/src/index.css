@@ -705,9 +705,9 @@ select.select-dark option {
    printed frame stays untouched; three wisps drift upward without taking input. */
 .arena-command-castable-aura {
   box-shadow:
-    0 3px 6px 2px rgb(245 158 11 / 30%),
-    0 0 12px 3px rgb(251 191 36 / 18%);
-  filter: blur(2px);
+    0 1px 3px 1.5px rgb(245 158 11 / 48%),
+    0 0 6px 1.5px rgb(251 191 36 / 30%);
+  filter: blur(1px);
 }
 
 .arena-command-castable-steam {

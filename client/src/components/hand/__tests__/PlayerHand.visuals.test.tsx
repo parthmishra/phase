@@ -61,10 +61,10 @@ describe("PlayerHand castable glow", () => {
     const glow = container.querySelector("[data-castable-card-glow]");
 
     expect(glow).not.toBeNull();
-    expect(glow).toHaveClass("-inset-[2px]", "rounded-[4.8%/3.4%]");
+    expect(glow).toHaveClass("-inset-px", "rounded-[4.4%/3.2%]");
     expect(glow?.className).not.toContain("border");
     expect(glow?.className).not.toContain("ring-");
-    expect(glow).toHaveStyle({ opacity: "0.76" });
+    expect(glow).toHaveStyle({ opacity: "0.92" });
   });
 
   it("does not apply the spell-cast edge to a playable land", () => {

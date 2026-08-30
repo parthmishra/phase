@@ -12,13 +12,13 @@ export function CastableCardGlow({ className = "" }: CastableCardGlowProps) {
     <div
       aria-hidden
       data-castable-card-glow
-      className={`pointer-events-none absolute -inset-[2px] rounded-[4.8%/3.4%] ${className}`}
+      className={`pointer-events-none absolute -inset-px rounded-[4.4%/3.2%] ${className}`}
       style={{
-        background: "rgba(34, 211, 238, 0.26)",
+        background: "rgba(34, 211, 238, 0.48)",
         boxShadow:
-          "0 0 5px 2px rgba(103, 232, 249, 0.68), 0 0 11px 3px rgba(14, 165, 233, 0.32)",
-        filter: "blur(2px)",
-        opacity: 0.76,
+          "0 0 3px 1.5px rgba(103, 232, 249, 0.88), 0 0 6px 1.5px rgba(14, 165, 233, 0.42)",
+        filter: "blur(1px)",
+        opacity: 0.92,
       }}
     />
   );
