@@ -1270,7 +1270,7 @@ select.select-dark option {
   body:has([data-arena-hand-command-zone="player"])
     [data-flex-zone="actionRail"]:has([data-action-button-panel]) {
     --action-btn-commander-clearance:
-      clamp(4rem, calc(var(--hand-card-h) * 0.6), 5rem);
+      clamp(3rem, calc(var(--hand-card-h) * 0.44), 4rem);
   }
 
   [data-arena-hand-command-zone="player"] {
