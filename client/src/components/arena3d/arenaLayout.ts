@@ -11,6 +11,32 @@ export type ArenaLane = "creatures" | "support" | "lands";
 /** Arena-style duplicate land piles show physical cards before using a count chip. */
 export const ARENA_LAND_PILE_VISIBLE_LIMIT = 4;
 
+export interface ArenaLandPileLayerTransform {
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+}
+
+const ARENA_LAND_PILE_LAYER_TRANSFORMS:
+  readonly ArenaLandPileLayerTransform[] = [
+    { x: -0.052, y: -0.008, z: 0.056, rotation: -0.018 },
+    { x: 0.076, y: -0.016, z: 0.112, rotation: 0.027 },
+    { x: -0.104, y: -0.024, z: 0.168, rotation: -0.036 },
+  ];
+
+/**
+ * Shared-scale offsets that make a land pile legible without widening its
+ * reserved lane footprint.
+ */
+export function arenaLandPileLayerTransforms(
+  layerCount: number,
+): readonly ArenaLandPileLayerTransform[] {
+  return ARENA_LAND_PILE_LAYER_TRANSFORMS
+    .slice(0, Math.max(0, Math.floor(layerCount)))
+    .reverse();
+}
+
 export interface ArenaPilePresentation {
   visibleCardCount: number;
   badgeText: string | null;
@@ -187,12 +213,24 @@ export function layoutArenaSeat(
 ): ArenaPlacement[] {
   const frame = arenaSeatFrame(seat, tableLayout);
   const support = [...view.support, ...view.planeswalkers, ...view.other];
-
-  return [
-    ...layoutLane(view.creatures, "creatures", frame),
-    ...layoutLane(support, "support", frame),
-    ...layoutLane(view.lands, "lands", frame),
+  const lanes: readonly [GroupedPermanent[], ArenaLane][] = [
+    [view.creatures, "creatures"],
+    [support, "support"],
+    [view.lands, "lands"],
   ];
+  const occupiedLaneScales = lanes
+    .filter(([groups]) => groups.length > 0)
+    .map(
+      ([groups, lane]) =>
+        fitArenaLaneCards(groups.length, frame.widths[lane]).cardScale,
+    );
+  const sharedCardScale = occupiedLaneScales.length > 0
+    ? Math.min(...occupiedLaneScales)
+    : 1;
+
+  return lanes.flatMap(([groups, lane]) =>
+    layoutLane(groups, lane, frame, sharedCardScale),
+  );
 }
 
 /**
@@ -453,8 +491,13 @@ function layoutLane(
   groups: GroupedPermanent[],
   lane: ArenaLane,
   frame: ArenaSeatFrame,
+  cardScaleLimit = 1,
 ): ArenaPlacement[] {
-  const fit = fitArenaLaneCards(groups.length, frame.widths[lane]);
+  const fit = fitArenaLaneCards(
+    groups.length,
+    frame.widths[lane],
+    cardScaleLimit,
+  );
   const [centerX, centerZ] = frame.centers[lane];
   const tangentX = Math.cos(frame.faceAngle);
   const tangentZ = -Math.sin(frame.faceAngle);
@@ -480,6 +523,7 @@ function layoutLane(
 export function fitArenaLaneCards(
   count: number,
   laneWidth: number,
+  cardScaleLimit = 1,
 ): { offsets: number[]; cardScale: number; gap: number } {
   if (count <= 0) {
     return { offsets: [], cardScale: 1, gap: 0 };
@@ -506,10 +550,17 @@ export function fitArenaLaneCards(
     0,
   );
   const crowdedFloor = count > 18 ? 0.7 : 0.82;
+  const crowdedScale = Math.max(crowdedFloor, naturalScale);
+  // Keep sparse boards at the shared full-card scale. From the fourth through
+  // the eighth group, ease toward the crowded fit instead of snapping directly
+  // to the floor when a narrow back row receives its next permanent.
+  const densityProgress = Math.min(Math.max((count - 3) / 5, 0), 1);
+  const densityScale = 1 + (crowdedScale - 1) * densityProgress;
   const cardScale = Math.min(
     1,
     depthScale,
-    Math.max(crowdedFloor, naturalScale),
+    Math.max(0, cardScaleLimit),
+    densityScale,
   );
   const naturalStride = ARENA_CARD_WIDTH * cardScale + gap;
   const centerSpan = Math.max(

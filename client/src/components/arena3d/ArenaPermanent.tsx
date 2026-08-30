@@ -5,6 +5,7 @@ import * as THREE from "three";
 import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
+  arenaLandPileLayerTransforms,
   arenaPilePresentation,
   type ArenaPlacement,
 } from "./arenaLayout.ts";
@@ -525,11 +526,7 @@ interface ArenaLandPileLayersProps {
 
 /** Decorative, non-interactive black card silhouettes beneath the top card. */
 function ArenaLandPileLayers({ count }: ArenaLandPileLayersProps) {
-  const layers = [
-    { x: -0.032, y: -0.008, z: 0.042, rotation: -0.014 },
-    { x: 0.047, y: -0.016, z: 0.084, rotation: 0.021 },
-    { x: -0.068, y: -0.024, z: 0.126, rotation: -0.029 },
-  ].slice(0, count).reverse();
+  const layers = arenaLandPileLayerTransforms(count);
 
   return (
     <group>

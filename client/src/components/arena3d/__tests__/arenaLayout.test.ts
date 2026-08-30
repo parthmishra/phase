@@ -9,6 +9,7 @@ import {
   arenaHeldCardFan,
   arenaHeldCommanderRow,
   arenaHeldHandLayout,
+  arenaLandPileLayerTransforms,
   arenaVisibleHeldCardCount,
   arenaLaneZoneLayouts,
   arenaPilePresentation,
@@ -83,6 +84,22 @@ describe("spreadPositions", () => {
 });
 
 describe("arenaPilePresentation", () => {
+  it("uses clearly separated shared-size silhouettes within the reserved card footprint", () => {
+    const layers = arenaLandPileLayerTransforms(3);
+    const lateralOffsets = [0, ...layers.map(({ x }) => x)];
+    const occupiedWidth =
+      ARENA_CARD_WIDTH
+      + Math.max(...lateralOffsets)
+      - Math.min(...lateralOffsets);
+
+    expect(layers).toHaveLength(3);
+    expect(
+      Math.max(...layers.map(({ x }) => Math.abs(x))),
+    ).toBeGreaterThan(0.1);
+    expect(Math.max(...layers.map(({ z }) => z))).toBeGreaterThan(0.16);
+    expect(occupiedWidth).toBeLessThan(ARENA_TAPPED_CARD_FOOTPRINT);
+  });
+
   it("shows grouped lands as as many as four physical cards without a badge", () => {
     for (let count = 1; count <= ARENA_LAND_PILE_VISIBLE_LIMIT; count += 1) {
       expect(arenaPilePresentation("lands", count)).toEqual({
@@ -216,6 +233,33 @@ describe("fitArenaLaneCards", () => {
 
   it("keeps an uncrowded battlefield card at the shared zone-card size", () => {
     expect(fitArenaLaneCards(1, 3.2).cardScale).toBe(1);
+  });
+
+  it("keeps sparse lanes full-size before easing into their crowded fit", () => {
+    const scales = Array.from(
+      { length: 9 },
+      (_, index) => fitArenaLaneCards(index + 1, 2.3).cardScale,
+    );
+
+    expect(scales.slice(0, 3)).toEqual([1, 1, 1]);
+    for (let index = 1; index < scales.length; index += 1) {
+      expect(scales[index]).toBeLessThanOrEqual(scales[index - 1]);
+      expect(scales[index - 1] - scales[index]).toBeLessThan(0.05);
+    }
+  });
+
+  it("uses one coherent card scale across all occupied lanes in a seat", () => {
+    const view = singlePermanentInEachLane();
+    view.support = Array.from(
+      { length: 5 },
+      (_, index) => permanent(index + 20),
+    );
+    const placements = layoutArenaSeat(view, "local", "pod");
+    const scales = new Set(placements.map(({ cardScale }) => cardScale));
+
+    expect(scales.size).toBe(1);
+    expect(placements[0].cardScale).toBeLessThan(1);
+    expect(placements[0].cardScale).toBeGreaterThan(0.82);
   });
 
   it("uses overlap before aggressive shrinking on crowded lanes", () => {
