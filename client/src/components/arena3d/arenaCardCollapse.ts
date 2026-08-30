@@ -83,6 +83,29 @@ export function arenaCardSettleResponse(
   );
 }
 
+export interface ArenaCardRestPose {
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+}
+
+/** Keeps attack selection in-place and represents it with the normal tap pose. */
+export function arenaCardRestPose(
+  position: readonly [number, number, number],
+  faceAngle: number,
+  tapped: boolean,
+  attacking: boolean,
+  hovered: boolean,
+): ArenaCardRestPose {
+  return {
+    x: position[0],
+    y: position[1] + (hovered ? 0.045 : 0),
+    z: position[2],
+    rotationY: faceAngle + (tapped || attacking ? Math.PI / 4 : 0),
+  };
+}
+
 /**
  * Smoothly raises the bottom edge while pinning the card's top edge. The same
  * eased ratio drives geometry depth and texture cropping, so frame contents do

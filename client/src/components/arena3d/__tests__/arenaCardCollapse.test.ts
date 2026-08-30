@@ -10,6 +10,7 @@ import {
   arenaCardCollapseDuration,
   arenaCardCollapseProgress,
   arenaCardCollapseTransform,
+  arenaCardRestPose,
   arenaCardSettleResponse,
   arenaCardStatUv,
   collapsedArenaCardV,
@@ -91,5 +92,30 @@ describe("arenaCardCollapseTransform", () => {
     expect(arenaCardSettleResponse(1 / 60, 2)).toBeLessThan(
       arenaCardSettleResponse(1 / 60, 1),
     );
+  });
+});
+
+describe("arenaCardRestPose", () => {
+  it("shows attack selection as the normal tapped pose without lunging", () => {
+    const selectedAttacker = arenaCardRestPose(
+      [1.2, 0.16, -2.4],
+      0.3,
+      false,
+      true,
+      false,
+    );
+    const tappedPermanent = arenaCardRestPose(
+      [1.2, 0.16, -2.4],
+      0.3,
+      true,
+      false,
+      false,
+    );
+
+    expect(selectedAttacker).toEqual(tappedPermanent);
+    expect(selectedAttacker.x).toBe(1.2);
+    expect(selectedAttacker.y).toBe(0.16);
+    expect(selectedAttacker.z).toBe(-2.4);
+    expect(selectedAttacker.rotationY).toBeCloseTo(0.3 + Math.PI / 4);
   });
 });

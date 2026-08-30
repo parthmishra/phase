@@ -8,6 +8,43 @@ export type ArenaTableLayout = "duel" | "pod";
 export type ArenaViewportLayout = "wide" | "compact";
 export type ArenaLane = "creatures" | "support" | "lands";
 
+/** Arena-style duplicate land piles show physical cards before using a count chip. */
+export const ARENA_LAND_PILE_VISIBLE_LIMIT = 4;
+
+export interface ArenaPilePresentation {
+  visibleCardCount: number;
+  badgeText: string | null;
+}
+
+/**
+ * Converts an engine-authored group count into 3D presentation only. Land
+ * piles expose as many as four physical layers; the badge counts only copies
+ * beyond those visible layers. Other permanent groups keep their compact
+ * total-count treatment.
+ */
+export function arenaPilePresentation(
+  lane: ArenaLane,
+  pileCount: number,
+): ArenaPilePresentation {
+  const count = Math.max(1, Math.floor(pileCount));
+  if (lane !== "lands") {
+    return {
+      visibleCardCount: 1,
+      badgeText: count > 1 ? `×${count}` : null,
+    };
+  }
+
+  const visibleCardCount = Math.min(
+    count,
+    ARENA_LAND_PILE_VISIBLE_LIMIT,
+  );
+  const overflowCount = count - visibleCardCount;
+  return {
+    visibleCardCount,
+    badgeText: overflowCount > 0 ? `+${overflowCount}` : null,
+  };
+}
+
 export const ARENA_CARD_WIDTH = 1.3;
 export const ARENA_CARD_DEPTH = 1.82;
 export const ARENA_TAPPED_CARD_FOOTPRINT =
@@ -428,8 +465,10 @@ function layoutLane(
     position: [
       centerX + tangentX * fit.offsets[index],
       // Cards hover above the stone rather than lying on it: enough clearance
-      // for the sun to drop a readable shadow beside each permanent.
-      0.16,
+      // for the sun to drop a readable shadow beside each permanent. A tiny,
+      // deterministic rise also resolves depth ordering when tapped cards must
+      // overlap on crowded lanes instead of letting their faces z-fight.
+      0.16 + index * 0.003,
       centerZ + tangentZ * fit.offsets[index],
     ],
     faceAngle: frame.faceAngle,

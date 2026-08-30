@@ -43,7 +43,6 @@ type ArenaCardTextureVariant = "battlefield" | "full-card" | "stat-badge";
 
 export function useArenaCardTextures(
   objectId: number,
-  pileCount: number,
   includeFullCard = false,
 ): ArenaCardTextures {
   const maxAnisotropy = useThree(({ gl }) =>
@@ -88,21 +87,19 @@ export function useArenaCardTextures(
       : null;
   const battlefield = useCachedArenaCardTexture(
     revision && !includeFullCard
-      ? `${revision}|battlefield|pile:${pileCount}`
+      ? `${revision}|battlefield`
       : null,
     presentation,
     artSource,
-    pileCount,
     "battlefield",
     maxAnisotropy,
   );
   const fullCard = useCachedArenaCardTexture(
     revision && includeFullCard
-      ? `${revision}|full-card|pile:${pileCount}`
+      ? `${revision}|full-card`
       : null,
     presentation,
     artSource,
-    pileCount,
     "full-card",
     maxAnisotropy,
   );
@@ -113,7 +110,6 @@ export function useArenaCardTextures(
       : null,
     presentation,
     artSource,
-    pileCount,
     "stat-badge",
     maxAnisotropy,
   );
@@ -125,7 +121,6 @@ function useCachedArenaCardTexture(
   key: string | null,
   presentation: ArenaCardPresentation | null,
   artSource: string | null,
-  pileCount: number,
   variant: ArenaCardTextureVariant,
   maxAnisotropy: number,
 ): THREE.CanvasTexture | null {
@@ -142,7 +137,6 @@ function useCachedArenaCardTexture(
       key,
       presentation,
       artSource,
-      pileCount,
       variant,
       maxAnisotropy,
     );
@@ -156,7 +150,7 @@ function useCachedArenaCardTexture(
       cancelled = true;
       releaseTexture(key);
     };
-  }, [artSource, key, maxAnisotropy, pileCount, presentation, variant]);
+  }, [artSource, key, maxAnisotropy, presentation, variant]);
 
   return texture;
 }
@@ -165,7 +159,6 @@ function acquireTexture(
   key: string,
   presentation: ArenaCardPresentation,
   artSource: string,
-  pileCount: number,
   variant: ArenaCardTextureVariant,
   maxAnisotropy: number,
 ): TextureCacheEntry {
@@ -191,7 +184,6 @@ function acquireTexture(
   entry.promise = createArenaCardTexture(
     presentation,
     artSource,
-    pileCount,
     variant,
     maxAnisotropy,
   ).then(
@@ -224,17 +216,15 @@ function releaseTexture(key: string): void {
 async function createArenaCardTexture(
   presentation: ArenaCardPresentation,
   artSource: string,
-  pileCount: number,
   variant: ArenaCardTextureVariant,
   maxAnisotropy: number,
 ): Promise<THREE.CanvasTexture> {
   const canvas = variant === "full-card"
-    ? await renderArenaFullCardCanvas(presentation, artSource, pileCount)
+    ? await renderArenaFullCardCanvas(presentation, artSource)
     : variant === "battlefield"
       ? await renderArenaBattlefieldCardCanvas(
           presentation,
           artSource,
-          pileCount,
         )
       : await renderArenaStatBadgeCanvas(
           arenaCardStatText(presentation) ?? "",
@@ -247,7 +237,6 @@ async function createArenaCardTexture(
 async function renderArenaFullCardCanvas(
   presentation: ArenaCardPresentation,
   artSource: string,
-  pileCount: number,
 ): Promise<HTMLCanvasElement> {
   // This is the same canvas pipeline ArenaCardFace uses in hand. Keep its
   // crown, title treatment, and art placement intact; battlefield compaction
@@ -279,25 +268,12 @@ async function renderArenaFullCardCanvas(
       badgeScale,
     );
   }
-  if (pileCount > 1) {
-    drawRoundBadge(
-      context,
-      `×${pileCount}`,
-      FULL_CARD_TEXTURE_WIDTH * 0.88,
-      badgeY,
-      "#16191d",
-      "#ffffff",
-      badgeScale,
-    );
-  }
-
   return canvas;
 }
 
 async function renderArenaBattlefieldCardCanvas(
   presentation: ArenaCardPresentation,
   artSource: string,
-  pileCount: number,
 ): Promise<HTMLCanvasElement> {
   const art = await loadImage(artSource);
   const canvas = document.createElement("canvas");
@@ -362,17 +338,6 @@ async function renderArenaBattlefieldCardCanvas(
     const count = presentation.counters.reduce((sum, counter) => sum + counter.count, 0);
     drawRoundBadge(context, String(count), 27, 78, "#15251c", "#9cf7bd");
   }
-  if (pileCount > 1) {
-    drawRoundBadge(
-      context,
-      `×${pileCount}`,
-      TEXTURE_WIDTH - 30,
-      78,
-      "#16191d",
-      "#ffffff",
-    );
-  }
-
   context.restore();
   return canvas;
 }

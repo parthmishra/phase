@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARENA_CARD_DEPTH,
+  ARENA_LAND_PILE_VISIBLE_LIMIT,
   ARENA_MAX_VISIBLE_HELD_CARDS,
   ARENA_TAPPED_CARD_FOOTPRINT,
   ARENA_CARD_WIDTH,
@@ -10,6 +11,7 @@ import {
   arenaHeldHandLayout,
   arenaVisibleHeldCardCount,
   arenaLaneZoneLayouts,
+  arenaPilePresentation,
   arenaZoneLayout,
   assignArenaOpponentSeats,
   expandArenaAttachmentPlacements,
@@ -77,6 +79,35 @@ describe("spreadPositions", () => {
 
   it("uses a readable maximum gap for sparse lanes", () => {
     expect(spreadPositions(3, 20)).toEqual([-2.02, 0, 2.02]);
+  });
+});
+
+describe("arenaPilePresentation", () => {
+  it("shows grouped lands as as many as four physical cards without a badge", () => {
+    for (let count = 1; count <= ARENA_LAND_PILE_VISIBLE_LIMIT; count += 1) {
+      expect(arenaPilePresentation("lands", count)).toEqual({
+        visibleCardCount: count,
+        badgeText: null,
+      });
+    }
+  });
+
+  it("uses a badge only for lands beyond the four visible layers", () => {
+    expect(arenaPilePresentation("lands", 5)).toEqual({
+      visibleCardCount: 4,
+      badgeText: "+1",
+    });
+    expect(arenaPilePresentation("lands", 12)).toEqual({
+      visibleCardCount: 4,
+      badgeText: "+8",
+    });
+  });
+
+  it("keeps nonland groups represented by one card with their total count", () => {
+    expect(arenaPilePresentation("creatures", 5)).toEqual({
+      visibleCardCount: 1,
+      badgeText: "×5",
+    });
   });
 });
 
@@ -199,6 +230,20 @@ describe("fitArenaLaneCards", () => {
         cardWidth,
       );
     }
+  });
+
+  it("keeps the rotated tapped footprint inside a crowded lane", () => {
+    const laneWidth = 3.2;
+    const fit = fitArenaLaneCards(12, laneWidth);
+    const occupiedWidth =
+      fit.offsets[fit.offsets.length - 1]
+      - fit.offsets[0]
+      + ARENA_TAPPED_CARD_FOOTPRINT * fit.cardScale;
+
+    expect(occupiedWidth).toBeLessThanOrEqual(laneWidth);
+    expect(fit.offsets[1] - fit.offsets[0]).toBeLessThan(
+      ARENA_TAPPED_CARD_FOOTPRINT * fit.cardScale,
+    );
   });
 
   it("keeps even a very crowded lane readable and inside its lane", () => {

@@ -5,6 +5,7 @@ import * as THREE from "three";
 import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
+  arenaPilePresentation,
   type ArenaPlacement,
 } from "./arenaLayout.ts";
 import {
@@ -12,6 +13,7 @@ import {
   ARENA_COLLAPSED_PERMANENT_DEPTH_RATIO,
   arenaCardCollapseDuration,
   arenaCardCollapseProgress,
+  arenaCardRestPose,
   arenaCardCollapseTransform,
   arenaCardSettleResponse,
   arenaCardStatUv,
@@ -53,6 +55,12 @@ const CARD_BODY_GEOMETRY = makeRoundedCardBodyGeometry(
 const CARD_BOTTOM_FRAME_GEOMETRY = makeBottomFrameGeometry();
 const CARD_STAT_BADGE_GEOMETRY = makeStatBadgeGeometry(false);
 const CARD_STAT_BADGE_FALLBACK_GEOMETRY = makeStatBadgeGeometry(true);
+const PILE_BADGE_WIDTH = 0.48;
+const PILE_BADGE_DEPTH = 0.25;
+const PILE_BADGE_GEOMETRY = new THREE.PlaneGeometry(
+  PILE_BADGE_WIDTH,
+  PILE_BADGE_DEPTH,
+);
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
@@ -62,6 +70,7 @@ interface ArenaPermanentProps extends ArenaPlacement {
 export function ArenaPermanent({
   objectId,
   pileCount,
+  lane,
   position,
   faceAngle,
   attackVector,
@@ -78,9 +87,9 @@ export function ArenaPermanent({
       && object.toughness != null
     )
     || object?.loyalty != null;
+  const pilePresentation = arenaPilePresentation(lane, pileCount);
   const textures = useArenaCardTextures(
     objectId,
-    pileCount,
     collapseOnBattlefield,
   );
   // Permanents retain the exact composed face used in hand for their entire
@@ -197,6 +206,8 @@ export function ArenaPermanent({
     faceTexture,
   ]);
 
+  const visuallyTapped = object?.tapped === true || interaction.isAttacking;
+
   useFrame((_, delta) => {
     const group = groupRef.current;
     if (!group) return;
@@ -243,16 +254,17 @@ export function ArenaPermanent({
       delta,
       animationSpeedMultiplier,
     );
-    const targetX =
-      position[0] + (interaction.isAttacking ? attackVector[0] : 0);
-    const targetZ =
-      position[2] + (interaction.isAttacking ? attackVector[1] : 0);
-    const targetY =
-      position[1]
-      + (interaction.isAttacking ? 0.07 : 0)
-      + (interaction.isHovered ? 0.045 : 0);
-    const targetRotation =
-      faceAngle + (object?.tapped ? Math.PI / 4 : 0);
+    const targetPose = arenaCardRestPose(
+      position,
+      faceAngle,
+      object?.tapped === true,
+      interaction.isAttacking,
+      interaction.isHovered,
+    );
+    const targetX = targetPose.x;
+    const targetY = targetPose.y;
+    const targetZ = targetPose.z;
+    const targetRotation = targetPose.rotationY;
     const targetScale = cardScale;
 
     group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
@@ -318,8 +330,8 @@ export function ArenaPermanent({
       >
         <planeGeometry
           args={[
-            (object.tapped ? tappedHitFootprint : CARD_WIDTH) * cardScale * 1.2,
-            (object.tapped ? tappedHitFootprint : restingCardHeight) * cardScale * 1.2,
+            (visuallyTapped ? tappedHitFootprint : CARD_WIDTH) * cardScale * 1.2,
+            (visuallyTapped ? tappedHitFootprint : restingCardHeight) * cardScale * 1.2,
           ]}
         />
         <meshBasicMaterial
@@ -331,6 +343,13 @@ export function ArenaPermanent({
 
       <group ref={groupRef}>
         <group ref={surfaceRef}>
+          {lane === "lands" && pilePresentation.visibleCardCount > 1 && (
+            <ArenaLandPileLayers
+              count={pilePresentation.visibleCardCount - 1}
+              faceGeometry={faceGeometry}
+              faceTexture={faceTexture}
+            />
+          )}
           {visualState.underglow && (
             <ArenaCardGlow
               width={CARD_WIDTH}
@@ -372,7 +391,7 @@ export function ArenaPermanent({
               toneMapped={false}
             />
           </mesh>
-          {object.tapped && (
+          {visuallyTapped && (
             <mesh
               geometry={faceGeometry}
               rotation={[-Math.PI / 2, 0, 0]}
@@ -433,7 +452,126 @@ export function ArenaPermanent({
             />
           </mesh>
         )}
+
+        {pilePresentation.badgeText && (
+          <ArenaPileBadge text={pilePresentation.badgeText} />
+        )}
       </group>
+    </group>
+  );
+}
+
+function ArenaPileBadge({ text }: { text: string }) {
+  const texture = useMemo(() => makePileBadgeTexture(text), [text]);
+
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  return (
+    <mesh
+      geometry={PILE_BADGE_GEOMETRY}
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[
+        CARD_WIDTH / 2 - PILE_BADGE_WIDTH / 2 - 0.035,
+        0.018,
+        -CARD_HEIGHT * 0.34,
+      ]}
+      renderOrder={5}
+    >
+      <meshBasicMaterial
+        map={texture}
+        transparent
+        alphaTest={0.04}
+        alphaToCoverage
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+function makePileBadgeTexture(text: string): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("2D canvas unavailable");
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.shadowColor = "rgba(0, 0, 0, 0.9)";
+  context.shadowBlur = 22;
+  context.beginPath();
+  context.roundRect(22, 22, 468, 212, 106);
+  context.fillStyle = "#080b0e";
+  context.fill();
+  context.shadowBlur = 0;
+  context.strokeStyle = "#f5e6a8";
+  context.lineWidth = 13;
+  context.stroke();
+  context.fillStyle = "#ffffff";
+  context.font = '900 112px "JetBrains Mono", monospace';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 5);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+interface ArenaLandPileLayersProps {
+  count: number;
+  faceGeometry: THREE.ShapeGeometry;
+  faceTexture: THREE.Texture | null;
+}
+
+/** Decorative, non-interactive copies underneath the authoritative top card. */
+function ArenaLandPileLayers({
+  count,
+  faceGeometry,
+  faceTexture,
+}: ArenaLandPileLayersProps) {
+  const layers = [
+    { x: -0.032, y: -0.008, z: 0.042, rotation: -0.014 },
+    { x: 0.047, y: -0.016, z: 0.084, rotation: 0.021 },
+    { x: -0.068, y: -0.024, z: 0.126, rotation: -0.029 },
+  ].slice(0, count).reverse();
+
+  return (
+    <group>
+      {layers.map((layer) => (
+        <group
+          key={`${layer.x}-${layer.z}`}
+          position={[layer.x, layer.y, layer.z]}
+          rotation={[0, layer.rotation, 0]}
+        >
+          <mesh
+            geometry={CARD_BODY_GEOMETRY}
+            rotation={[-Math.PI / 2, 0, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial
+              color="#070808"
+              roughness={0.8}
+              metalness={0}
+            />
+          </mesh>
+          <mesh
+            geometry={faceGeometry}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.003, 0]}
+          >
+            <meshBasicMaterial
+              map={faceTexture}
+              color={faceTexture ? "#ffffff" : "#171a20"}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }
@@ -450,7 +588,7 @@ interface ArenaPermanentVisualState {
 function permanentVisualState(
   interaction: ArenaPermanentInteractionLike,
 ): ArenaPermanentVisualState {
-  if (interaction.isAttacking || interaction.isBlocking) {
+  if (interaction.isBlocking) {
     return {
       bracketColor: null,
       underglow: { color: "#c5784c", opacity: 0.24, padding: 0.2 },
