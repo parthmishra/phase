@@ -12,6 +12,7 @@ import { arenaComposableArtSource } from "./arenaArtSource.ts";
 import {
   ARENA_CARD_DEPTH,
   ARENA_CARD_WIDTH,
+  ARENA_ZONE_PILE_VISUAL_SCALE,
   arenaZoneLayout,
   type ArenaSeat,
   type ArenaTableLayout,
@@ -171,55 +172,72 @@ function ArenaCardZone({
       onPointerOver={pointerOver}
       onPointerOut={pointerOut}
     >
-      {count > 0 ? (
-        <>
-          <mesh
-            geometry={bodyGeometry ?? undefined}
-            rotation={[-Math.PI / 2, 0, 0]}
-            position={[0, stackHeight, 0]}
-            castShadow
-            receiveShadow
-          >
-            <meshStandardMaterial
-              color={stack ? "#0b0e0f" : "#15191a"}
-              roughness={0.98}
-              metalness={0}
-            />
-          </mesh>
+      {/* The visual pile is slightly smaller than a battlefield card, while
+          this full-size transparent face preserves the existing pointer target
+          on compact touch screens. */}
+      <mesh
+        geometry={ZONE_CARD_FACE_GEOMETRY}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.004, 0]}
+      >
+        <meshBasicMaterial
+          transparent
+          opacity={0}
+          depthWrite={false}
+          colorWrite={false}
+        />
+      </mesh>
+      <group scale={ARENA_ZONE_PILE_VISUAL_SCALE}>
+        {count > 0 ? (
+          <>
+            <mesh
+              geometry={bodyGeometry ?? undefined}
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, stackHeight, 0]}
+              castShadow
+              receiveShadow
+            >
+              <meshStandardMaterial
+                color={stack ? "#0b0e0f" : "#15191a"}
+                roughness={0.98}
+                metalness={0}
+              />
+            </mesh>
+            <mesh
+              geometry={ZONE_CARD_FACE_GEOMETRY}
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
+              castShadow
+              receiveShadow
+            >
+              <meshLambertMaterial
+                key={texture?.uuid ?? "arena-zone-loading"}
+                map={texture}
+                color={texture ? "#ffffff" : "#2f2a21"}
+                transparent
+                alphaTest={0.04}
+                emissive={texture ? "#050505" : "#080b10"}
+                emissiveIntensity={texture ? 0.02 : 0.16}
+                shadowSide={THREE.DoubleSide}
+              />
+            </mesh>
+          </>
+        ) : (
           <mesh
             geometry={ZONE_CARD_FACE_GEOMETRY}
             rotation={[-Math.PI / 2, 0, 0]}
-            position={[0, stackHeight + (hovered ? 0.055 : 0.006), 0]}
-            castShadow
-            receiveShadow
+            position={[0, 0.006, 0]}
           >
-            <meshLambertMaterial
-              key={texture?.uuid ?? "arena-zone-loading"}
-              map={texture}
-              color={texture ? "#ffffff" : "#2f2a21"}
+            <meshBasicMaterial
+              map={emptyTexture}
               transparent
-              alphaTest={0.04}
-              emissive={texture ? "#050505" : "#080b10"}
-              emissiveIntensity={texture ? 0.02 : 0.16}
-              shadowSide={THREE.DoubleSide}
+              opacity={hovered ? 0.72 : 0.46}
+              depthWrite={false}
+              toneMapped={false}
             />
           </mesh>
-        </>
-      ) : (
-        <mesh
-          geometry={ZONE_CARD_FACE_GEOMETRY}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.006, 0]}
-        >
-          <meshBasicMaterial
-            map={emptyTexture}
-            transparent
-            opacity={hovered ? 0.72 : 0.46}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      )}
+        )}
+      </group>
     </group>
   );
 }
@@ -275,18 +293,32 @@ function ArenaExileZone({
       }}
     >
       <mesh
-        geometry={bodyGeometry}
+        geometry={ZONE_CARD_FACE_GEOMETRY}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, depth, 0]}
-        castShadow
-        receiveShadow
+        position={[0, 0.004, 0]}
       >
-        <meshStandardMaterial
-          color={hovered ? "#302d45" : "#211f31"}
-          roughness={0.98}
-          metalness={0}
+        <meshBasicMaterial
+          transparent
+          opacity={0}
+          depthWrite={false}
+          colorWrite={false}
         />
       </mesh>
+      <group scale={ARENA_ZONE_PILE_VISUAL_SCALE}>
+        <mesh
+          geometry={bodyGeometry}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, depth, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial
+            color={hovered ? "#302d45" : "#211f31"}
+            roughness={0.98}
+            metalness={0}
+          />
+        </mesh>
+      </group>
     </group>
   );
 }

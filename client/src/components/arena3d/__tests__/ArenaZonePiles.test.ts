@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { arenaZoneLayout } from "../arenaLayout.ts";
+import {
+  ARENA_ZONE_PILE_VISUAL_SCALE,
+  arenaZoneLayout,
+} from "../arenaLayout.ts";
 
 describe("arenaZoneLayout", () => {
+  it("renders supporting zone piles slightly smaller than battlefield cards", () => {
+    expect(ARENA_ZONE_PILE_VISUAL_SCALE).toBe(0.9);
+  });
+
   it("mirrors each player's tabletop zones without entering the battlefield lanes", () => {
     const local = arenaZoneLayout("local");
     const opponent = arenaZoneLayout("far");

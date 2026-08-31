@@ -73,6 +73,9 @@ export function arenaPilePresentation(
 
 export const ARENA_CARD_WIDTH = 1.3;
 export const ARENA_CARD_DEPTH = 1.82;
+/** Library, graveyard, and exile piles are supporting table furniture, so their
+ * visible cards sit slightly below the battlefield card scale. */
+export const ARENA_ZONE_PILE_VISUAL_SCALE = 0.9;
 export const ARENA_TAPPED_CARD_FOOTPRINT =
   (
     ARENA_CARD_WIDTH
