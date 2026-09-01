@@ -17,6 +17,7 @@ import { ArenaFlightDestinations } from "./ArenaFlightDestinations.tsx";
 import { ArenaMaterialPlane } from "./ArenaMaterialPlane.tsx";
 import { ArenaPermanent } from "./ArenaPermanent.tsx";
 import { ArenaZonePiles } from "./ArenaZonePiles.tsx";
+import { arenaAttackStrikeTargets } from "./arenaAttackAnimation.ts";
 import {
   assignArenaOpponentSeats,
   expandArenaAttachmentPlacements,
@@ -107,6 +108,23 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
     playerView,
     tableLayout,
   ]);
+  const attackStrikeTargets = useMemo(
+    () =>
+      arenaAttackStrikeTargets(
+        gameState?.combat?.attackers ?? [],
+        placements,
+        perspectivePlayerId,
+        opponentSeats,
+        tableLayout,
+      ),
+    [
+      gameState?.combat?.attackers,
+      opponentSeats,
+      perspectivePlayerId,
+      placements,
+      tableLayout,
+    ],
+  );
   const showCardDetails = useCallback(
     (objectId: ObjectId) => {
       dismissPreview();
@@ -215,6 +233,7 @@ export const ArenaGameBoard = memo(function ArenaGameBoard(
             <ArenaPermanent
               key={placement.objectId}
               {...placement}
+              attackStrikeTarget={attackStrikeTargets.get(placement.objectId)}
               onShowDetails={showCardDetails}
             />
           ))}

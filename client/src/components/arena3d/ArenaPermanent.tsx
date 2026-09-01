@@ -35,6 +35,11 @@ import {
   arenaFlyingBobOffset,
   isFlyingCreature,
 } from "./arenaAmbientMotion.ts";
+import {
+  ARENA_ATTACK_STRIKE_DURATION_SECONDS,
+  arenaAttackStrikeTransform,
+  type ArenaAttackStrikeTarget,
+} from "./arenaAttackAnimation.ts";
 import type { ObjectId } from "../../adapter/types.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
@@ -70,6 +75,7 @@ const PILE_BADGE_GEOMETRY = new THREE.PlaneGeometry(
 
 interface ArenaPermanentProps extends ArenaPlacement {
   pileCount: number;
+  attackStrikeTarget?: ArenaAttackStrikeTarget;
   onShowDetails: (objectId: ObjectId) => void;
 }
 
@@ -81,6 +87,7 @@ export function ArenaPermanent({
   faceAngle,
   attackVector,
   cardScale,
+  attackStrikeTarget,
   onShowDetails,
 }: ArenaPermanentProps) {
   const object = useGameStore((state) => state.gameState?.objects[objectId]);
@@ -122,6 +129,10 @@ export function ArenaPermanent({
   const statBadgeRef = useRef<THREE.Mesh>(null);
   const faceMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const arrivalProgressRef = useRef(0);
+  const attackStrikeAgeRef = useRef<number | null>(null);
+  const previousAttackTargetKeyRef = useRef(
+    attackStrikeTarget?.key ?? null,
+  );
   const previousPileCountRef = useRef(pileCount);
   const initialPlacementRef = useRef({
     attackVector,
@@ -200,6 +211,7 @@ export function ArenaPermanent({
   ]);
 
   useEffect(() => invalidate(), [
+    attackStrikeTarget?.key,
     faceAngle,
     cardScale,
     animationSpeedMultiplier,
@@ -215,6 +227,29 @@ export function ArenaPermanent({
     position,
     faceTexture,
     floats,
+  ]);
+
+  useEffect(() => {
+    const nextKey = attackStrikeTarget?.key ?? null;
+    if (nextKey == null) {
+      previousAttackTargetKeyRef.current = null;
+      attackStrikeAgeRef.current = null;
+      return;
+    }
+    if (
+      previousAttackTargetKeyRef.current == null
+      && !shouldReduceMotion
+      && animationSpeedMultiplier > 0
+    ) {
+      attackStrikeAgeRef.current = 0;
+      invalidate();
+    }
+    previousAttackTargetKeyRef.current = nextKey;
+  }, [
+    animationSpeedMultiplier,
+    attackStrikeTarget?.key,
+    invalidate,
+    shouldReduceMotion,
   ]);
 
   const visuallyTapped = object?.tapped === true || interaction.isAttacking;
@@ -272,8 +307,8 @@ export function ArenaPermanent({
       interaction.isAttacking,
       interaction.isHovered,
     );
-    const targetX = targetPose.x;
-    const targetY = targetPose.y + (
+    let targetX = targetPose.x;
+    let targetY = targetPose.y + (
       floats
         ? arenaFlyingBobOffset(
             state.clock.elapsedTime,
@@ -282,20 +317,48 @@ export function ArenaPermanent({
           )
         : 0
     );
-    const targetZ = targetPose.z;
+    let targetZ = targetPose.z;
     const targetRotation = targetPose.rotationY;
-    const targetScale = cardScale;
+    let targetScale = cardScale;
 
-    group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
-    group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, response);
-    group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, response);
-    group.rotation.y = lerpAngle(group.rotation.y, targetRotation, response);
-    const nextScale = THREE.MathUtils.lerp(
-      group.scale.x,
-      targetScale,
-      response,
-    );
-    group.scale.setScalar(nextScale);
+    const strikeAge = attackStrikeAgeRef.current;
+    const strikeDuration =
+      ARENA_ATTACK_STRIKE_DURATION_SECONDS * animationSpeedMultiplier;
+    const strikeActive =
+      strikeAge != null
+      && attackStrikeTarget != null
+      && strikeDuration > 0;
+    if (strikeActive) {
+      const nextStrikeAge = Math.min(strikeDuration, strikeAge + delta);
+      attackStrikeAgeRef.current =
+        nextStrikeAge < strikeDuration ? nextStrikeAge : null;
+      const strike = arenaAttackStrikeTransform(
+        nextStrikeAge / strikeDuration,
+        [targetPose.x, targetPose.z],
+        [attackStrikeTarget.x, attackStrikeTarget.z],
+      );
+      targetX += strike.offsetX;
+      targetY += strike.lift;
+      targetZ += strike.offsetZ;
+      targetScale *= strike.scale;
+
+      // The attack arc is a keyed animation rather than a spring target. Set
+      // its pose directly so the impact arrives on time on every frame rate.
+      group.position.set(targetX, targetY, targetZ);
+      group.rotation.y = targetRotation;
+      group.scale.setScalar(targetScale);
+    } else {
+      group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, response);
+      group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, response);
+      group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, response);
+      group.rotation.y = lerpAngle(group.rotation.y, targetRotation, response);
+      const nextScale = THREE.MathUtils.lerp(
+        group.scale.x,
+        targetScale,
+        response,
+      );
+      group.scale.setScalar(nextScale);
+    }
 
     const unsettled =
       Math.abs(group.position.x - targetX) > 0.001
@@ -303,7 +366,14 @@ export function ArenaPermanent({
       || Math.abs(group.position.z - targetZ) > 0.001
       || Math.abs(angleDelta(group.rotation.y, targetRotation)) > 0.001
       || Math.abs(group.scale.x - targetScale) > 0.001;
-    if (floats || unsettled || (arrivalReady && arrivalProgress < 1)) invalidate();
+    if (
+      floats
+      || strikeActive
+      || unsettled
+      || (arrivalReady && arrivalProgress < 1)
+    ) {
+      invalidate();
+    }
   });
 
   if (!object) return null;
