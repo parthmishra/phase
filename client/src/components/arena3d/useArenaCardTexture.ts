@@ -9,7 +9,9 @@ import { configureArenaReadableTexture } from "./arenaTexture.ts";
 import {
   ARENA_CARD_HEIGHT as FULL_CARD_TEXTURE_HEIGHT,
   ARENA_CARD_WIDTH as FULL_CARD_TEXTURE_WIDTH,
+  arenaCardStatColors,
   arenaCardStatText,
+  arenaStatSegments,
   drawArenaBattlefieldTitle,
   renderArenaCardCanvas,
   renderArenaStatBadgeCanvas,
@@ -105,8 +107,8 @@ export function useArenaCardTextures(
   );
   const statText = presentation ? arenaCardStatText(presentation) : null;
   const statBadge = useCachedArenaCardTexture(
-    revision && statText
-      ? `stat-badge:${statText}`
+    revision && presentation && statText
+      ? `stat-badge:${statText}:${presentation.powerColor}:${presentation.toughnessColor}`
       : null,
     presentation,
     artSource,
@@ -228,6 +230,7 @@ async function createArenaCardTexture(
         )
       : await renderArenaStatBadgeCanvas(
           arenaCardStatText(presentation) ?? "",
+          arenaCardStatColors(presentation),
         );
   const texture = new THREE.CanvasTexture(canvas);
   configureArenaReadableTexture(texture, maxAnisotropy);
@@ -331,6 +334,7 @@ async function renderArenaBattlefieldCardCanvas(
       statText,
       TEXTURE_WIDTH - 18,
       TEXTURE_HEIGHT - 27,
+      arenaCardStatColors(presentation),
     );
   }
 
@@ -419,6 +423,7 @@ function drawStatBadge(
   text: string,
   right: number,
   centerY: number,
+  colors: ReturnType<typeof arenaCardStatColors>,
 ): void {
   context.font = '800 26px "Newsreader", Georgia, serif';
   const width = Math.max(66, context.measureText(text).width + 30);
@@ -429,10 +434,14 @@ function drawStatBadge(
   context.roundRect(right - width, centerY - 20, width, 40, 16);
   context.fill();
   context.stroke();
-  context.fillStyle = "#11130f";
-  context.textAlign = "center";
+  context.textAlign = "left";
   context.textBaseline = "middle";
-  context.fillText(text, right - width / 2, centerY + 1);
+  let cursorX = right - width / 2 - context.measureText(text).width / 2;
+  arenaStatSegments(text, colors).forEach((segment) => {
+    context.fillStyle = segment.ink;
+    context.fillText(segment.text, cursorX, centerY + 1);
+    cursorX += context.measureText(segment.text).width;
+  });
   context.textAlign = "left";
 }
 

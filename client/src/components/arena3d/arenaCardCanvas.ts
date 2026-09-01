@@ -1,4 +1,5 @@
 import type { ArenaCardPresentation } from "./arenaCardPresentation.ts";
+import type { PTColor } from "../../viewmodel/cardProps.ts";
 
 export const ARENA_CARD_WIDTH = 1005;
 export const ARENA_CARD_HEIGHT = 1407;
@@ -24,6 +25,22 @@ const GEOMETRY = {
 const STAT_VALUE_FONT_HEIGHT_RATIO = 0.52;
 const STAT_VALUE_MAX_WIDTH_RATIO = 0.64;
 const STAT_POWER_TOUGHNESS_SEPARATOR = "\u200a/\u200a";
+
+export interface ArenaStatColors {
+  power: PTColor;
+  toughness: PTColor;
+}
+
+export interface ArenaStatSegment {
+  text: string;
+  ink: string;
+}
+
+export const ARENA_STAT_INK: Record<PTColor, string> = {
+  white: "#050505",
+  blue: "#176fc1",
+  red: "#c33035",
+};
 
 /** Shared crop boundaries used by the Three.js battlefield presentation. */
 export const ARENA_CARD_ART_BOTTOM_RATIO =
@@ -193,7 +210,12 @@ export async function renderArenaCardCanvas(
 
   const statText = arenaCardStatText(presentation);
   if (statText) {
-    drawArenaStatText(context, statText, statBadgeImage);
+    drawArenaStatText(
+      context,
+      statText,
+      statBadgeImage,
+      arenaCardStatColors(presentation),
+    );
   }
 
   return canvas;
@@ -219,6 +241,7 @@ export function arenaCardStatText(
 /** Creates a dedicated, padded badge texture so mipmaps cannot sample card art. */
 export async function renderArenaStatBadgeCanvas(
   statText: string,
+  colors?: ArenaStatColors,
 ): Promise<HTMLCanvasElement> {
   const [background] = await Promise.all([
     loadImage(PHASE_STAT_BADGE_URL),
@@ -238,6 +261,7 @@ export async function renderArenaStatBadgeCanvas(
     canvas.height * GEOMETRY.statsTextCenter.y,
     canvas.width,
     canvas.height,
+    colors,
   );
   return canvas;
 }
@@ -252,6 +276,7 @@ export function drawArenaStatText(
   context: CanvasRenderingContext2D,
   statText: string,
   background?: CanvasImageSource,
+  colors?: ArenaStatColors,
 ): void {
   const stats = GEOMETRY.stats;
   const x = stats.x * ARENA_CARD_WIDTH;
@@ -318,6 +343,7 @@ export function drawArenaStatText(
       * ARENA_CARD_HEIGHT,
     width,
     height,
+    colors,
   );
   context.restore();
 }
@@ -329,6 +355,7 @@ function drawArenaStatValue(
   centerY: number,
   badgeWidth: number,
   badgeHeight: number,
+  colors?: ArenaStatColors,
 ): void {
   const fontSize = fitArenaStatFontSize(
     statText,
@@ -340,7 +367,6 @@ function drawArenaStatValue(
     },
   );
   context.font = arenaStatFont(fontSize);
-  context.fillStyle = "#050505";
   const metrics = context.measureText(statText);
   const ascent = metrics.actualBoundingBoxAscent ?? 0;
   const descent = metrics.actualBoundingBoxDescent ?? 0;
@@ -348,11 +374,42 @@ function drawArenaStatValue(
   const inkRight = metrics.actualBoundingBoxRight ?? metrics.width;
   context.textAlign = "left";
   context.textBaseline = "alphabetic";
-  context.fillText(
-    statText,
-    centerX + (inkLeft - inkRight) / 2,
-    centerY + (ascent - descent) / 2,
-  );
+  const startX = centerX + (inkLeft - inkRight) / 2;
+  const baselineY = centerY + (ascent - descent) / 2;
+  let cursorX = startX;
+  arenaStatSegments(statText, colors).forEach((segment) => {
+    context.fillStyle = segment.ink;
+    context.fillText(segment.text, cursorX, baselineY);
+    cursorX += context.measureText(segment.text).width;
+  });
+}
+
+/** Splits only P/T readouts so each numeral can retain its own modifier ink. */
+export function arenaStatSegments(
+  statText: string,
+  colors?: ArenaStatColors,
+): ArenaStatSegment[] {
+  const separatorIndex = colors ? statText.indexOf("/") : -1;
+  if (separatorIndex < 0 || !colors) {
+    return [{ text: statText, ink: ARENA_STAT_INK.white }];
+  }
+  return [
+    { text: statText.slice(0, separatorIndex), ink: ARENA_STAT_INK[colors.power] },
+    { text: "/", ink: ARENA_STAT_INK.white },
+    {
+      text: statText.slice(separatorIndex + 1),
+      ink: ARENA_STAT_INK[colors.toughness],
+    },
+  ];
+}
+
+export function arenaCardStatColors(
+  presentation: Pick<ArenaCardPresentation, "powerColor" | "toughnessColor">,
+): ArenaStatColors {
+  return {
+    power: presentation.powerColor,
+    toughness: presentation.toughnessColor,
+  };
 }
 
 /** Fits every P/T or loyalty value inside the asset's recessed inner field. */

@@ -1592,11 +1592,11 @@ function CardInfoPanel({
       {/* P/T breakdown */}
       {ptDisplay && (
         <div className="mt-1 text-gray-400">
-          <span className={ptDisplay.powerColor === "green" ? "text-green-400" : ptDisplay.powerColor === "red" ? "text-red-400" : "text-white"}>
+          <span className={ptDisplay.powerColor === "blue" ? "text-blue-400" : ptDisplay.powerColor === "red" ? "text-red-400" : "text-white"}>
             {ptDisplay.power}
           </span>
           <span className="text-gray-500">/</span>
-          <span className={ptDisplay.toughnessColor === "green" ? "text-green-400" : ptDisplay.toughnessColor === "red" ? "text-red-400" : "text-white"}>
+          <span className={ptDisplay.toughnessColor === "blue" ? "text-blue-400" : ptDisplay.toughnessColor === "red" ? "text-red-400" : "text-white"}>
             {ptDisplay.toughness}
           </span>
           {obj.base_power != null && obj.base_toughness != null && (

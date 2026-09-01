@@ -6,7 +6,12 @@ import type {
   ObjectAttribution,
   ObjectId,
 } from "../../adapter/types.ts";
-import { formatTypeLine, publicName } from "../../viewmodel/cardProps.ts";
+import {
+  computePTDisplay,
+  formatTypeLine,
+  publicName,
+  type PTColor,
+} from "../../viewmodel/cardProps.ts";
 import { manaCostToShards } from "../../viewmodel/costLabel.ts";
 import { getKeywordDisplayText, sortKeywords } from "../../viewmodel/keywordProps.ts";
 
@@ -31,6 +36,8 @@ export interface ArenaCardPresentation {
   keywords: string[];
   power: number | null;
   toughness: number | null;
+  powerColor: PTColor;
+  toughnessColor: PTColor;
   damageMarked: number;
   loyalty: number | null;
   counters: ArenaCounterPresentation[];
@@ -54,6 +61,7 @@ export function buildArenaCardPresentation(
   manaCostReduced = false,
 ): ArenaCardPresentation {
   const manaSymbols = manaCostToShards(displayCost);
+  const ptDisplay = computePTDisplay(object);
   return {
     objectId: object.id,
     faceDown: object.face_down,
@@ -66,6 +74,8 @@ export function buildArenaCardPresentation(
     keywords: formatKeywords(object.keywords),
     power: object.power,
     toughness: object.toughness,
+    powerColor: ptDisplay?.powerColor ?? "white",
+    toughnessColor: ptDisplay?.toughnessColor ?? "white",
     damageMarked: object.damage_marked,
     loyalty: object.loyalty,
     counters: Object.entries(object.counters)

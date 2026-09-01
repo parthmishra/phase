@@ -31,9 +31,23 @@ describe("buildArenaCardPresentation", () => {
       manaCostReduced: false,
       power: 5,
       toughness: 4,
+      powerColor: "white",
+      toughnessColor: "white",
       rulesText: "Current rules surface",
     });
     expect(presentation.typeLine).toContain("Legendary Creature");
+  });
+
+  it("projects increased and decreased live stats into separate numeral colors", () => {
+    const object = gameObjectFactory
+      .creature(3, 4)
+      .params({ power: 5, toughness: 2 })
+      .build();
+
+    expect(buildArenaCardPresentation(object)).toMatchObject({
+      powerColor: "blue",
+      toughnessColor: "red",
+    });
   });
 
   it("keeps a visible zero pip for an engine-reduced free cast", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARENA_STAT_INK,
   arenaCardStatText,
   arenaFrameLetter,
   drawArenaStatText,
@@ -119,6 +120,48 @@ describe("drawArenaStatText", () => {
     expect(textPositions[0]?.[1]).toBeCloseTo(
       (0.888 + 0.072 * 0.44) * 1407 + 18,
     );
+  });
+
+  it("colors increased and decreased numerals independently", () => {
+    const painted: Array<{ ink: string; text: string }> = [];
+    const context = {
+      beginPath: () => undefined,
+      fill: () => undefined,
+      fillText: (text: string) => {
+        painted.push({ ink: String(context.fillStyle), text });
+      },
+      measureText: (text: string) => ({
+        actualBoundingBoxAscent: 48,
+        actualBoundingBoxDescent: 12,
+        actualBoundingBoxLeft: 0,
+        actualBoundingBoxRight: text.length * 20,
+        width: text.length * 20,
+      }),
+      restore: () => undefined,
+      roundRect: () => undefined,
+      save: () => undefined,
+      stroke: () => undefined,
+      fillStyle: "",
+      font: "",
+      lineJoin: "miter",
+      lineWidth: 1,
+      strokeStyle: "",
+      textAlign: "left",
+      textBaseline: "alphabetic",
+    } as unknown as CanvasRenderingContext2D;
+
+    drawArenaStatText(
+      context,
+      "5\u200a/\u200a2",
+      undefined,
+      { power: "blue", toughness: "red" },
+    );
+
+    expect(painted).toEqual([
+      { ink: ARENA_STAT_INK.blue, text: "5\u200a" },
+      { ink: ARENA_STAT_INK.white, text: "/" },
+      { ink: ARENA_STAT_INK.red, text: "\u200a2" },
+    ]);
   });
 
   it("uses the preview badge asset as the background when available", () => {

@@ -1,6 +1,7 @@
 import type { GameObject } from "../../adapter/types.ts";
 
-export const ARENA_FLYING_BOB_AMPLITUDE = 0.055;
+export const ARENA_FLYING_HOVER_LIFT = 0.065;
+export const ARENA_FLYING_BOB_AMPLITUDE = 0.03;
 export const ARENA_FLYING_BOB_PERIOD_SECONDS = 3.2;
 
 /**
@@ -25,6 +26,10 @@ export function arenaFlyingBobOffset(
   const angularVelocity = (Math.PI * 2)
     / (ARENA_FLYING_BOB_PERIOD_SECONDS * animationSpeedMultiplier);
   const phase = (Math.abs(objectId) % 11) * 0.61;
-  return Math.sin(elapsedSeconds * angularVelocity + phase)
-    * ARENA_FLYING_BOB_AMPLITUDE;
+  // Keep the entire bob above the normal permanent resting plane. Letting the
+  // sine wave cross below that plane pushes the card's cast shadow into the
+  // tabletop at the trough, where it clips and appears to blink out.
+  return ARENA_FLYING_HOVER_LIFT
+    + Math.sin(elapsedSeconds * angularVelocity + phase)
+      * ARENA_FLYING_BOB_AMPLITUDE;
 }
