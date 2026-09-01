@@ -4,11 +4,15 @@ import { useTranslation } from "react-i18next";
 import type { FormatConfig, FormatGroup, GameFormat, LoopDetectionMode, MatchType } from "../../adapter/types";
 import { AI_DIFFICULTIES } from "../../constants/ai";
 import { FORMAT_REGISTRY } from "../../data/formatRegistry";
-import { FORMAT_DEFAULTS, useMultiplayerStore } from "../../stores/multiplayerStore";
+import {
+  FORMAT_DEFAULTS,
+  useMultiplayerStore,
+} from "../../stores/multiplayerStore";
 import type { AiSeatConfig, HostingSettings } from "../../stores/multiplayerStore";
 import { useAiDeckCatalog } from "../../services/aiDeckCatalog";
 import { expandParsedDeck } from "../../services/deckParser";
 import { menuButtonClass } from "../menu/buttonStyles";
+import { IntegerField } from "../ui/IntegerField";
 import { MenuSelect, type MenuSelectGroup } from "../ui/MenuSelect";
 
 export type { AiSeatConfig };
@@ -197,8 +201,8 @@ export function HostSetup({
   // whose minimum exceeds the P2P mesh ceiling can't run over P2P, so we drop
   // back to defaults rather than seed an unhostable configuration.
   const remembered =
-    lastHostConfig != null &&
-    (!isP2P || FORMAT_DEFAULTS[lastHostConfig.format].min_players <= P2P_MAX_PEERS)
+    lastHostConfig != null
+    && (!isP2P || FORMAT_DEFAULTS[lastHostConfig.format].min_players <= P2P_MAX_PEERS)
       ? lastHostConfig
       : null;
   const initialFormatConfig =
@@ -284,7 +288,10 @@ export function HostSetup({
   };
 
   const handleDeckSizeChange = (deckSize: number) => {
-    setLocalFormatConfig((prev) => ({ ...prev, deck_size: deckSize }));
+    // Variant-preserving: the engine is the authority for whether the format's
+    // rule is a minimum or an exact count (CR 100.5 / CR 903.5a); this picker
+    // edits only the count.
+    setLocalFormatConfig((prev) => ({ ...prev, deck_size: { ...prev.deck_size, data: deckSize } }));
   };
 
   const toggleAiSeat = (seatIndex: number) => {
@@ -476,17 +483,13 @@ export function HostSetup({
             </Field>
 
             <Field label={t("hostSetup.startingLife")} htmlFor="host-setup-life">
-              <input
+              <IntegerField
                 id="host-setup-life"
-                type="number"
                 value={formatConfig.starting_life}
-                onChange={(e) =>
-                  setLocalFormatConfig((prev) => ({
-                    ...prev,
-                    starting_life: Math.max(1, parseInt(e.target.value) || 1),
-                  }))
-                }
                 min={1}
+                onCommit={(starting_life) =>
+                  setLocalFormatConfig((prev) => ({ ...prev, starting_life }))
+                }
                 className={inp}
               />
             </Field>
@@ -540,13 +543,6 @@ export function HostSetup({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setLoopDetection({ type: "On" })}
-                  className={seg(loopDetection.type === "On")}
-                >
-                  {t("common:comboDetector.on")}
-                </button>
-                <button
-                  type="button"
                   onClick={() => setLoopDetection({ type: "Interactive" })}
                   className={seg(loopDetection.type === "Interactive")}
                 >
@@ -562,7 +558,7 @@ export function HostSetup({
             <Field label={t("hostSetup.deckSize")}>
               <div className={segWrap}>
                 {FFA_DECK_SIZE_OPTIONS.map((deckSize) => (
-                  <button type="button" key={deckSize} onClick={() => handleDeckSizeChange(deckSize)} className={seg(formatConfig.deck_size === deckSize)}>
+                  <button type="button" key={deckSize} onClick={() => handleDeckSizeChange(deckSize)} className={seg(formatConfig.deck_size.data === deckSize)}>
                     {deckSize}
                   </button>
                 ))}
@@ -573,17 +569,16 @@ export function HostSetup({
           {/* Commander damage threshold (Commander only) */}
           {formatConfig.commander_damage_threshold != null && (
             <Field label={t("hostSetup.commanderDamage")} htmlFor="host-setup-cmd-dmg">
-              <input
+              <IntegerField
                 id="host-setup-cmd-dmg"
-                type="number"
                 value={formatConfig.commander_damage_threshold ?? 21}
-                onChange={(e) =>
+                min={1}
+                onCommit={(threshold) =>
                   setLocalFormatConfig((prev) => ({
                     ...prev,
-                    commander_damage_threshold: Math.max(1, parseInt(e.target.value) || 21),
+                    commander_damage_threshold: threshold,
                   }))
                 }
-                min={1}
                 className={inp}
               />
             </Field>

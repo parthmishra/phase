@@ -14,7 +14,7 @@ export function all_picks_submitted(): boolean;
  * picks from connected guests.
  *
  * `action_json`: serialized DraftAction, e.g.:
- *   `{ "type": "Pick", "data": { "seat": 2, "card_instance_id": "abc-123" } }`
+ *   `{ "type": "Pick", "data": { "seat": 2, "card_instance_ids": ["abc-123"] } }`
  *
  * Returns the list of DraftDeltas produced (serialized as a JS array).
  */
@@ -30,15 +30,16 @@ export function auto_pick(): any;
 
 /**
  * Create a multiplayer draft session. Used by the P2P host to initialize a
- * Premier, Traditional, or Sealed draft with human + bot seats from either a Set pool
- * or a custom Cube list.
+ * Premier, Traditional, Sealed, or Commander draft with human + bot seats from
+ * either a Set pool or a custom Cube list.
  *
  * - `pool_input_json`: serialized `PoolInput` discriminated union
  *   (`{ "type": "Set" | "Cube", "data": { ... } }`)
  * - `seats_json`: JSON array of SeatDescriptors
- * - `kind`: 0=Quick, 1=Premier, 2=Traditional, 3=Sealed.
- *   flows through to `DraftConfig.kind` unchanged. Tournament match format
- *   (Bo1 for Premier and Sealed, Bo3 for Traditional) is identical to set drafts.
+ * - `kind`: 0=Quick, 1=Premier, 2=Traditional, 3=Sealed, 4=CommanderDraft
+ *   (CR 903.13a). The mapping's single authority is `draft_kind_wire_number`.
+ *   Flows through to `DraftConfig.kind` unchanged. Tournament match format is
+ *   identical to set drafts.
  * - `seed`: RNG seed for deterministic pack generation
  * - `draft_code`: unique room identifier
  *
@@ -47,6 +48,13 @@ export function auto_pick(): any;
  * for seat 0.
  */
 export function create_multiplayer_draft(pool_input_json: string, seats_json: string, kind: number, seed: number, draft_code: string, tournament_format: string, pod_policy: string): any;
+
+/**
+ * The engine-owned per-kind axes for a numeric draft kind. The display layer
+ * reads these; it never re-derives them (CLAUDE.md: the frontend is a display
+ * layer, not a logic layer).
+ */
+export function draft_procedure(kind: number): any;
 
 /**
  * Serialize the full DraftSession to JSON for host persistence.
@@ -146,35 +154,45 @@ export function start_quick_cube_draft(cube_list_text: string, cube_name: string
 /**
  * Start a Quick Draft session: 1 human + 7 bots.
  *
- * - `set_pool_json`: serialized LimitedSetPool from draft-pools.json
+ * - `selection_json`: serialized [`SetPackSequence`] — the distinct set pools
+ *   from draft-pools.json plus the set filling each booster, in pack order.
+ *   The sequence length is the draft's pack count, and a set may repeat.
  * - `difficulty`: 0=VeryEasy, 1=Easy, 2=Medium, 3=Hard, 4=VeryHard
  * - `seed`: RNG seed for deterministic pack generation
  *
  * Returns the initial DraftPlayerView as a JS object.
  */
-export function start_quick_draft(set_pool_json: string, difficulty: number, seed: number): any;
+export function start_quick_draft(selection_json: string, difficulty: number, seed: number): any;
 
 /**
  * Start a local Sealed event: one human and seven bots each open six packs,
  * then the human proceeds directly to deckbuilding.
  */
-export function start_sealed_draft(set_pool_json: string, difficulty: number, seed: number): any;
+export function start_sealed_draft(selection_json: string, difficulty: number, seed: number): any;
 
 /**
  * Submit the human player's deck for limited play.
  *
- * `main_deck_json`: JSON array of card instance ID strings.
+ * `main_deck_json`: JSON array of card name strings.
+ * `commanders_json`: JSON array of the card names this seat designates as its
+ * commander(s) (CR 903.3 / CR 702.124h). CR 903.1 puts the designation inside
+ * the Commander variant, so `[]` is the correct and meaningful value for every
+ * non-Commander kind.
  * The deck is validated against the pool via LimitedDeckValidator.
  */
-export function submit_deck(main_deck_json: string): any;
+export function submit_deck(main_deck_json: string, commanders_json: string): any;
 
 /**
  * Submit a deck for any seat.
  *
  * `main_deck_json`: JSON array of card name strings.
+ * `commanders_json`: JSON array of the card names this seat designates as its
+ * commander(s) (CR 903.3 / CR 702.124h). CR 903.1 puts the designation inside
+ * the Commander variant, so `[]` is the correct and meaningful value for every
+ * non-Commander kind.
  * Returns the DraftPlayerView for the specified seat.
  */
-export function submit_deck_for_seat(seat: number, main_deck_json: string): any;
+export function submit_deck_for_seat(seat: number, main_deck_json: string, commanders_json: string): any;
 
 /**
  * Submit the human player's pick and resolve all bot picks synchronously.
@@ -184,11 +202,20 @@ export function submit_deck_for_seat(seat: number, main_deck_json: string): any;
 export function submit_pick(card_instance_id: string): any;
 
 /**
- * Submit a pick for any seat (host proxies guest picks).
+ * Submit one whole CR 903.13b pick step for any seat (host proxies guest
+ * picks): every card the seat drafts this step, as a JSON array of instance
+ * ids. `apply_pick_inner` owns the count contract — one id for the four CR
+ * 905.1a kinds, two for CommanderDraft, dropping to the remainder on an odd
+ * final pick.
+ *
+ * The JSON encoding mirrors `submit_pick_with_draft_effect_for_seat` below
+ * byte for byte. It is deliberately NOT tolerant of a bare id: a bare string
+ * is a parse `Err` here, which is what keeps a half-applied caller loud
+ * instead of silently picking one card.
  *
  * Returns the DraftPlayerView for the specified seat after the pick.
  */
-export function submit_pick_for_seat(seat: number, card_instance_id: string): any;
+export function submit_pick_for_seat(seat: number, card_instance_ids_json: string): any;
 
 /**
  * Submit an additional pick using a drafted card's draft-time effect, then
@@ -224,38 +251,41 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly all_picks_submitted: (a: number) => void;
-    readonly apply_draft_action: (a: number, b: number, c: number) => void;
-    readonly auto_pick: (a: number) => void;
-    readonly create_multiplayer_draft: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
-    readonly export_draft_session: (a: number) => void;
-    readonly filter_pool_listing: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly get_bot_deck: (a: number, b: number) => void;
-    readonly get_draft_status: (a: number) => void;
-    readonly get_draft_view_for_seat: (a: number, b: number) => void;
-    readonly get_view: (a: number) => void;
-    readonly import_draft_session: (a: number, b: number, c: number, d: number) => void;
+    readonly all_picks_submitted: () => [number, number, number];
+    readonly apply_draft_action: (a: number, b: number) => [number, number, number];
+    readonly auto_pick: () => [number, number, number];
+    readonly create_multiplayer_draft: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number];
+    readonly draft_procedure: (a: number) => [number, number, number];
+    readonly export_draft_session: () => [number, number, number, number];
+    readonly filter_pool_listing: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly get_bot_deck: (a: number) => [number, number, number];
+    readonly get_draft_status: () => [number, number, number];
+    readonly get_draft_view_for_seat: (a: number) => [number, number, number];
+    readonly get_view: () => [number, number, number];
+    readonly get_view_for_seat: (a: number) => [number, number, number];
+    readonly import_draft_session: (a: number, b: number, c: number) => [number, number, number];
+    readonly load_card_database: (a: number, b: number) => [number, number, number];
+    readonly pool_filter_options: (a: number, b: number) => [number, number, number];
+    readonly set_seat_connected: (a: number, b: number) => [number, number, number];
+    readonly start_quick_cube_draft: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly start_quick_draft: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly start_sealed_draft: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly submit_deck: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly submit_deck_for_seat: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly submit_pick: (a: number, b: number) => [number, number, number];
+    readonly submit_pick_for_seat: (a: number, b: number, c: number) => [number, number, number];
+    readonly submit_pick_with_draft_effect: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly submit_pick_with_draft_effect_for_seat: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly suggest_deck: () => [number, number, number];
+    readonly suggest_lands: (a: number, b: number) => [number, number, number];
     readonly init_panic_hook: () => void;
-    readonly load_card_database: (a: number, b: number, c: number) => void;
-    readonly pool_filter_options: (a: number, b: number, c: number) => void;
-    readonly set_seat_connected: (a: number, b: number, c: number) => void;
-    readonly start_quick_cube_draft: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly start_quick_draft: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly start_sealed_draft: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly submit_deck: (a: number, b: number, c: number) => void;
-    readonly submit_deck_for_seat: (a: number, b: number, c: number, d: number) => void;
-    readonly submit_pick: (a: number, b: number, c: number) => void;
-    readonly submit_pick_for_seat: (a: number, b: number, c: number, d: number) => void;
-    readonly submit_pick_with_draft_effect: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly submit_pick_with_draft_effect_for_seat: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly suggest_deck: (a: number) => void;
-    readonly suggest_lands: (a: number, b: number, c: number) => void;
-    readonly get_view_for_seat: (a: number, b: number) => void;
-    readonly __wbindgen_export: (a: number, b: number) => number;
-    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_export4: (a: number) => void;
-    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

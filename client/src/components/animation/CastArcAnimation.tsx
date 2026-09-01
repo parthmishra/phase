@@ -6,19 +6,116 @@ import type {
 } from "../../stores/animationStore.ts";
 import { ArenaStackCardSurface } from "../stack/ArenaStackCardSurface.tsx";
 import { cardFlightControl } from "./cardMotion.ts";
+import {
+  ResolvedAnimationImage,
+  type AnimationImageSnapshot,
+} from "./ResolvedAnimationImage.tsx";
 
 interface CastArcAnimationProps {
-  objectId: number;
-  from: CardMotionTarget;
-  to: CardMotionTarget;
+  objectId?: number;
+  from: CardMotionTarget | { x: number; y: number };
+  to: CardMotionTarget | { x: number; y: number };
   release?: ReleasedCardMotion;
+  snapshot?: AnimationImageSnapshot | null;
   mode:
     | "cast"
     | "play-permanent"
     | "resolve-permanent"
     | "resolve-spell";
-  duration: number;
+  duration?: number;
   onComplete: () => void;
+}
+
+const SNAPSHOT_CARD_WIDTH = 80;
+const SNAPSHOT_CARD_HEIGHT = 112;
+const SNAPSHOT_ARC_HEIGHT = 100;
+
+function isCardMotionTarget(
+  target: CardMotionTarget | { x: number; y: number },
+): target is CardMotionTarget {
+  return "rect" in target;
+}
+
+function SnapshotCard({ snapshot }: { snapshot: AnimationImageSnapshot | null }) {
+  if (!snapshot) {
+    return <div className="h-full w-full bg-black/70" />;
+  }
+  return (
+    <ResolvedAnimationImage
+      snapshot={snapshot}
+      size="normal"
+      alt={snapshot.cardName}
+      fallback={<div className="h-full w-full bg-black/70" />}
+      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+    />
+  );
+}
+
+function SnapshotCastArc({
+  from,
+  to,
+  snapshot,
+  mode,
+  onComplete,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  snapshot: AnimationImageSnapshot | null;
+  mode: CastArcAnimationProps["mode"];
+  onComplete: () => void;
+}) {
+  if (mode === "resolve-spell") {
+    return (
+      <motion.div
+        initial={{ opacity: 1, scale: 1 }}
+        animate={{ opacity: 0, scale: 0.3 }}
+        transition={{ duration: 0.3, ease: "easeIn" }}
+        onAnimationComplete={onComplete}
+        style={{
+          position: "fixed",
+          left: from.x - SNAPSHOT_CARD_WIDTH / 2,
+          top: from.y - SNAPSHOT_CARD_HEIGHT / 2,
+          width: SNAPSHOT_CARD_WIDTH,
+          height: SNAPSHOT_CARD_HEIGHT,
+          pointerEvents: "none",
+          zIndex: 45,
+          borderRadius: 6,
+          overflow: "hidden",
+        }}
+      >
+        <SnapshotCard snapshot={snapshot} />
+      </motion.div>
+    );
+  }
+
+  const midX = (from.x + to.x) / 2;
+  const midY = Math.min(from.y, to.y) - SNAPSHOT_ARC_HEIGHT;
+  const transitDuration = mode === "cast" ? 0.4 : 0.3;
+  return (
+    <motion.div
+      initial={{ x: from.x, y: from.y, opacity: 1 }}
+      animate={{
+        x: [from.x, midX, to.x],
+        y: [from.y, midY, to.y],
+        opacity: 1,
+      }}
+      transition={{ duration: transitDuration, ease: "easeOut", times: [0, 0.5, 1] }}
+      onAnimationComplete={onComplete}
+      style={{
+        position: "fixed",
+        left: -SNAPSHOT_CARD_WIDTH / 2,
+        top: -SNAPSHOT_CARD_HEIGHT / 2,
+        width: SNAPSHOT_CARD_WIDTH,
+        height: SNAPSHOT_CARD_HEIGHT,
+        pointerEvents: "none",
+        zIndex: 45,
+        borderRadius: 6,
+        overflow: "hidden",
+      }}
+    >
+      <SnapshotCard snapshot={snapshot} />
+    </motion.div>
+  );
 }
 
 /**
@@ -31,11 +128,25 @@ export function CastArcAnimation({
   from,
   to,
   release,
+  snapshot = null,
   mode,
-  duration,
+  duration = mode === "cast" ? 0.42 : 0.3,
   onComplete,
 }: CastArcAnimationProps) {
   const shouldReduceMotion = useReducedMotion();
+  if (!isCardMotionTarget(from) && !isCardMotionTarget(to)) {
+    return (
+      <SnapshotCastArc
+        from={from}
+        to={to}
+        snapshot={snapshot}
+        mode={mode}
+        onComplete={onComplete}
+      />
+    );
+  }
+  if (!isCardMotionTarget(from) || !isCardMotionTarget(to)) return null;
+  if (objectId == null) return null;
   const velocity = release?.velocity ?? { x: 0, y: 0 };
   const control = cardFlightControl(from, to, velocity);
   const transitDuration = shouldReduceMotion
@@ -94,10 +205,14 @@ export function CastArcAnimation({
       data-card-in-flight={objectId}
       data-card-flight-mode={mode}
     >
-      <ArenaStackCardSurface
-        objectId={objectId}
-        transitDuration={transitDuration}
-      />
+      {snapshot ? (
+        <SnapshotCard snapshot={snapshot} />
+      ) : (
+        <ArenaStackCardSurface
+          objectId={objectId}
+          transitDuration={transitDuration}
+        />
+      )}
     </motion.div>
   );
 }

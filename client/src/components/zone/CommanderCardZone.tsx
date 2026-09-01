@@ -12,7 +12,7 @@ import { useIsCompactHeight } from "../../hooks/useIsCompactHeight.ts";
 import { useIsMobile } from "../../hooks/useIsMobile.ts";
 import { getPlayerId, useCanActForWaitingState } from "../../hooks/usePlayerId.ts";
 import { useDragToCast } from "../../hooks/useDragToCast.ts";
-import { cardImageLookup } from "../../services/cardImageLookup.ts";
+import { objectImageProps } from "../../services/cardImageLookup.ts";
 import { useGameStore } from "../../stores/gameStore.ts";
 import { usePreferencesStore } from "../../stores/preferencesStore.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
@@ -26,6 +26,7 @@ import { spellCostDisplay } from "../../viewmodel/costLabel.ts";
 import { commandZoneLeaders } from "../../viewmodel/commanderColumn.ts";
 import { ArenaCardFace } from "../arena3d/ArenaCardFace.tsx";
 import { CardArtFallback } from "../card/CardArtFallback.tsx";
+import { getCardImageSrcSetProps } from "../card/cardImageSrcSet.ts";
 import { ManaCostPips } from "../mana/ManaCostPips.tsx";
 
 interface CommanderCardZoneProps {
@@ -227,7 +228,12 @@ function CommanderCard({
         if (firedRef.current) return;
         if (useUiStore.getState().debugInteractionMode) {
           e.stopPropagation();
-          useUiStore.getState().openDebugContextMenu({ objectId: commander.id, x: e.clientX, y: e.clientY });
+          useUiStore.getState().openDebugContextMenu({
+            objectId: commander.id,
+            x: e.clientX,
+            y: e.clientY,
+            surface: "game",
+          });
           return;
         }
         // Commander ninjutsu is a click affordance (unlike drag-to-cast): a
@@ -251,6 +257,7 @@ function CommanderCard({
           : undefined
       }
       whileDrag={{ cursor: "grabbing", scale: 1.04 }}
+      data-object-id={commander.id}
       className={`group pointer-events-auto relative isolate ${
         canCast ? "cursor-grab" : canNinjutsu ? "cursor-pointer" : "cursor-default"
       }`}
@@ -365,10 +372,13 @@ function LegacyCommanderFace({
 }) {
   // Use the canonical printed-face identity so double-faced commanders resolve
   // the same art as battlefield, stack, and preview surfaces.
-  const imageLookup = cardImageLookup(commander);
-  const { src, isLoading } = useCardImage(imageLookup.name, {
+  const imageLookup = objectImageProps(commander);
+  const { src, isLoading, rungs, advanceFailedSource } = useCardImage(imageLookup.cardName, {
     size: "normal",
     faceIndex: imageLookup.faceIndex,
+    isToken: imageLookup.isToken,
+    tokenFilters: imageLookup.tokenFilters,
+    tokenImageRef: imageLookup.tokenImageRef,
     oracleId: imageLookup.oracleId,
     faceName: imageLookup.faceName,
   });
@@ -380,9 +390,11 @@ function LegacyCommanderFace({
       ) : src ? (
         <img
           src={src}
+          {...getCardImageSrcSetProps(src, rungs)}
           alt={commander.name}
           className="h-full w-full object-cover"
           draggable={false}
+          onError={() => advanceFailedSource?.(src)}
         />
       ) : (
         <CardArtFallback name={commander.name} variant="artCrop" className="h-full w-full" />

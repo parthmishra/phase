@@ -27,7 +27,9 @@ describe("PlayerHud", () => {
     useMultiplayerStore.setState({
       activePlayerId: 0,
       isSpectator: false,
-      playerAvatars: new Map([[0, "/player-avatar.jpg"]]),
+      playerAvatars: new Map([
+        [0, { kind: "external" as const, url: "/player-avatar.jpg" }],
+      ]),
     });
     useUiStore.setState({ fullControl: false, manualManaOverride: false });
     useGameStore.setState({

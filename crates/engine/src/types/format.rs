@@ -70,6 +70,12 @@ pub enum GameFormat {
     /// Create a token that's a copy of a creature card with mana value X chosen
     /// at random."
     Momir,
+    /// CR 903.13: Commander Draft — a draft (CR 903.13b) followed by a
+    /// multiplayer Commander game (CR 903.13a). Deck construction follows
+    /// CR 903.5 with CR 903.13f's exceptions: at least 60 cards with no
+    /// maximum (f(1)) and no singleton restriction on the drafted pool (f(2)).
+    /// CR 903.13g delegates all game rules to CR 903.6-903.11.
+    CommanderDraft,
     /// An engine-validated custom format. Resolves via
     /// `FormatConfig.custom_rules` (see `types::custom_format`) — a bare
     /// `GameFormat::Custom(id)` alone cannot fully answer several of this
@@ -124,6 +130,7 @@ impl std::str::FromStr for GameFormat {
             "Archenemy" => Ok(GameFormat::Archenemy),
             "Planechase" => Ok(GameFormat::Planechase),
             "Momir" => Ok(GameFormat::Momir),
+            "CommanderDraft" => Ok(GameFormat::CommanderDraft),
             other => Err(GameFormatParseError(format!(
                 "unknown GameFormat: {other:?}"
             ))),
@@ -157,6 +164,7 @@ impl std::fmt::Display for GameFormat {
             GameFormat::Archenemy => write!(f, "Archenemy"),
             GameFormat::Planechase => write!(f, "Planechase"),
             GameFormat::Momir => write!(f, "Momir"),
+            GameFormat::CommanderDraft => write!(f, "CommanderDraft"),
         }
     }
 }
@@ -227,6 +235,80 @@ pub enum DeckCopyLimit {
     UpTo(u32),
 }
 
+impl DeckCopyLimit {
+    /// CR 100.2a / CR 100.2b / CR 903.5b: whether `self` can never admit more
+    /// copies of a card than `ceiling` would. `Unlimited` permits no more
+    /// copies than `Unlimited` only; any `UpTo(n)` permits no more than any
+    /// equal-or-looser ceiling. This is a pure permissiveness comparison —
+    /// never use it to decide "which format is bigger" in any other sense.
+    ///
+    /// The single authority `FormatConfig`'s `Deserialize` impl uses to
+    /// reject a built-in format's payload from declaring a copy ceiling
+    /// looser than `GameFormat::default_deck_copy_limit()` actually allows.
+    pub fn permits_no_more_than(self, ceiling: Self) -> bool {
+        match (self, ceiling) {
+            (DeckCopyLimit::Unlimited, DeckCopyLimit::Unlimited) => true,
+            (DeckCopyLimit::UpTo(_), DeckCopyLimit::Unlimited) => true,
+            (DeckCopyLimit::Unlimited, DeckCopyLimit::UpTo(_)) => false,
+            (DeckCopyLimit::UpTo(n), DeckCopyLimit::UpTo(m)) => n <= m,
+        }
+    }
+}
+
+/// A format's deck-size legality rule: either a floor with no ceiling, or an
+/// exact count that is simultaneously the minimum and the maximum.
+///
+/// - `Minimum(n)`: CR 100.5 — "If a deck must contain at least a certain number
+///   of cards, that number is referred to as a minimum deck size. There is no
+///   maximum deck size for non-Commander decks." Covers CR 100.2a's 60-card
+///   constructed floor and CR 100.2b's 40-card limited floor.
+/// - `Exactly(n)`: CR 903.5a — "the minimum deck size and the maximum deck size
+///   are both 100" — and the Brawl/Tiny Leaders/Oathbreaker variants that
+///   inherit an exact count.
+///
+/// CR 903.13f(1) is why this axis is typed rather than inferred: Commander
+/// Draft is a command-zone format whose deck "must contain at least 60 cards.
+/// There is no maximum deck size", so a format's command zone does not predict
+/// its deck-size rule. Archenemy (command zone, minimum) and Momir (command
+/// zone, exact) already disagreed under the old convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum DeckSizeRule {
+    Minimum(u16),
+    Exactly(u16),
+}
+
+impl DeckSizeRule {
+    /// CR 100.5 / CR 903.5a: whether `count` satisfies this rule. The single
+    /// authority for deck-size legality — callers must not re-derive it with
+    /// `<` or `!=` against `min_cards`.
+    pub fn accepts(self, count: usize) -> bool {
+        match self {
+            DeckSizeRule::Minimum(min) => count >= usize::from(min),
+            DeckSizeRule::Exactly(exact) => count == usize::from(exact),
+        }
+    }
+
+    /// The smallest legal deck under this rule. Both variants carry a floor;
+    /// `Exactly(n)`'s floor is `n`.
+    pub fn min_cards(self) -> u16 {
+        match self {
+            DeckSizeRule::Minimum(min) => min,
+            DeckSizeRule::Exactly(exact) => exact,
+        }
+    }
+
+    /// Human-readable requirement fragment for validation messages, e.g.
+    /// "at least 60" or "exactly 100". Keeps the message honest under
+    /// `Minimum`, where the old hardcoded "exactly" would have been false.
+    pub fn requirement_phrase(self) -> String {
+        match self {
+            DeckSizeRule::Minimum(min) => format!("at least {min}"),
+            DeckSizeRule::Exactly(exact) => format!("exactly {exact}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnStructure {
     IndividualTurns,
@@ -295,6 +377,16 @@ fn default_sideboard_policy_fallback() -> SideboardPolicy {
     SideboardPolicy::Forbidden
 }
 
+/// CR 100.2a / CR 100.2b / CR 903.5b: Fail-closed default for
+/// `FormatConfig.default_deck_copy_limit` on a payload serialized before
+/// this field existed. `UpTo(1)` — the same value
+/// `GameFormat::Custom(_).default_deck_copy_limit()` already discloses as
+/// its own fail-closed fallback — is the tightest possible cap, so a stale
+/// payload under-permits rather than silently over-permitting extra copies.
+fn default_deck_copy_limit_fallback() -> DeckCopyLimit {
+    DeckCopyLimit::UpTo(1)
+}
+
 /// Configuration for a game format, describing player counts, starting life, deck rules, etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self")]
@@ -303,14 +395,13 @@ pub struct FormatConfig {
     pub starting_life: i32,
     pub min_players: u8,
     pub max_players: u8,
-    /// CR 100.5: the format's **minimum** deck size. There is no maximum deck
-    /// size for non-Commander decks, so a 61-card Standard deck is legal and
-    /// this must be compared with `<`, never `==`.
-    ///
-    /// The command-zone formats are the exception: CR 903.5a makes 100 both the
-    /// minimum and the maximum, so an exact comparison is correct there — but
-    /// only there, and only when gated on `command_zone`.
-    pub deck_size: u16,
+    /// CR 100.5 / CR 903.5a: the format's deck-size rule. `Minimum(n)` means a
+    /// larger deck is legal; `Exactly(n)` means n is both the minimum and the
+    /// maximum. The variant is authoritative — never infer exactness from
+    /// `command_zone`, which does not predict it (Archenemy is a command-zone
+    /// format with a minimum; CR 903.13f(1) makes Commander Draft another).
+    /// Compare through `DeckSizeRule::accepts`, never by hand.
+    pub deck_size: DeckSizeRule,
     pub singleton: bool,
     pub command_zone: bool,
     pub commander_damage_threshold: Option<u8>,
@@ -321,10 +412,11 @@ pub struct FormatConfig {
     /// designated as the archenemy and takes the first turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archenemy_player: Option<PlayerId>,
-    /// Engine-derived predicate: true when the format uses a commander card
-    /// and the commander-damage state-based action (CR 903.10a).
-    /// Covers Commander, Duel Commander, Pauper Commander, Brawl, and
-    /// Historic Brawl. The frontend consumes this directly — it must never
+    /// Engine-derived predicate (mirrors `GameFormat::uses_commander`): true
+    /// when the format uses a commander card and the commander-damage
+    /// state-based action (CR 903.10a / CR 704.6c) — every format whose
+    /// `command_zone` is true and whose `commander_damage_threshold` is
+    /// non-`None`. The frontend consumes this directly — it must never
     /// re-list commander-style formats client-side.
     pub uses_commander: bool,
     /// Engine-derived predicate (mirrors `GameFormat::supplies_fixed_deck`):
@@ -346,6 +438,20 @@ pub struct FormatConfig {
     /// any payload serialized before this field existed.
     #[serde(default = "default_sideboard_policy_fallback")]
     pub sideboard_policy: SideboardPolicy,
+    /// Engine-derived, stored per-format default deck-construction copy
+    /// ceiling (CR 100.2a / CR 100.2b / CR 903.5b), before per-card printed
+    /// overrides and the basic-land exemption — both applied by
+    /// `game::deck_validation::max_deck_copies`, the single query authority.
+    /// Mirrors `uses_commander`/`supplies_fixed_deck`/`sideboard_policy`'s
+    /// stored-field pattern: real consumers must read this field, never
+    /// `GameFormat::default_deck_copy_limit()` directly — for a built-in
+    /// format the two always agree, but for `GameFormat::Custom` the bare
+    /// method has no way to see the real declared limit sitting in
+    /// `custom_rules.structural` and would silently discard it.
+    /// `#[serde(default)]` fails closed (`UpTo(1)`) for any payload
+    /// serialized before this field existed.
+    #[serde(default = "default_deck_copy_limit_fallback")]
+    pub default_deck_copy_limit: DeckCopyLimit,
     /// Capability flag: when true, the server (and other transport gates)
     /// permit `GameAction::Debug(_)` from any player in this session. Off by
     /// default. Orthogonal to format — a sandbox Commander game plays
@@ -428,6 +534,40 @@ impl<'de> Deserialize<'de> for FormatConfig {
         }
         crate::types::custom_format::validate_custom_rules_consistency(&config)
             .map_err(serde::de::Error::custom)?;
+        // CR 100.2a / CR 100.2b / CR 903.5b: a built-in format's default
+        // deck-copy ceiling is fixed by the Comprehensive Rules, not by the
+        // payload. `config.format` is guaranteed non-Custom here (the early
+        // return above already handled Custom). Reject a declared value
+        // more permissive than GameFormat::default_deck_copy_limit() —
+        // without this, a client could submit
+        // {"format":"Standard","default_deck_copy_limit":{"type":"Unlimited"},...}
+        // and have every consumer that reads this stored field (starting
+        // with max_deck_copies, and after this same PR's admission fix,
+        // every evaluate_*/quick_* dispatch function too) disclose or
+        // enforce that forged, looser ceiling.
+        //
+        // Deliberately NOT a strict-equality check: default_deck_copy_limit
+        // ships its own #[serde(default = "default_deck_copy_limit_fallback")]
+        // fallback (UpTo(1)) for payloads serialized before this field
+        // existed. UpTo(1) is never looser than any real format default, so
+        // permits_no_more_than accepts it — a strict-equality reject would
+        // instead turn every legacy Standard/Pioneer/.../Planechase/
+        // Archenemy save, replay, or persisted game state into a hard
+        // deserialize failure, which is worse than the bug this check
+        // exists to close.
+        let real_limit = config.format.default_deck_copy_limit();
+        if !config
+            .default_deck_copy_limit
+            .permits_no_more_than(real_limit)
+        {
+            return Err(serde::de::Error::custom(format!(
+                "FormatConfig.default_deck_copy_limit is {:?}, which is more permissive than \
+                 {} allows ({real_limit:?}) — a built-in format's default copy limit is fixed \
+                 by the Comprehensive Rules; a payload may declare an equal-or-stricter value \
+                 but never a looser one",
+                config.default_deck_copy_limit, config.format,
+            )));
+        }
         Ok(config)
     }
 }
@@ -474,6 +614,9 @@ impl GameFormat {
             | GameFormat::Planechase
             // Momir's pool is the entire creature corpus — no legality restriction.
             | GameFormat::Momir
+            // CR 903.13e: the drafted cards become the card pool, so no
+            // constructed legality table applies — as for Limited.
+            | GameFormat::CommanderDraft
             | GameFormat::Limited => None,
             // A custom format's legality is entirely governed by its own
             // `LegalityRules` (legal_sets/banned/restricted), never by the
@@ -505,6 +648,9 @@ impl GameFormat {
             | GameFormat::Brawl
             // Momir has no sideboard — the deck is exactly 60 snow basic lands.
             | GameFormat::Momir
+            // CR 903.13f routes deck construction through CR 903.5, and the
+            // Commander family has no sideboard.
+            | GameFormat::CommanderDraft
             | GameFormat::HistoricBrawl => SideboardPolicy::Forbidden,
             GameFormat::TinyLeaders => SideboardPolicy::Limited(10),
             GameFormat::FreeForAll
@@ -567,6 +713,11 @@ impl GameFormat {
             GameFormat::Limited
             | GameFormat::FreeForAll
             | GameFormat::TwoHeadedGiant
+            // CR 903.13f(2): a Commander Draft deck "may include any number of
+            // cards from that player's card pool with the same name", so
+            // CR 903.5b's singleton rule does NOT apply — this deliberately
+            // does not join the `UpTo(1)` Commander group.
+            | GameFormat::CommanderDraft
             | GameFormat::Momir => DeckCopyLimit::Unlimited,
             // Phase 1a: disclosed, temporary, bare-GameFormat-context
             // fallback — not this custom format's real declared limit.
@@ -599,8 +750,7 @@ impl GameFormat {
     }
 
     /// Whether this format uses a commander card and the commander-damage
-    /// state-based action (CR 903.10a). True for Commander, Duel
-    /// Commander, Pauper Commander, Brawl, and Historic Brawl — every format
+    /// state-based action (CR 903.10a / CR 704.6c). True for every format
     /// whose `FormatConfig` has both `command_zone: true` and a non-`None`
     /// `commander_damage_threshold`. The frontend consumes the derived
     /// `FormatConfig::uses_commander` field rather than re-listing the
@@ -623,7 +773,10 @@ impl GameFormat {
             | GameFormat::DuelCommander
             | GameFormat::PauperCommander
             | GameFormat::Brawl
-            | GameFormat::HistoricBrawl => Ok(true),
+            | GameFormat::HistoricBrawl
+            // CR 903.13g: Commander Draft games follow the same rules as
+            // Commander games, so CR 903.10a's commander-damage SBA applies.
+            | GameFormat::CommanderDraft => Ok(true),
             GameFormat::Standard
             | GameFormat::Limited
             | GameFormat::Pioneer
@@ -679,6 +832,9 @@ impl GameFormat {
             | GameFormat::FreeForAll
             | GameFormat::TwoHeadedGiant
             | GameFormat::Archenemy
+            // CR 903.13e: the drafted cards become the player's card pool and
+            // they build a deck from it, so the engine supplies nothing.
+            | GameFormat::CommanderDraft
             | GameFormat::Planechase => false,
             // No custom-format use case for an engine-supplied fixed deck
             // exists today — a real one would need its own design, analogous
@@ -719,6 +875,7 @@ impl GameFormat {
             GameFormat::Archenemy => Cow::Borrowed("Archenemy"),
             GameFormat::Planechase => Cow::Borrowed("Planechase"),
             GameFormat::Momir => Cow::Borrowed("Momir's Madness"),
+            GameFormat::CommanderDraft => Cow::Borrowed("Commander Draft"),
             GameFormat::Custom(id) => custom_format_registry()
                 .into_iter()
                 .find(|def| def.rules.id == id)
@@ -861,6 +1018,14 @@ impl GameFormat {
                 description: "100-card eternal singleton",
                 group: FormatGroup::Commander,
                 default_config: FormatConfig::historic_brawl(),
+            },
+            FormatMetadata {
+                format: GameFormat::CommanderDraft,
+                label: "Commander Draft",
+                short_label: "CDR",
+                description: "Drafted 60-card minimum Commander, 3\u{2013}8 players",
+                group: FormatGroup::Commander,
+                default_config: FormatConfig::commander_draft(),
             },
             FormatMetadata {
                 format: GameFormat::FreeForAll,
@@ -1027,7 +1192,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 2,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Minimum(60),
             singleton: false,
             command_zone: false,
             commander_damage_threshold: None,
@@ -1036,6 +1201,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::Standard.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Standard.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1048,7 +1214,7 @@ impl FormatConfig {
             starting_life: 40,
             min_players: 2,
             max_players: 6,
-            deck_size: 100,
+            deck_size: DeckSizeRule::Exactly(100),
             singleton: true,
             command_zone: true,
             commander_damage_threshold: Some(21),
@@ -1057,6 +1223,46 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: true,
             sideboard_policy: GameFormat::Commander.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Commander.default_deck_copy_limit(),
+            supplies_fixed_deck: false,
+            allow_debug_actions: false,
+            custom_rules: None,
+        }
+    }
+
+    /// CR 903.13: Commander Draft. A Commander game (CR 903.13g -> CR 903.6-903.11)
+    /// whose deck construction takes CR 903.13f's exceptions.
+    pub fn commander_draft() -> Self {
+        FormatConfig {
+            format: GameFormat::CommanderDraft,
+            // CR 903.7: each player sets their life total to 40.
+            starting_life: 40,
+            // CR 903.13a + CR 800.1: "a draft ... followed by a multiplayer
+            // game", and a multiplayer game "begins with more than two
+            // players" - so three seats is the floor. Matches
+            // DraftProcedure::min_pod_size for DraftKind::CommanderDraft.
+            min_players: 3,
+            // The draft pod becomes the game; draft_wire_guard admits pods up
+            // to MAX_PLAYER_COUNT (8), and seat-reducer rejects any seat index
+            // >= max_players, so a narrower ceiling here would reject seats the
+            // draft already seated. CR 903.13 fixes no pod size.
+            max_players: 8,
+            // CR 903.13f(1): "must contain at least 60 cards. There is no
+            // maximum deck size."
+            deck_size: DeckSizeRule::Minimum(60),
+            // CR 903.13f(2): the deck "may include any number of cards from
+            // that player's card pool with the same name" - CR 903.5b's
+            // singleton rule does not apply.
+            singleton: false,
+            command_zone: true,
+            // CR 903.10a (via CR 903.13g): 21 combat damage from one commander.
+            commander_damage_threshold: Some(21),
+            range_of_influence: None,
+            team_based: false,
+            archenemy_player: None,
+            uses_commander: true,
+            sideboard_policy: GameFormat::CommanderDraft.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::CommanderDraft.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1141,7 +1347,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 2,
-            deck_size: 50,
+            deck_size: DeckSizeRule::Exactly(50),
             singleton: true,
             command_zone: true,
             commander_damage_threshold: None,
@@ -1150,6 +1356,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::TinyLeaders.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::TinyLeaders.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1166,7 +1373,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 4,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Exactly(60),
             singleton: true,
             command_zone: true,
             commander_damage_threshold: None,
@@ -1175,6 +1382,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::Oathbreaker.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Oathbreaker.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1204,7 +1412,7 @@ impl FormatConfig {
             starting_life: 25,
             min_players: 2,
             max_players: 2,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Exactly(60),
             singleton: true,
             command_zone: true,
             commander_damage_threshold: Some(21),
@@ -1213,6 +1421,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: true,
             sideboard_policy: GameFormat::Brawl.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Brawl.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1225,7 +1434,7 @@ impl FormatConfig {
     pub fn historic_brawl() -> Self {
         FormatConfig {
             format: GameFormat::HistoricBrawl,
-            deck_size: 100,
+            deck_size: DeckSizeRule::Exactly(100),
             ..Self::brawl()
         }
     }
@@ -1236,7 +1445,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 6,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Minimum(60),
             singleton: false,
             command_zone: false,
             commander_damage_threshold: None,
@@ -1245,6 +1454,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::FreeForAll.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::FreeForAll.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1259,7 +1469,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 2,
-            deck_size: 40,
+            deck_size: DeckSizeRule::Minimum(40),
             singleton: false,
             command_zone: false,
             commander_damage_threshold: None,
@@ -1268,6 +1478,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::Limited.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Limited.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1285,7 +1496,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 2,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Exactly(60),
             singleton: false,
             command_zone: true,
             commander_damage_threshold: None,
@@ -1294,6 +1505,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::Momir.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Momir.default_deck_copy_limit(),
             supplies_fixed_deck: true,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1306,7 +1518,7 @@ impl FormatConfig {
             starting_life: 30,
             min_players: 4,
             max_players: 4,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Minimum(60),
             singleton: false,
             command_zone: false,
             commander_damage_threshold: None,
@@ -1315,6 +1527,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::TwoHeadedGiant.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::TwoHeadedGiant.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1330,7 +1543,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 4,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Minimum(60),
             singleton: false,
             command_zone: false,
             commander_damage_threshold: None,
@@ -1339,6 +1552,7 @@ impl FormatConfig {
             archenemy_player: None,
             uses_commander: false,
             sideboard_policy: GameFormat::Planechase.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Planechase.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1353,7 +1567,7 @@ impl FormatConfig {
             starting_life: 20,
             min_players: 2,
             max_players: 6,
-            deck_size: 60,
+            deck_size: DeckSizeRule::Minimum(60),
             singleton: false,
             command_zone: true,
             commander_damage_threshold: None,
@@ -1362,6 +1576,7 @@ impl FormatConfig {
             archenemy_player: Some(PlayerId(0)),
             uses_commander: false,
             sideboard_policy: GameFormat::Archenemy.sideboard_policy(),
+            default_deck_copy_limit: GameFormat::Archenemy.default_deck_copy_limit(),
             supplies_fixed_deck: false,
             allow_debug_actions: false,
             custom_rules: None,
@@ -1416,6 +1631,7 @@ impl FormatConfig {
             GameFormat::Archenemy => Self::archenemy(),
             GameFormat::Planechase => Self::planechase(),
             GameFormat::Momir => Self::momir(),
+            GameFormat::CommanderDraft => Self::commander_draft(),
             GameFormat::Custom(id) => {
                 return Err(FormatConfigError(format!(
                     "for_format cannot resolve ad-hoc Custom format {} structural rules — read custom_rules from the resolved FormatConfig/CustomFormatRules instead",
@@ -1431,16 +1647,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn deck_copy_limit_permits_no_more_than_is_a_sound_permissiveness_order() {
+        use DeckCopyLimit::*;
+        assert!(Unlimited.permits_no_more_than(Unlimited));
+        assert!(!Unlimited.permits_no_more_than(UpTo(4)));
+        assert!(UpTo(4).permits_no_more_than(Unlimited));
+        assert!(UpTo(1).permits_no_more_than(UpTo(4)));
+        assert!(UpTo(4).permits_no_more_than(UpTo(4)));
+        assert!(!UpTo(5).permits_no_more_than(UpTo(4)));
+    }
+
+    #[test]
     fn format_config_standard() {
         let config = FormatConfig::standard();
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 2);
-        assert_eq!(config.deck_size, 60);
+        assert_eq!(config.deck_size, DeckSizeRule::Minimum(60));
         assert!(!config.singleton);
         assert!(!config.command_zone);
         assert_eq!(config.commander_damage_threshold, None);
         assert!(!config.team_based);
+        assert_eq!(config.default_deck_copy_limit, DeckCopyLimit::UpTo(4));
     }
 
     #[test]
@@ -1449,11 +1677,73 @@ mod tests {
         assert_eq!(config.starting_life, 40);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 6);
-        assert_eq!(config.deck_size, 100);
+        assert_eq!(config.deck_size, DeckSizeRule::Exactly(100));
         assert!(config.singleton);
         assert!(config.command_zone);
         assert_eq!(config.commander_damage_threshold, Some(21));
         assert!(!config.team_based);
+        assert_eq!(config.default_deck_copy_limit, DeckCopyLimit::UpTo(1));
+    }
+
+    /// CR 903.5a vs CR 903.13f(1): the two command-zone deck-size rules are
+    /// different rules, and `DeckSizeRule` is what keeps them apart. Both
+    /// directions are required - the positive half alone would be satisfied by
+    /// deleting the exactness check.
+    #[test]
+    fn commander_deck_is_exactly_100_but_commander_draft_is_min_60() {
+        let draft = FormatConfig::for_format(GameFormat::CommanderDraft)
+            .unwrap()
+            .deck_size;
+        let commander = FormatConfig::for_format(GameFormat::Commander)
+            .unwrap()
+            .deck_size;
+
+        // CR 903.13f(1): "at least 60 cards. There is no maximum deck size."
+        assert!(draft.accepts(60), "60 cards is the CR 903.13f(1) floor");
+        assert!(draft.accepts(61), "a 61-card Commander Draft deck is legal");
+        assert!(
+            !draft.accepts(59),
+            "59 cards is below the CR 903.13f(1) floor"
+        );
+
+        // CR 903.5a: 100 is both the minimum and the maximum.
+        assert!(
+            commander.accepts(100),
+            "100 cards is a legal Commander deck"
+        );
+        assert!(
+            !commander.accepts(101),
+            "CR 903.5a caps Commander at 100 - a Minimum rule here would pass"
+        );
+        assert!(
+            !commander.accepts(99),
+            "99 cards is below the CR 903.5a minimum"
+        );
+    }
+
+    /// CR 903.13: the Commander Draft preset, per subrule.
+    #[test]
+    fn commander_draft_format_config_matches_cr() {
+        let config = FormatConfig::for_format(GameFormat::CommanderDraft).unwrap();
+        assert_eq!(config.starting_life, 40, "CR 903.7");
+        assert!(config.uses_commander, "CR 903.13g -> CR 903.6-903.11");
+        assert_eq!(config.commander_damage_threshold, Some(21), "CR 903.10a");
+        assert!(
+            !config.singleton,
+            "CR 903.13f(2): any number of same-name cards"
+        );
+        assert_eq!(
+            config.deck_size,
+            DeckSizeRule::Minimum(60),
+            "CR 903.13f(1): at least 60 cards, no maximum"
+        );
+        assert_ne!(
+            config.deck_size,
+            DeckSizeRule::Exactly(60),
+            "CR 903.13f(1) forbids the exact-size rule the old inference would have produced"
+        );
+        assert!(config.command_zone);
+        assert_eq!(config.min_players, 3, "CR 903.13a + CR 800.1");
     }
 
     #[test]
@@ -1463,7 +1753,7 @@ mod tests {
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 2);
-        assert_eq!(config.deck_size, 50);
+        assert_eq!(config.deck_size, DeckSizeRule::Exactly(50));
         assert!(config.singleton);
         assert!(config.command_zone);
         assert_eq!(config.commander_damage_threshold, None);
@@ -1478,7 +1768,7 @@ mod tests {
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 2);
-        assert_eq!(config.deck_size, 60);
+        assert_eq!(config.deck_size, DeckSizeRule::Minimum(60));
         assert!(!config.singleton);
         assert!(!config.command_zone);
         assert_eq!(config.commander_damage_threshold, None);
@@ -1491,9 +1781,9 @@ mod tests {
         // Standard Brawl is 60 cards; Historic Brawl (Arena's 100-card Brawl)
         // is 100. Both share the remaining structural rules.
         let brawl = FormatConfig::brawl();
-        assert_eq!(brawl.deck_size, 60);
+        assert_eq!(brawl.deck_size, DeckSizeRule::Exactly(60));
         let historic = FormatConfig::historic_brawl();
-        assert_eq!(historic.deck_size, 100);
+        assert_eq!(historic.deck_size, DeckSizeRule::Exactly(100));
         assert_eq!(historic.starting_life, brawl.starting_life);
         assert!(historic.singleton);
         assert!(historic.command_zone);
@@ -1506,7 +1796,7 @@ mod tests {
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 6);
-        assert_eq!(config.deck_size, 60);
+        assert_eq!(config.deck_size, DeckSizeRule::Minimum(60));
         assert!(!config.singleton);
         assert!(!config.command_zone);
     }
@@ -1629,13 +1919,32 @@ mod tests {
     }
 
     #[test]
+    fn deck_size_rule_serializes_as_tagged_union() {
+        // Both variants carry their count in `data`; the frontend must switch
+        // on `.type`, never assume a minimum. Mirrored by hand in
+        // client/src/adapter/types.ts and by both adapter-contract fixtures.
+        let minimum = serde_json::to_string(&DeckSizeRule::Minimum(60)).unwrap();
+        assert_eq!(minimum, r#"{"type":"Minimum","data":60}"#);
+
+        let exactly = serde_json::to_string(&DeckSizeRule::Exactly(100)).unwrap();
+        assert_eq!(exactly, r#"{"type":"Exactly","data":100}"#);
+
+        // Round-trips both directions.
+        let parsed: DeckSizeRule = serde_json::from_str(r#"{"type":"Minimum","data":60}"#).unwrap();
+        assert_eq!(parsed, DeckSizeRule::Minimum(60));
+        let parsed: DeckSizeRule =
+            serde_json::from_str(r#"{"type":"Exactly","data":100}"#).unwrap();
+        assert_eq!(parsed, DeckSizeRule::Exactly(100));
+    }
+
+    #[test]
     fn format_config_oathbreaker() {
         let config = FormatConfig::oathbreaker();
         assert_eq!(config.format, GameFormat::Oathbreaker);
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 4);
-        assert_eq!(config.deck_size, 60);
+        assert_eq!(config.deck_size, DeckSizeRule::Exactly(60));
         assert!(config.singleton);
         assert!(config.command_zone);
         assert_eq!(config.commander_damage_threshold, None);
@@ -1762,7 +2071,7 @@ mod tests {
         assert_eq!(config.starting_life, 20);
         assert_eq!(config.min_players, 2);
         assert_eq!(config.max_players, 2);
-        assert_eq!(config.deck_size, 40);
+        assert_eq!(config.deck_size, DeckSizeRule::Minimum(40));
         assert!(!config.singleton);
         assert!(!config.command_zone);
         assert_eq!(config.commander_damage_threshold, None);
@@ -1860,6 +2169,12 @@ mod tests {
                 "{:?}: registry default disagrees with sideboard_policy predicate",
                 meta.format
             );
+            assert_eq!(
+                meta.default_config.default_deck_copy_limit,
+                meta.format.default_deck_copy_limit(),
+                "{:?}: registry default disagrees with default_deck_copy_limit predicate",
+                meta.format
+            );
         }
         // Variants not in the user-facing registry still respect the invariant.
         for format in [GameFormat::TwoHeadedGiant, GameFormat::Limited] {
@@ -1867,6 +2182,10 @@ mod tests {
             assert_eq!(config.uses_commander, format.uses_commander().unwrap());
             assert_eq!(config.supplies_fixed_deck, format.supplies_fixed_deck());
             assert_eq!(config.sideboard_policy, format.sideboard_policy());
+            assert_eq!(
+                config.default_deck_copy_limit,
+                format.default_deck_copy_limit()
+            );
         }
     }
 
@@ -1893,7 +2212,7 @@ mod tests {
         assert_eq!(entry.default_config, FormatConfig::archenemy());
         assert_eq!(entry.default_config.min_players, 2);
         assert_eq!(entry.default_config.max_players, 6);
-        assert_eq!(entry.default_config.deck_size, 60);
+        assert_eq!(entry.default_config.deck_size, DeckSizeRule::Minimum(60));
         assert!(entry.default_config.command_zone);
         assert!(!entry.default_config.team_based);
         assert_eq!(entry.default_config.commander_damage_threshold, None);

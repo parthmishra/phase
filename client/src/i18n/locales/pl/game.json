@@ -49,10 +49,11 @@
     "respondSubtitle": "Accept the verified route or stop at one of your issued boundaries.",
     "shortenAtBreakpoint": "Stop at boundary {{breakpointId}}"
   },
-  "resolutionProgress": {
-    "label": "Rozwiązywanie {{resolved}} / {{total}}",
-    "collapse": "Zwiń postęp rozwiązywania",
-    "expand": "Rozwiń postęp rozwiązywania"
+  "restoredAutomation": {
+    "dismiss": "Zamknij",
+    "noop": {"title": "Wczytano zapisaną grę", "summary_one": "Nie trzeba było wznawiać automatyzacji stosu.", "summary_other": "Nie trzeba było wznawiać automatyzacji stosu."},
+    "progressed": {"title": "Wznowiono automatyzację stosu", "summary_one": "Silnik ukończył {{count}} automatyczne rozpatrzenie.", "summary_other": "Silnik ukończył {{count}} automatyczne rozpatrzenia.", "omitted_one": "Pominięto {{count}} zdarzenie pośrednie.", "omitted_other": "Pominięto {{count}} zdarzeń pośrednich."},
+    "zeroResolutionRepair": {"title": "Naprawiono automatyzację stosu", "summary_one": "Zapisana automatyzacja została bezpiecznie naprawiona przed wznowieniem gry.", "summary_other": "Zapisana automatyzacja została bezpiecznie naprawiona przed wznowieniem gry."}
   },
   "resolveAllConsent": {
     "eyebrow": "Rozpatrz wszystko",
@@ -68,6 +69,9 @@
     "tokenPowerPlaceholder": "Power",
     "tokenToughnessPlaceholder": "Toughness",
     "sourceDefinedPtRequired": "Enter power and toughness for this source-defined token."
+  },
+  "debugLibrary": {
+    "openActions": "Otwórz akcje debugowania dla {{name}}"
   },
   "nextUp": {
     "label": "Następny",
@@ -1953,6 +1957,7 @@
     "title": "Rzuć czar za darmo",
     "subtitle": "Wybierz czar do rzucenia bez płacenia jego kosztu many (pozostało: {{remaining}}). Pozostała łączna wartość many: {{budget}}.",
     "subtitleNoBudget": "Wybierz czar do rzucenia bez płacenia jego kosztu many (pozostało: {{remaining}}).",
+    "remainingAny": "dowolna liczba",
     "castNamed": "Rzuć {{name}}",
     "castSuffix": "(bez płacenia jego kosztu many)",
     "done": "Gotowe",
@@ -2049,6 +2054,7 @@
     "diagnostic": "diagnostyka: {{reason}}",
     "showDetails": "Pokaż szczegóły",
     "exportGameState": "Eksportuj stan gry",
+    "exportClientSnapshot": "Eksportuj migawkę klienta",
     "exported": "Wyeksportowano",
     "exportFailed": "Eksport nie powiódł się",
     "copyDiagnostic": "Kopiuj diagnostykę",
@@ -2155,6 +2161,26 @@
     "no": "Nie",
     "dontAskAgain": "Nie pytaj ponownie w tej grze",
     "dontAskAgainForSameCard": "Zastosuj do każdej kopii tej karty"
+  },
+  "resolutionOptionalPayment": {
+    "title": "Wybierz opcjonalną opłatę",
+    "pay": "Zapłać {{cost}}",
+    "decline": "Odmów",
+    "cost": {
+      "card": "kartę",
+      "cards": "karty",
+      "filteredCard": "kartę {{types}}",
+      "filteredCards": "karty {{types}}",
+      "nonType": "nie-{{type}}",
+      "orSeparator": " lub ",
+      "zoneBattlefield": "pola bitwy",
+      "zoneGraveyard": "twojego cmentarza",
+      "zoneLibrary": "twojej biblioteki",
+      "zoneExile": "wygnania",
+      "zoneHand": "twojej ręki",
+      "discard": "Odrzuć {{count}} {{cards}}",
+      "exile": "Wygnaj {{count}} {{cards}} z {{zone}}"
+    }
   },
   "topOrBottom": {
     "cardFallback": "Karta",

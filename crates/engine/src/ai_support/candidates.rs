@@ -13,7 +13,7 @@ use crate::types::ability::{
 };
 use crate::types::actions::{
     CastChoice, GameAction, LearnOption, MulliganChoice, OutsideGameSelection,
-    ResolveAllConsentDecision,
+    ResolutionOptionalPaymentChoice, ResolveAllConsentDecision,
 };
 use crate::types::card::LayoutKind;
 use crate::types::card_type::CoreType;
@@ -388,24 +388,39 @@ pub fn candidate_actions_exact(state: &GameState) -> Vec<CandidateAction> {
             epoch,
             representative,
         } => {
-            let mut actions = vec![
-                candidate(
-                    GameAction::RespondResolveAllConsent {
-                        epoch: *epoch,
-                        decision: ResolveAllConsentDecision::Grant,
-                    },
-                    TacticalClass::Selection,
-                    Some(*representative),
-                ),
-                candidate(
-                    GameAction::RespondResolveAllConsent {
-                        epoch: *epoch,
-                        decision: ResolveAllConsentDecision::Decline,
-                    },
-                    TacticalClass::Selection,
-                    Some(*representative),
-                ),
-            ];
+            // The consent prompt alone does not prove the reducer will accept a
+            // response to it. `ResolveAllConsentRun::accepts_response_from` is
+            // the same authority `respond_resolve_all_consent` applies, so a
+            // prompt standing over an absent or superseded run issues nothing
+            // rather than a Grant that can only be rejected. This prompt's
+            // contract is issued without reducer simulation
+            // (`decision_contract_requires_reducer_validation`), so this is the
+            // only place the mismatch can be caught before an AI submits.
+            let mut actions = Vec::new();
+            if state
+                .resolve_all_consent_run
+                .as_ref()
+                .is_some_and(|run| run.accepts_response_from(*epoch, *representative))
+            {
+                actions.extend([
+                    candidate(
+                        GameAction::RespondResolveAllConsent {
+                            epoch: *epoch,
+                            decision: ResolveAllConsentDecision::Grant,
+                        },
+                        TacticalClass::Selection,
+                        Some(*representative),
+                    ),
+                    candidate(
+                        GameAction::RespondResolveAllConsent {
+                            epoch: *epoch,
+                            decision: ResolveAllConsentDecision::Decline,
+                        },
+                        TacticalClass::Selection,
+                        Some(*representative),
+                    ),
+                ]);
+            }
             append_resolve_all_revocations(state, *epoch, &mut actions);
             actions
         }
@@ -2489,6 +2504,27 @@ pub fn candidate_actions_broad_with_probe(
                 )
             })
             .collect(),
+        WaitingFor::ResolutionOptionalPaymentChoice { player, costs, .. } => {
+            std::iter::once(candidate(
+                GameAction::ChooseResolutionOptionalPaymentBranch {
+                    choice: ResolutionOptionalPaymentChoice::Decline,
+                },
+                TacticalClass::Utility,
+                Some(*player),
+            ))
+            .chain(costs.iter().map(|option| {
+                candidate(
+                    GameAction::ChooseResolutionOptionalPaymentBranch {
+                        choice: ResolutionOptionalPaymentChoice::Pay {
+                            index: option.index,
+                        },
+                    },
+                    TacticalClass::Utility,
+                    Some(*player),
+                )
+            }))
+            .collect()
+        }
         WaitingFor::OptionalEffectChoice { .. }
         | WaitingFor::OpponentMayChoice { .. }
         | WaitingFor::TributeChoice { .. } => {
@@ -5895,6 +5931,7 @@ mod tests {
         let mut card_types = crate::types::card_type::CardType::default();
         card_types.core_types.push(CoreType::Sorcery);
         crate::game::game_object::BackFaceData {
+            is_swap_snapshot: false,
             name: "Prepared Spell Face".to_string(),
             power: None,
             toughness: None,
@@ -6898,6 +6935,7 @@ mod tests {
             conditional_enter_with_counters: vec![],
             count_param: 0,
             library_position: None,
+            mass_library_order: None,
             is_cost_payment: false,
             enters_modified_if: None,
             duration: None,

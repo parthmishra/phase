@@ -17,6 +17,7 @@ import { GameCardPreview } from "../GameCardPreview.tsx";
 // Static alternate faces still render an image, while the active in-game face
 // is the live Arena composition. Mocking the image hook keeps both paths local.
 vi.mock("../../../hooks/useCardImage.ts", () => ({
+  useCardBackImage: () => ({ src: "card-back.png", isLoading: false }),
   useCardImage: () => ({
     src: "card.png",
     isLoading: false,

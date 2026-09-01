@@ -14,12 +14,14 @@ vi.mock("../StackEntry.tsx", () => ({
   StackEntry: ({
     entry,
     choiceObjectId,
+    groupedObjectIds,
     groupCount,
     onHoverChange,
     style,
   }: {
     entry: { id: number };
     choiceObjectId?: number;
+    groupedObjectIds?: number[];
     groupCount?: number;
     onHoverChange?: (hovered: boolean) => void;
     style?: CSSProperties;
@@ -28,6 +30,7 @@ vi.mock("../StackEntry.tsx", () => ({
       type="button"
       data-testid={`stack-entry-${entry.id}`}
       data-choice-object-id={choiceObjectId}
+      data-grouped-ids={groupedObjectIds?.join(" ")}
       data-group-count={groupCount}
       data-rotation={style?.rotate}
       style={style}
@@ -120,6 +123,7 @@ describe("StackDisplay", () => {
     render(<StackDisplay effectiveMultiplayerBoardLayout="focused" />);
 
     expect(screen.getByTestId("stack-entry-10")).toHaveAttribute("data-choice-object-id", "11");
+    expect(screen.getByTestId("stack-entry-10")).toHaveAttribute("data-grouped-ids", "10 11");
     expect(screen.getByTestId("stack-entry-10")).toHaveAttribute("data-group-count", "2");
     expect(screen.queryByTestId("stack-entry-11")).not.toBeInTheDocument();
     expect(stackTargetArcsMock).toHaveBeenLastCalledWith(

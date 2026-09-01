@@ -22,6 +22,11 @@ const { draftState } = vi.hoisted(() => ({
     seatIndex: 0,
     view: { tournament_format: "Swiss" },
     matchPairing: null,
+    workspaceState: {
+      schemaVersion: 1,
+      placements: {},
+      virtualBasics: [],
+    },
     startMatch: vi.fn(),
     leave: vi.fn(),
     mainDeck: [],
@@ -38,16 +43,28 @@ vi.mock("../../stores/multiplayerDraftStore", async (importOriginal) => ({
   useMultiplayerDraftStore: (selector: (state: typeof draftState) => unknown) => selector(draftState),
 }));
 
-vi.mock("../../stores/draftPodStore", () => ({
-  useDraftPodStore: (selector: (state: { reset: () => void; resumeHostedPod: () => void }) => unknown) => selector({
+// Only the hook is stubbed; every other export of the module stays real. The
+// `?kind=` slug the page's entry effect reads is `COMMANDER_DRAFT_ENTRY` in the
+// leaf module `components/draft/draftKind`, which is not mocked anywhere — a
+// literal here would be a second copy of the same fact.
+vi.mock("../../stores/draftPodStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../stores/draftPodStore")>()),
+  useDraftPodStore: (selector: (state: { reset: () => void; resumeHostedPod: () => void; enterKind: () => void }) => unknown) => selector({
     reset: vi.fn(),
     resumeHostedPod: vi.fn(),
+    enterKind: vi.fn(),
   }),
 }));
 
 vi.mock("../../components/chrome/ScreenChrome", () => ({ ScreenChrome: () => null }));
 vi.mock("../../components/menu/MenuShell", () => ({ MenuShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("../../components/draft/HostControls", () => ({ HostControls: () => null }));
+vi.mock("../../components/draft/HostControls", () => {
+  const emptyTopActions: readonly [] = [];
+  return {
+    HostControls: () => null,
+    useHostDraftTopActions: (_options: { enabled: boolean }) => emptyTopActions,
+  };
+});
 vi.mock("../../components/draft/LimitedDeckBuilder", () => ({ LimitedDeckBuilder: () => <div data-testid="limited-deck-builder" /> }));
 vi.mock("../../components/draft/ScoreBadge", () => ({ ScoreBadge: () => <div data-testid="score-badge" /> }));
 
@@ -65,6 +82,7 @@ describe("DraftPodPage pod error banner", () => {
     draftState.guestRecoveryFailure = null;
     draftState.clearError.mockClear();
     draftState.resumeDraft.mockClear();
+    draftState.leave.mockClear();
   });
 
   it("surfaces the store error in the pairing phase", () => {
@@ -155,6 +173,17 @@ describe("DraftPodPage pod error banner", () => {
 
     expect(screen.getByText("Refresh both windows")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try Reconnecting" })).toBeNull();
+  });
+
+  it("revokes recovery when the participant explicitly returns to the menu", async () => {
+    const user = userEvent.setup();
+    draftState.phase = "error";
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Return to Menu" }));
+
+    expect(draftState.leave).toHaveBeenCalledOnce();
+    expect(draftState.leave).toHaveBeenCalledWith(false);
   });
 
   it("aborts the retry attempt when its page unmounts", async () => {

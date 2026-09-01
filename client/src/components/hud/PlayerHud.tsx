@@ -72,7 +72,7 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
 
   const hudTone = isValidTarget ? "cyan" : isMyTurn ? "emerald" : "neutral";
   const seatColor = useSeatColor(playerId);
-  const avatarUrl = useMultiplayerStore((s) => s.playerAvatars.get(playerId) ?? null);
+  const avatarIdentity = useMultiplayerStore((s) => s.playerAvatars.get(playerId) ?? null);
   const priorityTitle = waitingSeatId === playerId
     ? t(reason?.key ?? "status.reason.thinking", reason?.params)
     : undefined;
@@ -152,7 +152,7 @@ export function PlayerHud({ alignNameplateToAnchor = false }: PlayerHudProps = {
         active={isMyTurn}
         seatColor={seatColor}
         underAttack={isUnderAttack}
-        avatarUrl={avatarUrl}
+        avatarIdentity={avatarIdentity}
         playerId={playerId}
         density="compact"
         onClick={isValidTarget ? handleTargetClick : undefined}

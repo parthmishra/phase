@@ -602,13 +602,10 @@ pub(super) fn drain_pending_phase_transition_progress(
                     // performing the actions — the offer gate admits only voluntarily-repeatable
                     // periods (L1), so stopping early is always available unelided.
                     // `min: 0` is unchanged from BASE and kept as a deliberate NEVER-OVER-
-                    // DELIVER fail-safe, not as wedge-avoidance — `min == max == N` is already
-                    // a single legal answer, so a narrow range could not wedge the boundary.
-                    // What 0 buys is a floor the engine can always honor: collapsing to
-                    // nothing is strictly less than what the table agreed to, so no batching
-                    // or replay imprecision below it can ever materialize growth nobody
-                    // accepted. Tapped tokens carry no lethal driver, so 0 is also never a
-                    // hidden win-denial.
+                    // DELIVER fail-safe. What 0 buys is a floor the engine can always honor:
+                    // collapsing to nothing is strictly less than what the table agreed to,
+                    // so no batching or replay imprecision below it can ever materialize
+                    // growth nobody accepted.
                     min: 0,
                     // CR 732.2c: the shortcut was TAKEN at the count every player
                     // accepted, so the collapse may not exceed it — re-asking with the
@@ -629,11 +626,12 @@ pub(super) fn drain_pending_phase_transition_progress(
                     pending_mana_ability: None,
                 };
                 // Leave the (now-empty) `pending_phase_transition_progress` INTACT
-                // (do NOT null it): the `SubmitPayAmount` handler re-drains after the
-                // mint, re-enters this queue-empty branch, and calls
-                // `finish_enter_phase`, restoring Priority in the same action. Nulling
-                // here would strand a stale `LoopCollapse` `waiting_for` until the
-                // next boundary. PAUSE — resumed by the `LoopCollapse` submit handler.
+                // (do NOT null it): nulling here would strand a stale `LoopCollapse`
+                // `waiting_for` until the next boundary. The `SubmitPayAmount` handler
+                // re-drains for every axis, re-enters this queue-empty branch and
+                // completes the phase entry through `finish_enter_phase`, which grants
+                // `priority_player` and writes no beat — the beat is then that handler's
+                // own exit. PAUSE — resumed by the `LoopCollapse` submit handler.
                 return;
             }
             // Stash empty AND queue empty → complete the phase entry.
@@ -752,6 +750,33 @@ pub(super) fn drain_pending_phase_transition_progress(
             }
         }
     }
+}
+
+/// CR 117.3a: the active player receives priority at the beginning of a step or phase only
+/// "after any turn-based actions ... have been dealt with and abilities that trigger at the
+/// beginning of that phase or step have been put on the stack". [`finish_enter_phase`] performs
+/// neither: it grants `priority_player` and writes no beat, and [`process_phase_triggers`] runs on
+/// no path but [`auto_advance`]'s phase arms. So a phase entry that completed while an interactive
+/// substitute owned the beat still owes both, and [`auto_advance_once`] records that debt in
+/// `deferred_step_trigger_resume` when it bails on a standing cursor.
+///
+/// This is the SINGLE authority that settles the debt. A resume path that reaches an ordinary
+/// priority boundary calls it and adopts the returned beat; `None` means nothing was owed and the
+/// caller keeps its own. The latch is dropped either way — a cleared cursor ends the debt whether
+/// or not the beat was eligible to go back through the interpreter, and `stack.rs`'s quiescence
+/// predicate requires it clear.
+pub(crate) fn resume_deferred_step_triggers(
+    state: &mut GameState,
+    events: &mut Vec<GameEvent>,
+) -> Option<WaitingFor> {
+    // A standing cursor means the entry is still unfinished, so the debt belongs to whoever
+    // finishes it, not to this boundary.
+    if state.pending_phase_transition_progress.is_some() {
+        return None;
+    }
+    let owed = state.deferred_step_trigger_resume.take().is_some();
+    (owed && matches!(state.waiting_for, WaitingFor::Priority { .. }))
+        .then(|| auto_advance(state, events))
 }
 
 /// CR 703.4q + CR 616.1 + CR 611.2b: Scan active step-end mana handlers for
@@ -1086,6 +1111,13 @@ pub fn projected_turn_order(state: &GameState, max_slots: usize) -> Vec<PlayerId
 
 /// Begin the next player's turn (CR 500.1 / CR 101.4 seat order).
 pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
+    assert!(
+        state.stack.is_empty()
+            && state.resolution_stack.is_empty()
+            && state.resolving_stack_entry.is_none()
+            && matches!(state.waiting_for, WaitingFor::Priority { .. }),
+        "start_next_turn requires an empty stack, no pending resolution carrier, and a settled Priority window"
+    );
     // CR 805.4b: defensively drop any stale draw-step queue entries. The
     // queue is normally drained to empty before a turn ends, but a turn
     // ended early (e.g. `Effect::EndTheTurn` — Time Stop, Obeka) could in
@@ -1228,6 +1260,9 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     state.activated_abilities_this_turn.clear();
     // CR 602.5b: "Activate only once each turn" crew restriction resets each turn.
     state.crew_activated_this_turn.clear();
+    // CR 702.122a: the resolved-crew marker (the AI crew-repeat guard's
+    // payoff-in-force authority) is per-turn state; reset it with the cadence set.
+    state.crew_resolved_this_turn.clear();
     // Belt-and-suspenders: these transient replacement-continuation seeds are
     // normally nulled by the full-drain clear (effects/mod.rs) on the next
     // action, but EventContextAmount reads
@@ -3250,14 +3285,11 @@ fn auto_advance_once(state: &mut GameState, events: &mut Vec<GameEvent>) -> Auto
             super::combat::prune_attackers_not_in_play(state);
             let has_attackers = super::combat::has_attackers_in_play(state);
             if has_attackers {
-                // CR 509.1 + CR 117.1c: The declare blockers turn-based action always
-                // runs — even when no legal blocks are available — and the active
-                // player always receives priority during the step (required for
-                // instants and Ninjutsu-family activations per CR 702.49, notably
-                // Sneak which is restricted to this step). The phase layer only
-                // emits the interactive waiting state; whether to auto-submit empty
-                // blockers (because no legal blocks exist, or because the defender
-                // is in UntilEndOfTurn mode) is decided by `run_auto_pass_loop`.
+                // CR 509.1: The declare blockers turn-based action always runs,
+                // including when no legal blocks are available. The phase layer emits
+                // the defender's interactive waiting state; `run_auto_pass_loop`
+                // auto-submits only declarations with no remaining blocking choice.
+                // CR 509.2 gives the active player priority after the declaration.
                 let defending = combat::next_defending_player_to_declare_blockers(state)
                     .unwrap_or_else(|| super::players::next_player(state, state.active_player));
                 let valid_block_targets =
@@ -3380,18 +3412,122 @@ mod tests {
     use super::*;
     use crate::game::engine::apply;
     use crate::game::zones::create_object;
+    use crate::types::ability::{Effect, ResolvedAbility};
     use crate::types::actions::GameAction;
     use crate::types::card_type::Supertype;
+    use crate::types::game_state::{
+        CastOccurrence, PendingContinuation, SpellCastRecord, StackEntry, StackEntryKind,
+        StackResolutionPolicy,
+    };
     use crate::types::identifiers::{CardId, ObjectId};
     use crate::types::phase::{PhaseStop, PhaseStopScope};
     use crate::types::player::PlayerId;
     use crate::types::zones::Zone;
+    use crate::types::AbilityContinuationFrame;
     use std::sync::Arc;
 
     fn setup() -> GameState {
         let mut state = GameState::new_two_player(42);
         state.turn_number = 1;
         state
+    }
+
+    #[test]
+    fn start_next_turn_rejects_nonempty_stack_or_pending_resolution_before_reset() {
+        const MESSAGE: &str = "start_next_turn requires an empty stack, no pending resolution carrier, and a settled Priority window";
+        let occurrence = CastOccurrence {
+            caster: PlayerId(0),
+            turn_journal_index: 0,
+        };
+        let stamped_ability = || {
+            let mut ability =
+                ResolvedAbility::new(Effect::Investigate, Vec::new(), ObjectId(6865), PlayerId(0));
+            ability.set_cast_occurrence_recursive(Some(occurrence));
+            ability
+        };
+        let seeded = || {
+            let mut state = setup();
+            state.waiting_for = WaitingFor::Priority {
+                player: PlayerId(0),
+            };
+            state.spells_cast_this_turn = 1;
+            state
+                .spells_cast_this_turn_by_player
+                .insert(PlayerId(0), vec![SpellCastRecord::default()].into());
+            state
+        };
+        let spell_entry = || StackEntry {
+            id: ObjectId(6865),
+            source_id: ObjectId(6865),
+            controller: PlayerId(0),
+            kind: StackEntryKind::Spell {
+                card_id: CardId(6865),
+                ability: Some(Box::new(stamped_ability())),
+                casting_variant: crate::types::game_state::CastingVariant::Normal,
+                actual_mana_spent: 0,
+            },
+        };
+        let assert_rejected_without_mutation = |mut state: GameState| {
+            let before = serde_json::to_vec(&state).expect("serialize hostile state");
+            let mut events = vec![GameEvent::TurnStarted {
+                player_id: PlayerId(1),
+                turn_number: 99,
+            }];
+            let events_before = events.clone();
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                start_next_turn(&mut state, &mut events);
+            }))
+            .expect_err("hostile carrier must reject the turn reset");
+            let message = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+            assert_eq!(message, Some(MESSAGE));
+            assert_eq!(
+                serde_json::to_vec(&state).expect("serialize rejected state"),
+                before
+            );
+            assert_eq!(events, events_before);
+        };
+
+        let mut live_stack = seeded();
+        let mut object = crate::game::game_object::GameObject::new(
+            ObjectId(6865),
+            CardId(6865),
+            PlayerId(0),
+            "Pending Spell".to_string(),
+            Zone::Stack,
+        );
+        object.cast_occurrence = Some(occurrence);
+        live_stack.objects.insert(object.id, object);
+        live_stack.stack.push_back(spell_entry());
+        assert_rejected_without_mutation(live_stack);
+
+        let mut continuation = seeded();
+        let pending = PendingContinuation::new(Box::new(stamped_ability()), &continuation);
+        continuation
+            .resolution_stack
+            .push_ability_continuation(AbilityContinuationFrame {
+                pending,
+                choose_zone_trigger_context: None,
+            });
+        assert_rejected_without_mutation(continuation);
+
+        let mut popped = seeded();
+        popped.resolving_stack_entry = Some(spell_entry());
+        assert_rejected_without_mutation(popped);
+
+        let mut prompt = seeded();
+        prompt.waiting_for = WaitingFor::ResolveAllReady { epoch: 1 };
+        assert_rejected_without_mutation(prompt);
+
+        let mut settled = seeded();
+        let old_turn = settled.turn_number;
+        let mut events = Vec::new();
+        start_next_turn(&mut settled, &mut events);
+        assert_eq!(settled.turn_number, old_turn + 1);
+        assert_eq!(settled.spells_cast_this_turn, 0);
+        assert!(settled.spells_cast_this_turn_by_player.is_empty());
     }
 
     /// R14 B7: direct phase assignment is an authority boundary. Freeze the
@@ -3703,6 +3839,127 @@ mod tests {
                 player: PlayerId(0)
             }
         ));
+    }
+
+    /// CR 509.1 + CR 802.4: Each defending player makes a separate blocker
+    /// declaration in turn order. P1's turn-boundary preference may be stored,
+    /// but it cannot choose P1's optional blocks or leak into P2's declaration.
+    #[test]
+    fn multiplayer_blocker_auto_pass_retains_owner_prompt_and_does_not_leak() {
+        let mut state = GameState::new(crate::types::format::FormatConfig::free_for_all(), 3, 42);
+        state.active_player = PlayerId(0);
+        state.phase = Phase::DeclareBlockers;
+
+        let attacker_to_p1 = create_object(
+            &mut state,
+            CardId(5),
+            PlayerId(0),
+            "Attacker to P1".to_string(),
+            Zone::Battlefield,
+        );
+        let attacker_to_p2 = create_object(
+            &mut state,
+            CardId(6),
+            PlayerId(0),
+            "Attacker to P2".to_string(),
+            Zone::Battlefield,
+        );
+        let blocker_p1 = create_object(
+            &mut state,
+            CardId(7),
+            PlayerId(1),
+            "P1 Blocker".to_string(),
+            Zone::Battlefield,
+        );
+        let blocker_p2 = create_object(
+            &mut state,
+            CardId(8),
+            PlayerId(2),
+            "P2 Blocker".to_string(),
+            Zone::Battlefield,
+        );
+        for id in [attacker_to_p1, attacker_to_p2, blocker_p1, blocker_p2] {
+            state
+                .objects
+                .get_mut(&id)
+                .unwrap()
+                .card_types
+                .core_types
+                .push(crate::types::card_type::CoreType::Creature);
+        }
+        state.combat = Some(combat::CombatState {
+            attackers: vec![
+                combat::AttackerInfo::new(
+                    attacker_to_p1,
+                    combat::AttackTarget::Player(PlayerId(1)),
+                    PlayerId(1),
+                ),
+                combat::AttackerInfo::new(
+                    attacker_to_p2,
+                    combat::AttackTarget::Player(PlayerId(2)),
+                    PlayerId(2),
+                ),
+            ],
+            ..Default::default()
+        });
+
+        let waiting = auto_advance(&mut state, &mut Vec::new());
+        assert!(matches!(
+            waiting,
+            WaitingFor::DeclareBlockers {
+                player: PlayerId(1),
+                ..
+            }
+        ));
+        state.waiting_for = waiting;
+
+        let armed = apply(
+            &mut state,
+            PlayerId(1),
+            GameAction::SetAutoPass {
+                mode: crate::types::game_state::AutoPassRequest::UntilTurnBoundary {
+                    until: TurnBoundary::EndOfCurrentTurn,
+                },
+            },
+        )
+        .expect("P1 can store a turn-boundary preference while declaring blockers");
+        assert!(matches!(
+            armed.waiting_for,
+            WaitingFor::DeclareBlockers {
+                player: PlayerId(1),
+                ..
+            }
+        ));
+        assert!(armed
+            .events
+            .iter()
+            .all(|event| !matches!(event, GameEvent::BlockersDeclared { .. })));
+
+        let result = apply(
+            &mut state,
+            PlayerId(1),
+            GameAction::DeclareBlockers {
+                assignments: Vec::new(),
+            },
+        )
+        .expect("P1 may manually decline its optional block");
+
+        assert!(matches!(
+            result.waiting_for,
+            WaitingFor::DeclareBlockers {
+                player: PlayerId(2),
+                ..
+            }
+        ));
+        assert!(
+            !state.auto_pass.contains_key(&PlayerId(1)),
+            "P1's manual declaration cancels only P1's standing preference"
+        );
+        assert_eq!(
+            state.combat.as_ref().unwrap().blockers_declared_by,
+            vec![PlayerId(1)],
+            "P2 has not yet declared blockers"
+        );
     }
 
     #[test]
@@ -5186,6 +5443,7 @@ mod tests {
             PlayerId(1),
             AutoPassMode::UntilStackEmpty {
                 initial_stack_len: 2,
+                policy: StackResolutionPolicy::Committed,
             },
         );
 
@@ -5195,7 +5453,8 @@ mod tests {
         assert_eq!(
             state.auto_pass.get(&PlayerId(1)),
             Some(&AutoPassMode::UntilStackEmpty {
-                initial_stack_len: 2
+                initial_stack_len: 2,
+                policy: StackResolutionPolicy::Committed,
             }),
             "UntilStackEmpty is turn-agnostic and must survive the boundary"
         );

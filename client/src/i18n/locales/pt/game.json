@@ -49,10 +49,11 @@
     "respondSubtitle": "Accept the verified route or stop at one of your issued boundaries.",
     "shortenAtBreakpoint": "Stop at boundary {{breakpointId}}"
   },
-  "resolutionProgress": {
-    "label": "Resolvendo {{resolved}} / {{total}}",
-    "collapse": "Recolher progresso de resolução",
-    "expand": "Expandir progresso de resolução"
+  "restoredAutomation": {
+    "dismiss": "Fechar",
+    "noop": {"title": "Jogo salvo carregado", "summary_one": "Não foi necessário retomar a automação da pilha.", "summary_other": "Não foi necessário retomar a automação da pilha."},
+    "progressed": {"title": "Automação da pilha retomada", "summary_one": "O motor concluiu {{count}} resolução automatizada.", "summary_other": "O motor concluiu {{count}} resoluções automatizadas.", "omitted_one": "{{count}} evento intermediário foi omitido.", "omitted_other": "{{count}} eventos intermediários foram omitidos."},
+    "zeroResolutionRepair": {"title": "Automação da pilha reparada", "summary_one": "A automação salva foi reparada com segurança antes de retomar o jogo.", "summary_other": "A automação salva foi reparada com segurança antes de retomar o jogo."}
   },
   "resolveAllConsent": {
     "eyebrow": "Resolver tudo",
@@ -68,6 +69,9 @@
     "tokenPowerPlaceholder": "Power",
     "tokenToughnessPlaceholder": "Toughness",
     "sourceDefinedPtRequired": "Enter power and toughness for this source-defined token."
+  },
+  "debugLibrary": {
+    "openActions": "Abrir ações de depuração para {{name}}"
   },
   "nextUp": {
     "label": "Próximo",
@@ -1953,6 +1957,7 @@
     "title": "Conjure uma mágica de graça",
     "subtitle": "Escolha uma mágica para conjurar sem pagar seu custo de mana ({{remaining}} restante(s)). Valor de mana total restante: {{budget}}.",
     "subtitleNoBudget": "Escolha uma mágica para conjurar sem pagar seu custo de mana ({{remaining}} restante(s)).",
+    "remainingAny": "qualquer quantidade",
     "castNamed": "Conjurar {{name}}",
     "castSuffix": "(sem pagar seu custo de mana)",
     "done": "Concluído",
@@ -2049,6 +2054,7 @@
     "diagnostic": "diagnóstico: {{reason}}",
     "showDetails": "Mostrar detalhes",
     "exportGameState": "Exportar estado do jogo",
+    "exportClientSnapshot": "Exportar instantâneo do cliente",
     "exported": "Exportado",
     "exportFailed": "Falha na exportação",
     "copyDiagnostic": "Copiar diagnóstico",
@@ -2155,6 +2161,26 @@
     "no": "Não",
     "dontAskAgain": "Não perguntar novamente neste jogo",
     "dontAskAgainForSameCard": "Aplicar a todas as cópias desta carta"
+  },
+  "resolutionOptionalPayment": {
+    "title": "Escolha um pagamento opcional",
+    "pay": "Pagar {{cost}}",
+    "decline": "Recusar",
+    "cost": {
+      "card": "carta",
+      "cards": "cartas",
+      "filteredCard": "carta {{types}}",
+      "filteredCards": "cartas {{types}}",
+      "nonType": "não {{type}}",
+      "orSeparator": " ou ",
+      "zoneBattlefield": "o campo de batalha",
+      "zoneGraveyard": "seu cemitério",
+      "zoneLibrary": "seu grimório",
+      "zoneExile": "o exílio",
+      "zoneHand": "sua mão",
+      "discard": "Descarte {{count}} {{cards}}",
+      "exile": "Exile {{count}} {{cards}} de {{zone}}"
+    }
   },
   "topOrBottom": {
     "cardFallback": "Card",

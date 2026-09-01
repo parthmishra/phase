@@ -20,6 +20,7 @@ const EMPTY_DETAILS: Record<string, StackEntryDisplay> = {};
 interface DisplayStackEntry {
   entry: StackEntryType;
   choiceObjectId?: ObjectId;
+  groupedObjectIds?: ObjectId[];
   groupCount: number;
 }
 
@@ -110,6 +111,7 @@ export function StackDisplay({
               return [{
                 entry: representative,
                 choiceObjectId: legalMemberIds[0],
+                groupedObjectIds: group.member_ids,
                 groupCount: group.count,
               }];
             }
@@ -233,11 +235,12 @@ export function StackDisplay({
               const pacing = pressureMultiplier(
                 effectiveStackPressure(displayStack.length),
               );
-              return groupedStack.map(({ entry, choiceObjectId, groupCount }, index) => (
+              return groupedStack.map(({ entry, choiceObjectId, groupedObjectIds, groupCount }, index) => (
                 <StackEntry
                   key={entry.id}
                   entry={entry}
                   choiceObjectId={choiceObjectId}
+                  groupedObjectIds={groupedObjectIds}
                   index={index}
                   isTop={index === displayStack.length - 1}
                   isPending={stackEntryDetails[String(entry.id)]?.is_pending}

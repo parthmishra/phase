@@ -180,6 +180,16 @@ if [ "$RUNTIME_STORAGE" = "pages" ]; then
     "$ENGINE_WASM_SOURCE"
 fi
 
+# Remove large data/audio files and their compressed variants — served from R2
+rm -f client/dist/card-data.json client/dist/card-data.json.br
+# Locale sidecars (card-data.<lng>.json) — served from R2, strip from bundle.
+rm -f client/dist/card-data.??.json client/dist/card-data.??.json.br
+# Locale card-art maps (scryfall-images.v2.<lng>.json) — same, served from R2.
+rm -f client/dist/scryfall-images.v2.??.json client/dist/scryfall-images.v2.??.json.br
+rm -f client/dist/coverage-data.json client/dist/coverage-data.json.br
+rm -f client/dist/coverage-summary.json client/dist/coverage-summary.json.br
+rm -f client/dist/audio/music/planeswalker-*.m4a
+
 # The external URLs above are compiled into the app. Vite still copies public/
 # wholesale, so remove those externally served copies before enforcing Pages'
 # 25 MiB per-file limit. In Pages runtime mode, only the branch-matched engine

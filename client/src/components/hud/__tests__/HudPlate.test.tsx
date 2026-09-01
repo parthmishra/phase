@@ -8,7 +8,10 @@ describe("HudPlate", () => {
 
   it("exposes avatar art separately from the desktop portrait", () => {
     const { container } = render(
-      <HudPlate label="Player" avatarUrl="/avatar.jpg">
+      <HudPlate
+        label="Player"
+        avatarIdentity={{ kind: "external", url: "/avatar.jpg" }}
+      >
         <span>40</span>
       </HudPlate>,
     );

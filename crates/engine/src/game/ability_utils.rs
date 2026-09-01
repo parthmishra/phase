@@ -17,7 +17,7 @@ use crate::types::game_state::{
     GameState, PtDirection, TargetEffectDetail, TargetSelectionConstraint, TargetSelectionProgress,
     TargetSelectionSlot,
 };
-use crate::types::identifiers::ObjectId;
+use crate::types::identifiers::{ObjectId, ObjectIncarnationRef};
 use crate::types::player::PlayerId;
 use crate::types::zones::Zone;
 
@@ -1322,6 +1322,18 @@ pub fn choose_target_for_ability(
             constraints,
         )?;
         return Ok(TargetSelectionAdvance::Complete(selected_slots));
+    }
+
+    if let Some(next_progress) = homogeneous_required_target_walk_progress(
+        ability,
+        target_slots,
+        constraints,
+        progress,
+        &specs,
+        next_slot,
+        &selected_slots,
+    ) {
+        return Ok(TargetSelectionAdvance::InProgress(next_progress));
     }
 
     let next_progress = build_target_selection_progress_for_ability(
@@ -3951,7 +3963,12 @@ fn assign_attach_attachment_selected_slots(
                 "Missing required target".to_string(),
             ));
         }
-        ability.targets.extend(window.iter().flatten().cloned());
+        for target in window.iter().flatten() {
+            ability.targets.push(target.clone());
+            if let Some(binding) = attach_object_binding(state, target)? {
+                ability.bind_attach_attachment_target(binding);
+            }
+        }
         *next_slot = end_slot;
     } else {
         let Some(selected_slot) = selected_slots.get(*next_slot) else {
@@ -3960,7 +3977,12 @@ fn assign_attach_attachment_selected_slots(
             ));
         };
         match selected_slot {
-            Some(target) => ability.targets.push(target.clone()),
+            Some(target) => {
+                ability.targets.push(target.clone());
+                if let Some(binding) = attach_object_binding(state, target)? {
+                    ability.bind_attach_attachment_target(binding);
+                }
+            }
             None if allow_skip => {}
             None => {
                 return Err(EngineError::InvalidAction(
@@ -4021,6 +4043,9 @@ fn assign_attach_attachment_declared_targets(
         for slot_index in 0..attachment_window {
             if let Some(target) = targets.get(*next_target) {
                 ability.targets.push(target.clone());
+                if let Some(binding) = attach_object_binding(state, target)? {
+                    ability.bind_attach_attachment_target(binding);
+                }
                 *next_target += 1;
             } else if slot_index < bounds.min {
                 return Err(EngineError::InvalidAction(
@@ -4032,6 +4057,9 @@ fn assign_attach_attachment_declared_targets(
         }
     } else if let Some(target) = targets.get(*next_target) {
         ability.targets.push(target.clone());
+        if let Some(binding) = attach_object_binding(state, target)? {
+            ability.bind_attach_attachment_target(binding);
+        }
         *next_target += 1;
     } else if !allow_skip {
         return Err(EngineError::InvalidAction(
@@ -4039,6 +4067,27 @@ fn assign_attach_attachment_declared_targets(
         ));
     }
     Ok(())
+}
+
+/// CR 400.7: Captures the exact incarnation of an object selected into an
+/// attachment role, so a later object reusing its storage ID cannot satisfy
+/// that role after a zone change made it a new object.
+fn attach_object_binding(
+    state: &GameState,
+    target: &TargetRef,
+) -> Result<Option<ObjectIncarnationRef>, EngineError> {
+    let TargetRef::Object(object_id) = target else {
+        return Ok(None);
+    };
+    Ok(Some(
+        state
+            .objects
+            .get(object_id)
+            .map(ObjectIncarnationRef::from_object)
+            .ok_or_else(|| {
+                EngineError::InvalidAction("Selected attachment left play".to_string())
+            })?,
+    ))
 }
 
 /// Tree-walks a `TargetFilter` and returns true if any `TypedFilter` inside it
@@ -4625,7 +4674,6 @@ fn quantity_ref_target_slot_spec(qty: &QuantityRef) -> Option<TargetFilter> {
         | QuantityRef::ObjectCountDistinct { filter, .. }
         | QuantityRef::ObjectCountBySharedQuality { filter, .. }
         | QuantityRef::CountersOnObjects { filter, .. }
-        | QuantityRef::Aggregate { filter, .. }
         | QuantityRef::EnteredThisTurn { filter }
         // CR 608.2i: the look-back sibling of `EnteredThisTurn` carries the same
         // kind of population filter, so it must reach the same recursion instead
@@ -4648,6 +4696,9 @@ fn quantity_ref_target_slot_spec(qty: &QuantityRef) -> Option<TargetFilter> {
         | QuantityRef::DistinctSubtypes { source, .. }
         | QuantityRef::DistinctColorsAmong { source } => {
             characteristic_source_target_slot_filter(source)
+        }
+        QuantityRef::PropertyAggregate(aggregate) => {
+            characteristic_source_target_slot_filter(aggregate.source())
         }
         QuantityRef::ManaSpentToCast { metric, .. } => match metric {
             CastManaSpentMetric::FromSource { source_filter } => {
@@ -6190,6 +6241,26 @@ fn build_target_selection_progress_for_ability(
     }
 
     let specs = target_slot_specs(state, ability);
+    if current_slot == 0 && selected_slots.is_empty() {
+        if let Some(first_spec) =
+            homogeneous_required_target_walk_spec(ability, target_slots, constraints, &specs)
+        {
+            #[cfg(feature = "test-support")]
+            crate::game::perf_counters::record_homogeneous_target_walk_cache_initialization();
+            let current_legal_targets =
+                legal_targets_for_selected_slot(state, ability, first_spec, &[], &[]);
+            if current_legal_targets.len() < target_slots.len() {
+                return Err(EngineError::ActionNotAllowed(
+                    "No legal target combinations available".to_string(),
+                ));
+            }
+            return Ok(TargetSelectionProgress {
+                current_slot,
+                selected_slots,
+                current_legal_targets,
+            });
+        }
+    }
     let current_legal_targets = legal_targets_for_slot_with_specs(
         state,
         ability,
@@ -6284,6 +6355,73 @@ fn build_target_selection_progress_for_ability(
         selected_slots,
         current_legal_targets,
     })
+}
+
+/// Reuses the already-proven legal target set for one homogeneous required
+/// multi-target instance. CR 601.2c / 115.3 only require each target in that
+/// instance to be different; every shape whose later target legality can
+/// depend on earlier choices deliberately returns `None` and recomputes.
+fn homogeneous_required_target_walk_progress(
+    ability: &ResolvedAbility,
+    target_slots: &[TargetSelectionSlot],
+    constraints: &[TargetSelectionConstraint],
+    progress: &TargetSelectionProgress,
+    specs: &[TargetSlotSpec],
+    next_slot: usize,
+    selected_slots: &[Option<TargetRef>],
+) -> Option<TargetSelectionProgress> {
+    homogeneous_required_target_walk_spec(ability, target_slots, constraints, specs)?;
+    if next_slot >= target_slots.len()
+        || progress.current_slot + 1 != next_slot
+        || selected_slots.len() != next_slot
+    {
+        return None;
+    }
+
+    let chosen = selected_slots.last()?.as_ref()?;
+    let mut cached_targets = progress.current_legal_targets.clone();
+    let index = cached_targets.iter().position(|target| target == chosen)?;
+    cached_targets.remove(index);
+    #[cfg(feature = "test-support")]
+    crate::game::perf_counters::record_homogeneous_target_walk_cache_advance();
+    Some(TargetSelectionProgress {
+        current_slot: next_slot,
+        selected_slots: selected_slots.to_vec(),
+        current_legal_targets: cached_targets,
+    })
+}
+
+/// Proves that each slot in this target run has the same independent legal set.
+/// The caller may then consume the exact cached set one target at a time.
+fn homogeneous_required_target_walk_spec<'a>(
+    ability: &ResolvedAbility,
+    target_slots: &[TargetSelectionSlot],
+    constraints: &[TargetSelectionConstraint],
+    specs: &'a [TargetSlotSpec],
+) -> Option<&'a TargetSlotSpec> {
+    let first = specs.first()?;
+    if !constraints.is_empty()
+        || specs.len() != target_slots.len()
+        || target_slots
+            .iter()
+            .any(|slot| slot.optional || slot.chooser.is_some())
+        || specs.iter().any(|spec| {
+            spec.instance != first.instance
+                || spec.filter != first.filter
+                || target_filter_has_another_target_marker(&spec.filter)
+                || relative_controller_kind(&spec.filter).is_some()
+                || target_filter_needs_ability_context(&spec.filter)
+        })
+        || ability_needs_companion_target_player_slot(ability)
+        || is_per_opponent_target_fanout(ability)
+        || matches!(
+            ability.effect,
+            Effect::Attach { .. } | Effect::PairWith { .. }
+        )
+    {
+        return None;
+    }
+    Some(first)
 }
 
 fn legal_targets_for_slot(
@@ -6648,6 +6786,8 @@ fn assign_targets_recursive(
         if ability.context.additional_cost_paid {
             assign_targets_recursive(state, sub_ability, targets, next_target)?;
             ability.targets = sub_ability.targets.clone();
+            ability.context.attach_target_bindings =
+                sub_ability.context.attach_target_bindings.clone();
             return Ok(());
         }
     }
@@ -6704,6 +6844,9 @@ fn assign_targets_recursive(
             if attach_host_filter_needs_target_slot(&target) {
                 if let Some(target) = targets.get(*next_target) {
                     ability.targets.push(target.clone());
+                    if let Some(binding) = attach_object_binding(state, target)? {
+                        ability.bind_attach_host_target(binding);
+                    }
                     *next_target += 1;
                 } else if !ability.optional_targeting {
                     return Err(EngineError::InvalidAction(
@@ -6959,6 +7102,8 @@ fn assign_selected_slots_recursive(
         if ability.context.additional_cost_paid {
             assign_selected_slots_recursive(state, sub_ability, selected_slots, next_slot)?;
             ability.targets = sub_ability.targets.clone();
+            ability.context.attach_target_bindings =
+                sub_ability.context.attach_target_bindings.clone();
             return Ok(());
         }
     }
@@ -7067,7 +7212,12 @@ fn assign_selected_slots_recursive(
                     ));
                 };
                 match selected_slot {
-                    Some(target) => ability.targets.push(target.clone()),
+                    Some(target) => {
+                        ability.targets.push(target.clone());
+                        if let Some(binding) = attach_object_binding(state, target)? {
+                            ability.bind_attach_host_target(binding);
+                        }
+                    }
                     None if ability.optional_targeting => {}
                     None => {
                         return Err(EngineError::InvalidAction(
@@ -14285,6 +14435,7 @@ mod tests {
                 enters_attacking: false,
                 kept_optional_to: None,
                 enters_under: None,
+                kept_destination_if: None,
             },
             vec![],
             ObjectId(900),
@@ -14406,11 +14557,16 @@ mod tests {
         assert!(filter_references_target_creature_quantity(&shares_quality));
 
         let aggregate = QuantityExpr::Ref {
-            qty: QuantityRef::Aggregate {
-                function: AggregateFunction::Max,
-                property: ObjectProperty::ManaValue,
-                filter: target_power_filter(),
-            },
+            qty: QuantityRef::PropertyAggregate(
+                crate::types::ability::PropertyAggregate::new(
+                    AggregateFunction::Max,
+                    ObjectProperty::ManaValue,
+                    crate::types::ability::CardTypeSetSource::Objects {
+                        filter: target_power_filter(),
+                    },
+                )
+                .expect("statically valid property aggregate"),
+            ),
         };
         assert!(quantity_expr_references_target_creature(&aggregate));
 

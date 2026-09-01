@@ -23,7 +23,7 @@ import {
 import type { AIDifficulty } from "../constants/ai";
 import { DEFAULT_AI_DIFFICULTY } from "../constants/ai";
 import type { DeckArchetype } from "../services/engineRuntime";
-import { detectInitialLanguage, SUPPORTED_LNGS, type SupportedLng } from "../i18n/resources";
+import { detectInitialLanguage, normalizeSupportedLng, type SupportedLng } from "../i18n/resources";
 
 /** Literal sentinel for "any deck" in AI deck selection. Mirrors `DeckChoice::Random`
  *  naming so the preference value is self-describing without a nullable field. */
@@ -62,6 +62,7 @@ export type CardSizePreference = "small" | "medium" | "large";
  *  "shift"  = the preview only appears while the Shift key is held (Tabletop
  *             Simulator style), letting the player read the board uninterrupted. */
 export type CardPreviewMode = "follow" | "side" | "shift";
+export type DraftCardPreviewMode = "none" | CardPreviewMode;
 /** Card-preview hover latency bounds (milliseconds). `0` = instant (the
  *  default — the preview appears the moment the cursor lands on a card). The
  *  upper bound keeps the slider meaningful; a delay longer than ~1s defeats the
@@ -293,6 +294,7 @@ function buildDefaultPreferences(): PreferencesState {
     battlefieldCardDisplay: "art_crop",
     collapsedFolderIds: [],
     lastSeenChangelogId: undefined,
+    dismissedStatusId: undefined,
     commandZoneDisplay: "auto",
     collapseLands: "auto",
     collapseSupport: "auto",
@@ -302,6 +304,8 @@ function buildDefaultPreferences(): PreferencesState {
     showKeywordStrip: true,
     battlefieldPeekOnHover: true,
     cardPreviewMode: "follow",
+    draftCardPreviewMode: "none",
+    draftDoubleClickConfirmPick: true,
     cardPreviewHoverDelayMs: 0,
     showCardPreviewFooter: true,
     stackDockSide: "right",
@@ -366,6 +370,10 @@ interface PreferencesState {
    * silently seeds it to the current latest so they get no unread dot for
    * entries that predate their first visit. */
   lastSeenChangelogId?: number;
+  /** Id of the operator status message this player dismissed. Compared for
+   * EQUALITY, so a newly published message (which always carries a new id)
+   * re-shows even after the previous one was dismissed. */
+  dismissedStatusId?: number;
   /** Command-zone layout mode (inline dock / compact pile / auto-by-viewport). */
   commandZoneDisplay: CommandZoneDisplay;
   /** Whether the lands sub-row collapses into its summary tile (auto/on/off). */
@@ -387,6 +395,8 @@ interface PreferencesState {
   /** Desktop hover card-preview behavior — follow cursor, dock to the side, or
    *  only show while Shift is held. See {@link CardPreviewMode}. */
   cardPreviewMode: CardPreviewMode;
+  draftCardPreviewMode: DraftCardPreviewMode;
+  draftDoubleClickConfirmPick: boolean;
   /** Latency (ms) before the hover preview appears in the "follow"/"side"
    *  modes. `0` = instant (default). Ignored in "shift" mode, which is
    *  keypress-triggered. See {@link CARD_PREVIEW_HOVER_DELAY_MAX}. */
@@ -468,6 +478,7 @@ interface PreferencesActions {
   toggleFolderCollapsed: (id: string) => void;
   setCollapsedFolderIds: (ids: string[]) => void;
   setLastSeenChangelogId: (id: number) => void;
+  setDismissedStatusId: (id: number) => void;
   setCommandZoneDisplay: (display: CommandZoneDisplay) => void;
   setCollapseLands: (mode: ZoneCollapseMode) => void;
   setCollapseSupport: (mode: ZoneCollapseMode) => void;
@@ -477,6 +488,8 @@ interface PreferencesActions {
   setShowKeywordStrip: (show: boolean) => void;
   setBattlefieldPeekOnHover: (enabled: boolean) => void;
   setCardPreviewMode: (mode: CardPreviewMode) => void;
+  setDraftCardPreviewMode: (mode: DraftCardPreviewMode) => void;
+  setDraftDoubleClickConfirmPick: (enabled: boolean) => void;
   setCardPreviewHoverDelayMs: (ms: number) => void;
   setShowCardPreviewFooter: (show: boolean) => void;
   setAiSeatDifficulty: (index: number, difficulty: AIDifficulty) => void;
@@ -573,7 +586,8 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       ...buildDefaultPreferences(),
 
       // Store owns the language; i18n/index.ts subscribes and mirrors it into i18next.
-      setLanguage: (lng) => set({ language: lng }),
+      setLanguage: (lng) =>
+        set((state) => ({ language: normalizeSupportedLng(lng, state.language) })),
       setCardSize: (size) => set({ cardSize: size }),
       setHudLayout: (layout) => set({ hudLayout: layout }),
       setFollowActiveOpponent: (enabled) => set({ followActiveOpponent: enabled }),
@@ -628,6 +642,7 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
         })),
       setCollapsedFolderIds: (ids) => set({ collapsedFolderIds: ids }),
       setLastSeenChangelogId: (id) => set({ lastSeenChangelogId: id }),
+      setDismissedStatusId: (id) => set({ dismissedStatusId: id }),
       setCommandZoneDisplay: (display) => set({ commandZoneDisplay: display }),
       setCollapseLands: (mode) => set({ collapseLands: mode }),
       setCollapseSupport: (mode) => set({ collapseSupport: mode }),
@@ -637,6 +652,8 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       setShowKeywordStrip: (show) => set({ showKeywordStrip: show }),
       setBattlefieldPeekOnHover: (enabled) => set({ battlefieldPeekOnHover: enabled }),
       setCardPreviewMode: (mode) => set({ cardPreviewMode: mode }),
+      setDraftCardPreviewMode: (mode) => set({ draftCardPreviewMode: mode }),
+      setDraftDoubleClickConfirmPick: (enabled) => set({ draftDoubleClickConfirmPick: enabled }),
       setCardPreviewHoverDelayMs: (ms) =>
         set({
           cardPreviewHoverDelayMs: clamp(
@@ -795,7 +812,7 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
     }),
     {
       name: "phase-preferences",
-      version: 30,
+      version: 32,
       // v0 → v1: flat aiDifficulty + aiDeckName become aiSeats[0].
       // v1 → v2: discrete animationSpeed/combatPacing enums become numeric
       //          animationSpeedMultiplier/combatPacingMultiplier.
@@ -858,10 +875,17 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
       //             preserves the intended enabled-by-default behavior.
       // v27 → v28: Add showCardPreviewFooter; legacy stores default to true
       //          via the shallow merge, preserving the prior presentation.
-      // v28 → v29: Use the neutral Slate background while the Arena 3D
-      //          experiment establishes its own visual language, and add the
-      //          sacrificial-mana-aware automatic payment mode. Existing
-      //          payment values remain valid.
+      // v28 → v29: Add the sacrificial-mana-aware automatic mode. Existing
+      //          values remain valid; malformed persisted values normalize to
+      //          the legacy automatic behavior below. The Arena experiment
+      //          also migrates its board to the neutral Slate background.
+      // v29 → v30: Add draftCardPreviewMode; legacy stores default to "none"
+      //          via the shallow merge.
+      // v30 → v31: Add draftDoubleClickConfirmPick; legacy stores default to
+      //          true via the shallow merge.
+      // v31 → v32: Add dismissedStatusId; legacy stores default to undefined
+      //          via the shallow merge, so no operator status message counts as
+      //          already dismissed for an existing user.
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         let migrated = persisted as Record<string, unknown>;
@@ -967,13 +991,9 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
         }
 
         if (version < 9) {
-          const lng = (migrated as { language?: unknown }).language;
           migrated = {
             ...migrated,
-            language:
-              typeof lng === "string" && (SUPPORTED_LNGS as readonly string[]).includes(lng)
-                ? lng
-                : detectInitialLanguage(),
+            language: normalizeSupportedLng(migrated.language, detectInitialLanguage()),
           };
         }
 
@@ -1059,7 +1079,23 @@ export const usePreferencesStore = create<PreferencesState & PreferencesActions>
           };
         }
 
-        return migrated;
+        return {
+          ...migrated,
+          language: normalizeSupportedLng(migrated.language, detectInitialLanguage()),
+        };
+      },
+      // Persisted state is external input. Migration only runs when the schema
+      // version changes, so this boundary also protects current-version blobs
+      // restored from browser storage or a backup.
+      merge: (persisted, current) => {
+        const saved = persisted && typeof persisted === "object"
+          ? persisted as Partial<PreferencesState>
+          : {};
+        return {
+          ...current,
+          ...saved,
+          language: normalizeSupportedLng(saved.language, current.language),
+        };
       },
     },
   ),

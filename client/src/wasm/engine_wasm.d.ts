@@ -46,8 +46,25 @@ export function clear_replay_playback(): void;
  * Background) via the engine's single-authority `can_pair_commanders`. The
  * frontend must not re-derive partner-pairing rules — it filters its candidate
  * list through this. Returns an empty array if the database isn't loaded.
+ *
+ * `draft_set_codes` is every set whose draft boosters this deck's draft
+ * CONTAINED, as an array — or `null`/`undefined`, which is read as the empty
+ * array, i.e. constructed play. CR 903.13f(3)
+ * conditions its partner grant on what the DRAFT contained, which is a session
+ * property no pair of card names can express — so the caller supplies the set
+ * codes and the ENGINE maps them to a grant. The client never learns which
+ * sets grant what.
+ *
+ * A LIST rather than one code, because CR 903.13f(3) asks about containment: a
+ * mixed draft that opened Commander Masters and other boosters contained
+ * Commander Masters, and the grant is in force. The engine takes the union.
+ *
+ * It is a REQUIRED third parameter, and `JsValue` rather than
+ * `Vec<String>`, on purpose: that matches this file's existing convention
+ * for engine-typed arguments and makes a stale caller a compile error rather
+ * than a silent `undefined`.
  */
-export function commanderPartnerCandidates(first_commander: string, candidates: any): any;
+export function commanderPartnerCandidates(first_commander: string, candidates: any, draft_set_codes: any): any;
 
 /**
  * Returns legal Commander-family companion candidates from the main deck.
@@ -333,18 +350,24 @@ export function load_card_database(json_str: string): number;
 export function load_replay_for_playback(json_str: string): number;
 
 /**
- * CR 100.2a / CR 903.5b: How many copies of the named card a `format` deck may
- * legally contain across main deck, sideboard, and command zone combined
- * (CR 100.4a). Unlike `deckCopyLimit`, this is the *resolved* ceiling — it
- * already applies the basic-land exemption, the card's printed override, and
- * the format default, so the caller compares a count against it directly.
+ * CR 100.2a / CR 903.5b: How many copies of the named card a deck built under
+ * `format_config` may legally contain across main deck, sideboard, and command
+ * zone combined (CR 100.4a). Unlike `deckCopyLimit`, this is the *resolved*
+ * ceiling — it already applies the basic-land exemption, the card's printed
+ * override, and the format default, so the caller compares a count against it
+ * directly.
+ *
+ * `format_config` is a full `FormatConfig` JSON object (as published by
+ * `getFormatRegistry`'s `default_config`), not a bare `GameFormat` string: only
+ * the config carries the resolved `default_deck_copy_limit` a custom format
+ * declares.
  *
  * Serialized as the `DeckCopyLimit` tagged union (`{"type":"Unlimited"}` or
  * `{"type":"UpTo","data":N}`); switch on `.type`. Returns `{"type":"Unlimited"}`
  * when the card database isn't loaded, so a not-yet-hydrated frontend never
  * blocks a legal add.
  */
-export function maxDeckCopies(name: string, format: any): any;
+export function maxDeckCopies(name: string, format_config: any): any;
 
 /**
  * Verify WASM integration works.
@@ -406,23 +429,6 @@ export function replay_length_js(): number;
 export function replay_seek_js(target: number): any;
 
 /**
- * Batch-resolve the stack by auto-passing priority for the requesting player
- * and delegating to the AI for opponent decisions. Runs entirely inside WASM
- * with no JS round-trips between resolutions — collapses the O(N) priority
- * pass cycle into a single call.
- *
- * `requester` is the human player seat (whose "Resolve All" click initiated
- * this). `ai_seats_json` is a JSON array of `{ playerId, difficulty }` for
- * each AI opponent.
- *
- * Returns a compact `BatchResolveResult` with the final `WaitingFor` and a
- * count of items resolved. The Resolve All UI does not animate individual
- * events, so the WASM boundary intentionally returns empty event/log arrays
- * instead of serializing thousands of records for pathological stacks.
- */
-export function resolve_all(requester: number, ai_seats_json: string, max_resolutions: number): any;
-
-/**
  * Restore the game state from a JSON string.
  * Uses serde_json which handles string-keyed maps (from localStorage round-trip)
  * correctly deserializing into HashMap<ObjectId, V>.
@@ -466,7 +472,19 @@ export function restore_game_state(json_str: string): void;
  * Refuses when the engine is already in use — this is a fresh-instance
  * entry point. Callers must clear any existing state first.
  */
-export function resume_multiplayer_host_state(json_str: string): void;
+export function resume_multiplayer_host_state(json_str: string): any;
+
+/**
+ * Explicitly drive any persisted stack automation after a successful restore.
+ *
+ * [`restore_game_state`] deliberately remains an undo/decode boundary: it
+ * installs a playable snapshot but never manufactures a priority pass. This
+ * separately-invoked transition is the only WASM owner allowed to ask the
+ * engine to resume a saved `StackResolutionSession` or legacy Ready latch.
+ * Its bounded engine-authored presentation describes the automated burst;
+ * callers read the final game snapshot through the normal state exports.
+ */
+export function resume_restored_game_state(): any;
 
 /**
  * Search the loaded card database. The engine is the single authority for the
@@ -490,9 +508,13 @@ export function search_cards_js(query: any): any;
 export function set_multiplayer_mode(enabled: boolean): void;
 
 /**
- * CR 100.4a: Returns the sideboard policy for a given game format as a
+ * CR 100.4a: Returns the sideboard policy stored on a `FormatConfig` as a
  * tagged union: `{"type": "Forbidden"}`, `{"type": "Limited", "data": 15}`,
  * or `{"type": "Unlimited"}`.
+ *
+ * `format_config` is a full `FormatConfig` JSON object (as published by
+ * `getFormatRegistry`'s `default_config`), not a bare `GameFormat` string: only
+ * the config carries the resolved policy a custom format declares.
  *
  * The frontend must exhaustive-switch on `.type` — unit variants (`Forbidden`,
  * `Unlimited`) emit no `data` field under `#[serde(tag, content)]`.
@@ -500,7 +522,7 @@ export function set_multiplayer_mode(enabled: boolean): void;
  * The engine is the single authority for format sideboard rules; the frontend
  * never hardcodes 15 or any other cap.
  */
-export function sideboardPolicyForFormat(format: any): any;
+export function sideboardPolicyForFormat(format_config: any): any;
 
 /**
  * Returns the engine-authored Oathbreaker signature-spell selection policy.
@@ -550,72 +572,74 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly apply_seat_mutation: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly build_ai_card_subset: (a: number) => void;
-    readonly classify_deck_js: (a: number, b: number) => void;
+    readonly apply_seat_mutation: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly build_ai_card_subset: () => [number, number, number, number];
+    readonly classify_deck_js: (a: any) => [number, number, number];
     readonly clear_game_state: () => void;
-    readonly clear_replay_playback: () => void;
-    readonly commanderPartnerCandidates: (a: number, b: number, c: number, d: number) => void;
-    readonly companionCandidates: (a: number, b: number) => void;
-    readonly create_initial_state: () => number;
-    readonly deckCopyLimit: (a: number, b: number) => number;
-    readonly estimate_bracket_for_deck: (a: number, b: number) => void;
-    readonly evaluate_deck_compatibility_js: (a: number, b: number) => void;
-    readonly export_game_state_json: (a: number) => void;
-    readonly export_replay_log: (a: number) => void;
-    readonly getFormatRegistry: () => number;
-    readonly get_ai_action_proposal: (a: number, b: number, c: number, d: number) => void;
-    readonly get_ai_action_proposal_from_scores: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => void;
-    readonly get_ai_action_proposal_from_scores_with_diagnostics: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => void;
-    readonly get_ai_action_proposal_with_diagnostics: (a: number, b: number, c: number, d: number) => void;
-    readonly get_ai_scored_candidates: (a: number, b: number, c: number, d: number, e: bigint) => void;
-    readonly get_ai_tactical_action_proposal: (a: number, b: number, c: number, d: number) => void;
-    readonly get_ai_tactical_action_proposal_with_diagnostics: (a: number, b: number, c: number, d: number) => void;
-    readonly get_card_face_data: (a: number, b: number) => number;
-    readonly get_card_parse_details: (a: number, b: number) => number;
-    readonly get_card_rulings: (a: number, b: number) => number;
-    readonly get_filtered_game_state: (a: number) => number;
-    readonly get_game_state: () => number;
-    readonly get_legal_actions_for_viewer_js: (a: number) => number;
-    readonly get_legal_actions_js: () => number;
-    readonly get_stack_pressure: () => number;
-    readonly get_viewer_snapshot_js: (a: number) => number;
+    readonly commanderPartnerCandidates: (a: number, b: number, c: any, d: any) => [number, number, number];
+    readonly companionCandidates: (a: any) => [number, number, number];
+    readonly deckCopyLimit: (a: number, b: number) => any;
+    readonly estimate_bracket_for_deck: (a: any) => [number, number, number];
+    readonly evaluate_deck_compatibility_js: (a: any) => [number, number, number];
+    readonly export_game_state_json: () => [number, number, number, number];
+    readonly export_replay_log: () => [number, number, number, number];
+    readonly get_ai_action_proposal: (a: number, b: number, c: number) => [number, number, number];
+    readonly get_ai_action_proposal_from_scores: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number];
+    readonly get_ai_action_proposal_from_scores_with_diagnostics: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number];
+    readonly get_ai_action_proposal_with_diagnostics: (a: number, b: number, c: number) => [number, number, number];
+    readonly get_ai_scored_candidates: (a: number, b: number, c: number, d: bigint) => [number, number, number];
+    readonly get_ai_tactical_action_proposal: (a: number, b: number, c: number) => [number, number, number];
+    readonly get_ai_tactical_action_proposal_with_diagnostics: (a: number, b: number, c: number) => [number, number, number];
+    readonly get_card_face_data: (a: number, b: number) => any;
+    readonly get_card_parse_details: (a: number, b: number) => any;
+    readonly get_card_rulings: (a: number, b: number) => any;
+    readonly get_filtered_game_state: (a: number) => any;
+    readonly get_legal_actions_for_viewer_js: (a: number) => any;
+    readonly get_viewer_snapshot_js: (a: number) => any;
     readonly has_replay_recording: () => number;
-    readonly init_panic_hook: () => void;
-    readonly initialize_game: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
-    readonly initialize_multiplayer_host_game: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
-    readonly isCardCommanderEligibleForFormat: (a: number, b: number, c: number) => number;
+    readonly initialize_game: (a: any, b: number, c: number, d: any, e: any, f: number, g: number) => any;
+    readonly initialize_multiplayer_host_game: (a: any, b: number, c: number, d: any, e: any, f: number, g: number) => any;
+    readonly isCardCommanderEligibleForFormat: (a: number, b: number, c: any) => number;
     readonly is_card_commander_eligible: (a: number, b: number) => number;
     readonly is_multiplayer_mode: () => number;
-    readonly legal_targets_for_castable_js: (a: number) => number;
-    readonly legal_targets_for_castables_js: (a: number) => number;
-    readonly list_token_presets_js: () => number;
-    readonly load_card_database: (a: number, b: number, c: number) => void;
-    readonly load_replay_for_playback: (a: number, b: number, c: number) => void;
-    readonly maxDeckCopies: (a: number, b: number, c: number) => number;
-    readonly ping: (a: number) => void;
-    readonly preview_action_js: (a: number, b: number) => number;
-    readonly preview_mana_payment_js: (a: number, b: number) => number;
-    readonly project_seat_view: (a: number, b: number, c: number) => void;
-    readonly replay_header_js: () => number;
-    readonly replay_length_js: () => number;
-    readonly replay_seek_js: (a: number, b: number) => void;
-    readonly resolve_all: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly restore_game_state: (a: number, b: number, c: number) => void;
-    readonly resume_multiplayer_host_state: (a: number, b: number, c: number) => void;
-    readonly search_cards_js: (a: number, b: number) => void;
+    readonly legal_targets_for_castable_js: (a: number) => any;
+    readonly legal_targets_for_castables_js: (a: any) => any;
+    readonly load_card_database: (a: number, b: number) => [number, number, number];
+    readonly load_replay_for_playback: (a: number, b: number) => [number, number, number];
+    readonly maxDeckCopies: (a: number, b: number, c: any) => any;
+    readonly ping: () => [number, number];
+    readonly preview_action_js: (a: number, b: any) => any;
+    readonly preview_mana_payment_js: (a: number, b: any) => any;
+    readonly project_seat_view: (a: number, b: number) => [number, number, number];
+    readonly replay_seek_js: (a: number) => [number, number, number];
+    readonly restore_game_state: (a: number, b: number) => [number, number];
+    readonly resume_multiplayer_host_state: (a: number, b: number) => [number, number, number];
+    readonly resume_restored_game_state: () => [number, number, number];
+    readonly search_cards_js: (a: any) => [number, number, number];
     readonly set_multiplayer_mode: (a: number) => void;
-    readonly sideboardPolicyForFormat: (a: number, b: number) => void;
-    readonly signatureSpellSelectionPolicy: (a: number, b: number) => void;
-    readonly submit_action: (a: number, b: number) => number;
-    readonly submit_ai_action_proposal: (a: number, b: number, c: number, d: number) => number;
-    readonly submit_interaction_js: (a: number, b: number) => number;
-    readonly take_last_panic_message: (a: number) => void;
-    readonly __wbindgen_export: (a: number, b: number) => number;
-    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_export3: (a: number) => void;
-    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly sideboardPolicyForFormat: (a: any) => [number, number, number];
+    readonly signatureSpellSelectionPolicy: (a: any) => [number, number, number];
+    readonly submit_action: (a: number, b: any) => any;
+    readonly submit_ai_action_proposal: (a: number, b: number, c: number, d: any) => any;
+    readonly submit_interaction_js: (a: number, b: any) => any;
+    readonly take_last_panic_message: () => [number, number];
+    readonly get_game_state: () => any;
+    readonly get_legal_actions_js: () => any;
+    readonly get_stack_pressure: () => any;
+    readonly init_panic_hook: () => void;
+    readonly replay_header_js: () => any;
+    readonly list_token_presets_js: () => any;
+    readonly create_initial_state: () => any;
+    readonly getFormatRegistry: () => any;
+    readonly clear_replay_playback: () => void;
+    readonly replay_length_js: () => number;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

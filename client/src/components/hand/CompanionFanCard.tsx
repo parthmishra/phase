@@ -53,7 +53,7 @@ const CompanionFanCard = memo(function CompanionFanCard({
   const { t } = useTranslation("game");
   const setDragging = useUiStore((s) => s.setDragging);
   const cardName = companion.card.card.name;
-  const { src } = useCardImage(cardName, { size: "normal" });
+  const { src, rungs, advanceFailedSource } = useCardImage(cardName, { size: "normal" });
   // Suppress dragSnapToOrigin only when the flick actually activated, so a
   // short/sideways drag springs back into the fan instead of flying off.
   const playedRef = useRef(false);
@@ -112,10 +112,11 @@ const CompanionFanCard = memo(function CompanionFanCard({
           {src ? (
             <img
               src={src}
-              {...getCardImageSrcSetProps(src)}
+              {...getCardImageSrcSetProps(src, rungs)}
               alt={cardName}
               draggable={false}
               className="!h-[var(--hand-card-h)] !w-[var(--hand-card-w)] object-cover"
+              onError={() => advanceFailedSource?.(src)}
             />
           ) : (
             <div className="h-[var(--hand-card-h)] w-[var(--hand-card-w)] bg-gray-700" />

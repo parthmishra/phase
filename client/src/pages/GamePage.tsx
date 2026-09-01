@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -14,6 +15,7 @@ import type { TFunction } from "i18next";
 import type {
   CompanionRevealChoice,
   DeckCardCount,
+  FormatConfig,
   GameFormat,
   MatchConfig,
   ObjectId,
@@ -62,6 +64,7 @@ import {
 import { CardImage } from "../components/card/CardImage.tsx";
 import { GameCardPreview } from "../components/card/GameCardPreview.tsx";
 import { CardReportDialog } from "../components/card/CardReportDialog.tsx";
+import { isFocusTargetAvailable } from "../components/ui/focusTarget.ts";
 import { ActionButton } from "../components/board/ActionButton.tsx";
 import { FullControlToggle } from "../components/controls/FullControlToggle.tsx";
 import { CombatPhaseIndicator } from "../components/controls/PhaseStopBar.tsx";
@@ -91,6 +94,7 @@ import { SpliceOfferModal } from "../components/modal/SpliceOfferModal.tsx";
 import { CardChoiceModal } from "../components/modal/CardChoiceModal.tsx";
 import { ChoiceModal } from "../components/modal/ChoiceModal.tsx";
 import { OptionalEffectModalContent } from "../components/modal/OptionalEffectModal.tsx";
+import { ResolutionOptionalPaymentModalContent } from "../components/modal/ResolutionOptionalPaymentModal.tsx";
 import { OptionalCostModalContent } from "../components/modal/OptionalCostModal.tsx";
 import { ChooseOneOfBranchModal } from "../components/modal/ChooseOneOfBranchModal.tsx";
 import { LifeRedistributionModal } from "../components/modal/LifeRedistributionModal.tsx";
@@ -245,7 +249,9 @@ export function GamePage() {
   // Without this gate, refreshing `/game/<id>?mode=p2p-host` against a
   // Full-mode server would attempt `openBrokerClient` and surface an
   // "Expected LobbyOnly server, got Full" error to the user.
-  const locationState = location.state as { useBroker?: boolean } | null;
+  const locationState = location.state as
+    | { useBroker?: boolean; formatConfig?: FormatConfig }
+    | null;
   const cachedServerMode = useMultiplayerStore((s) => s.serverInfo?.mode);
   const useBroker = locationState?.useBroker ?? (cachedServerMode === "LobbyOnly");
   const rawMode = searchParams.get("mode");
@@ -268,6 +274,12 @@ export function GamePage() {
     activeGameMeta && activeGameMeta.id === gameId
       ? activeGameMeta.formatConfig
       : undefined;
+  // The setup screen's edited config (starting life), handed over on the
+  // navigation that started this game. `GameSetupPage`'s native-engine route
+  // writes no resume pointer, so router state is the only channel that
+  // reaches both engine routes; `savedFormatConfig` still wins because it
+  // survives a hard refresh, and the two agree whenever both are present.
+  const setupFormatConfig = locationState?.formatConfig;
   // Memoize so the `GameProvider` `useEffect` dep array doesn't
   // tear-down/rebuild the P2P session on every parent re-render. Without
   // `useMemo`, each render constructs a fresh object reference from
@@ -280,10 +292,10 @@ export function GamePage() {
       if (savedFormatConfig && isDirectSetupFormat(savedFormatConfig.format)) {
         return savedFormatConfig;
       }
-      return directSetupFormatConfig(formatParam);
+      return setupFormatConfig ?? directSetupFormatConfig(formatParam);
     }
     return savedFormatConfig ?? (formatParam ? FORMAT_DEFAULTS[formatParam] : undefined);
-  }, [formatParam, rawMode, savedFormatConfig]);
+  }, [formatParam, rawMode, savedFormatConfig, setupFormatConfig]);
   // CR 103.1: 0 = play first, 1 = draw first, undefined = random
   const firstPlayer = firstParam === "play" ? 0 : firstParam === "draw" ? 1 : undefined;
   const matchConfig = useMemo<MatchConfig>(
@@ -926,6 +938,38 @@ function GamePageContent({
   const [preferencesOpen, setPreferencesOpen] = useState<
     null | { tab?: SettingsTabId; highlight?: SettingsHighlight }
   >(null);
+  const gameMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const preferencesReturnFocusRef = useRef<HTMLElement | SVGElement | null>(null);
+  const zoneViewerReturnFocusRef = useRef<HTMLElement | SVGElement | null>(null);
+  const resolvedZoneViewerReturnFocusRef = useMemo<
+    RefObject<HTMLElement | SVGElement | null>
+  >(
+    () => ({
+      get current() {
+        const exactLauncher = zoneViewerReturnFocusRef.current;
+        // A manually opened pile is the most precise return target, but the
+        // final card can leave that pile while the viewer is open. Resolve at
+        // restoration time so the persistent game-menu trigger remains a
+        // connected fallback instead of allowing focus to fall to <body>.
+        return isFocusTargetAvailable(exactLauncher)
+          ? exactLauncher
+          : gameMenuTriggerRef.current;
+      },
+    }),
+    [],
+  );
+  const openPreferences = useCallback(
+    (request: { tab?: SettingsTabId; highlight?: SettingsHighlight } = {}) => {
+      // Toast and context-menu launchers unmount as settings opens. Hand focus
+      // to the persistent game-menu button first, and make that same durable
+      // element the modal's explicit restoration target.
+      const returnTarget = gameMenuTriggerRef.current;
+      preferencesReturnFocusRef.current = returnTarget;
+      returnTarget?.focus();
+      setPreferencesOpen(request);
+    },
+    [],
+  );
   const [boardContextMenu, setBoardContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const playerId = usePlayerId();
@@ -1178,6 +1222,7 @@ function GamePageContent({
     // zone control glow prompts the user to pick.
     if (groups.size === 1 && firstHit) {
       dismissedCastableZoneViewerKeyRef.current = null;
+      zoneViewerReturnFocusRef.current = gameMenuTriggerRef.current;
       setViewingZone(firstHit);
       return;
     }
@@ -1190,6 +1235,7 @@ function GamePageContent({
     if (castableTarget) {
       const autoOpenKey = castableZoneViewerAutoOpenKey(castableTarget);
       if (dismissedCastableZoneViewerKeyRef.current !== autoOpenKey) {
+        zoneViewerReturnFocusRef.current = gameMenuTriggerRef.current;
         setViewingZone({
           zone: castableTarget.zone,
           playerId: castableTarget.playerId,
@@ -1208,6 +1254,13 @@ function GamePageContent({
     }
     setViewingZone(null);
   }, [viewingZone]);
+
+  const prepareZoneViewerActionClose = useCallback(() => {
+    // A cast/play action can remove the final card only after its asynchronous
+    // engine dispatch resolves. Choose the durable launcher before the viewer
+    // closes so focus never lands on a pile that disappears moments later.
+    zoneViewerReturnFocusRef.current = gameMenuTriggerRef.current;
+  }, []);
 
   const handleDeclareCompanion = useCallback(
     (choice: CompanionRevealChoice | null) => {
@@ -1297,7 +1350,13 @@ function GamePageContent({
       : "0.25rem",
   } as CSSProperties;
   const handleViewZone = useCallback(
-    (zone: "graveyard" | "exile" | "library", zonePlayerId: number) => {
+    (
+      zone: "graveyard" | "exile" | "library",
+      zonePlayerId: number,
+      launcher?: HTMLButtonElement,
+    ) => {
+      zoneViewerReturnFocusRef.current =
+        launcher ?? gameMenuTriggerRef.current;
       setViewingZone({ zone, playerId: zonePlayerId });
     },
     [],
@@ -1566,7 +1625,8 @@ function GamePageContent({
         onDismissMultiplayerSplitLayoutNudge={
           showMultiplayerSplitLayoutNudge ? handleDismissMultiplayerSplitLayoutNudge : undefined
         }
-        onSettingsClick={() => setPreferencesOpen({})}
+        onSettingsClick={() => openPreferences()}
+        menuTriggerRef={gameMenuTriggerRef}
         onHelpClick={() => setHelpSheetOpen(true)}
         onConcede={onShowConcedeDialog}
         // Takeback is a TRANSPORT capability, not a mode policy: only
@@ -1599,7 +1659,7 @@ function GamePageContent({
         onReportCardClick={() => useUiStore.getState().openCardReportDialog()}
       />
       <HelpSheet />
-      <CardReportDialog />
+      <CardReportDialog returnFocusRef={gameMenuTriggerRef} />
 
       {/* The page's toast surface, not an online-only one: solo games raise
           toasts too (the native-engine fallback notice). Only online games get
@@ -1607,7 +1667,7 @@ function GamePageContent({
           to re-dial and would just restart itself. */}
       <ConnectionToast
         onRetry={isOnlineMode ? () => window.location.reload() : undefined}
-        onSettings={() => setPreferencesOpen({})}
+        onSettings={() => openPreferences()}
       />
 
 
@@ -1746,6 +1806,7 @@ function GamePageContent({
           onClose={() => setPreferencesOpen(null)}
           initialTab={preferencesOpen.tab}
           highlight={preferencesOpen.highlight}
+          returnFocusRef={preferencesReturnFocusRef}
         />
       )}
 
@@ -1755,7 +1816,7 @@ function GamePageContent({
           y={boardContextMenu.y}
           onClose={() => setBoardContextMenu(null)}
           onChangeBackground={() =>
-            setPreferencesOpen({ tab: "gameplay", highlight: "board-background" })
+            openPreferences({ tab: "gameplay", highlight: "board-background" })
           }
           onCustomizeLayout={() => useUiStore.getState().setFlexEditMode(true)}
           onToggleGameLog={() => useUiStore.getState().toggleLogPanel()}
@@ -1766,8 +1827,8 @@ function GamePageContent({
         />
       )}
 
-      <DebugCardContextMenu />
-      <DebugLibraryViewer />
+      <DebugCardContextMenu surface="game" />
+      <DebugLibraryViewer returnFocusRef={gameMenuTriggerRef} />
 
       {/* Animation overlay (above board, below modals) */}
       <AnimationOverlay containerRef={containerRef} />
@@ -1891,6 +1952,11 @@ function GamePageContent({
             <OptionalEffectModal />
           )}
 
+        {/* Optional immediate payment branch ("discard a card or pay {2}") */}
+        {waitingFor?.type === "ResolutionOptionalPaymentChoice" && (
+          <ResolutionOptionalPaymentModal />
+        )}
+
         {/* CR 401.4: Owner puts permanent on top or bottom of library */}
         {(waitingFor?.type === "TopOrBottomChoice" || waitingFor?.type === "ClashCardPlacement") &&
           canActForWaitingState && (
@@ -1945,6 +2011,8 @@ function GamePageContent({
           zone={viewingZone.zone}
           playerId={viewingZone.playerId}
           onClose={handleZoneViewerClose}
+          onPrepareActionClose={prepareZoneViewerActionClose}
+          returnFocusRef={resolvedZoneViewerReturnFocusRef}
         />
       )}
 
@@ -2081,6 +2149,7 @@ function GamePageContent({
                 : undefined
             }
             onCancel={onHideConcedeDialog}
+            returnFocusRef={gameMenuTriggerRef}
           />
           <TakebackRequestDialog
             isOpen={pendingTakeback !== null}
@@ -2783,7 +2852,14 @@ function GameOverScreen({
     params.delete("roomName");
     if (mode) params.set("mode", mode);
     params.set("difficulty", difficulty);
-    navigate(`/game/${newId}?${params.toString()}`);
+    // `format` names the format but carries none of its edited knobs, and the
+    // saved active-game record is keyed to the game id we are leaving — so a
+    // custom starting life would revert to the format default here. Hand over
+    // the config the engine actually played with, on the same router-state
+    // channel `GameSetupPage` uses to start a game.
+    navigate(`/game/${newId}?${params.toString()}`, {
+      state: { formatConfig: gameState?.format_config },
+    });
   };
 
   const handleBackToDraft = () => {
@@ -3246,6 +3322,22 @@ function OptionalEffectModal() {
   if (waitingFor?.type !== "OptionalEffectChoice" && waitingFor?.type !== "OpponentMayChoice") return null;
 
   return <OptionalEffectModalContent waitingFor={waitingFor} objects={objects} dispatch={dispatch} />;
+}
+
+function ResolutionOptionalPaymentModal() {
+  const dispatch = useGameDispatch();
+  const waitingFor = useGameStore((s) => s.waitingFor);
+  const canActForWaitingState = useCanActForWaitingState();
+
+  if (waitingFor?.type !== "ResolutionOptionalPaymentChoice") return null;
+
+  return (
+    <ResolutionOptionalPaymentModalContent
+      waitingFor={waitingFor}
+      canActForWaitingState={canActForWaitingState}
+      dispatch={dispatch}
+    />
+  );
 }
 
 // ── Top or Bottom Choice Modal (CR 401.4) ──────────────────────────────

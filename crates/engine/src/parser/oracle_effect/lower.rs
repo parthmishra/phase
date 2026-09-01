@@ -1245,6 +1245,36 @@ pub(super) fn attach_cast_cost_raise_to_previous_play_from_exile(
     true
 }
 
+/// CR 118.9 + CR 119.4: Fold a "[If you cast a spell this way,] pay
+/// <ability-cost> rather than pay its mana cost" rider onto the preceding
+/// `PlayFromExile` grant's `alt_ability_cost`. Mirrors
+/// `attach_cast_cost_raise_to_previous_play_from_exile` exactly: the rider
+/// scopes to spells cast via the just-granted exile-play permission
+/// ("this way"), not a standalone cast clause. Unlike Nashi / Xander's Pact
+/// (whose whole grant is spell-only, so the rider folds onto a `CastFromZone`
+/// via `attach_alt_cost_to_prior_cast_from_zone`), this class's preceding
+/// clause is a plain "you may play those cards" grant that ALSO authorizes
+/// land plays (Inside Information). Folding onto `alt_ability_cost` instead
+/// of converting the grant to `CastFromZone` keeps that land-play authority
+/// intact — the field is only ever consulted by the spell-casting cost
+/// pipeline, never by the land-play path, so lands played under the same
+/// grant are correctly unaffected. Called as a FALLBACK from the `AltCost`
+/// modifier handler only when the `CastFromZone` attach fails to find its
+/// target, so the two attach helpers together cover the full class.
+pub(super) fn attach_alt_ability_cost_to_previous_play_from_exile(
+    defs: &mut [AbilityDefinition],
+    cost: AbilityCost,
+) -> bool {
+    let Some(CastingPermission::PlayFromExile {
+        alt_ability_cost, ..
+    }) = find_prev_play_from_exile_permission_mut(defs)
+    else {
+        return false;
+    };
+    *alt_ability_cost = Some(cost);
+    true
+}
+
 /// CR 614.1c: Fold an "each land played this way enters tapped" rider into the
 /// preceding `PlayFromExile` grant's `land_enter_tapped`.
 pub(super) fn attach_land_enters_tapped_to_previous_play_from_exile(
@@ -1738,9 +1768,21 @@ pub(super) fn change_zone_target_choice_timing(
 
 pub(super) fn target_choice_timing_for_clause(clause_ir: &ClauseIr) -> TargetChoiceTiming {
     let has_untargeted_resolution_choice = match &clause_ir.parsed.effect {
-        // Equip's attachment is always `SelfRef`, so it remains a stack-time
-        // target even though the keyword's reminder text isn't in this fragment.
-        Effect::Attach { attachment, .. } => !attachment.is_context_ref(),
+        // Preserve the established resolution timing for Attach instructions
+        // whose attachment itself is unbound. The only extra host choice is the
+        // event-scoped "one of them ... to a Samurai" forward-result shape;
+        // ordinary Attach instructions do not have its host-choice continuation.
+        Effect::Attach { attachment, .. } if !attachment.is_context_ref() => true,
+        Effect::Attach {
+            attachment: TargetFilter::ParentTarget,
+            ..
+        } => matches!(
+            clause_ir.condition.as_ref(),
+            Some(AbilityCondition::ZoneChangedThisWay {
+                destination: Some(Zone::Battlefield),
+                ..
+            })
+        ),
         Effect::CastFromZone { .. } => true,
         _ => false,
     };
@@ -2928,6 +2970,7 @@ fn ability_reads_last_created(def: &AbilityDefinition) -> bool {
             | TargetFilter::LastRevealed
             | TargetFilter::LastZoneChanged
             | TargetFilter::CostPaidObject
+            | TargetFilter::AmassedArmy
             | TargetFilter::ChosenCard
             | TargetFilter::TrackedSet { .. }
             | TargetFilter::ExiledBySource
@@ -3709,7 +3752,7 @@ fn rewrite_change_zone_cleanup_to_last_created(
     origin.get_or_insert(Zone::Battlefield);
 }
 
-/// CR 603.7c: Sentence splitting can leave a WheneverEvent delayed trigger's
+/// CR 603.7a: Sentence splitting can leave a WheneverEvent delayed trigger's
 /// token-creating inner effect and its end-step cleanup delayed trigger as
 /// sibling `sub_ability` links on the activated ability. Rewire the cleanup
 /// under the token creator so it registers when the WheneverEvent fires, not
@@ -3876,7 +3919,7 @@ pub(super) fn consolidate_die_and_coin_defs(defs: &mut Vec<AbilityDefinition>, _
             }
         }
 
-        // CR 705.2 + CR 603.7c: Consolidate FlipCoinUntilLose with its per-win
+        // CR 705.2 + CR 608.2c: Consolidate FlipCoinUntilLose with its per-win
         // clause chain. Absorb the win head (e.g. the token-creating copy clause)
         // PLUS any trailing rider clauses that reference the just-created tokens
         // (`LastCreated`) — "Those tokens gain haste", "Exile them …", already
@@ -4488,6 +4531,28 @@ pub(crate) fn strip_player_scope_subject(text: &str) -> (Option<PlayerFilter>, S
     strip_each_player_subject(text)
 }
 
+/// CR 101.4 + CR 608.2c + CR 109.5: Strip a prepositional player-scoped
+/// imperative, map its player set to `PlayerFilter`, and preserve the ordinary
+/// imperative body for the per-player resolution that follows. This is the narrow
+/// form that must precede generic `for each` quantity parsing; subject-form player
+/// scopes retain their existing route.
+pub(super) fn strip_prepositional_player_scope_subject(
+    text: &str,
+) -> (Option<PlayerFilter>, String) {
+    let lower = text.to_lowercase();
+    let scope_rest = nom_on_lower(text, &lower, |i| {
+        alt((
+            value(PlayerFilter::Opponent, tag("for each opponent, you ")),
+            value(PlayerFilter::All, tag("for each player, you ")),
+        ))
+        .parse(i)
+    });
+    scope_rest.map_or_else(
+        || (None, text.to_string()),
+        |(scope, rest)| (Some(scope), rest.to_string()),
+    )
+}
+
 /// Parse the player anchor in an "each player other than ⟨anchor⟩" subject into
 /// the `PlayerFilter` whose population is excluded. Composable `alt()` so future
 /// anchors ("you", "that player") slot in without new `PlayerFilter` variants.
@@ -4549,6 +4614,8 @@ pub(super) fn strip_each_player_subject(text: &str) -> (Option<PlayerFilter>, St
                 },
             ),
             value(PlayerFilter::All, tag("each player ")),
+            value(PlayerFilter::Opponent, tag("for each opponent, you ")),
+            value(PlayerFilter::All, tag("for each player, you ")),
             // CR 101.4 + CR 608.2c: comma-prefixed per-player imperative scope —
             // "For each player, <imperative> ... that player controls" (Curse of
             // Fenric I). The more-specific "for each player, you choose"/"choose
@@ -5175,6 +5242,7 @@ pub(crate) fn parse_controls_permanent_object<'a>(
             qty: QuantityRef::ControlledByEachPlayer {
                 filter: filter.clone(),
                 aggregate: AggregateFunction::Max,
+                relation: crate::types::ability::PlayerRelation::All,
             },
         };
         return Some((Comparator::GE, count, filter, remainder));
@@ -8931,6 +8999,59 @@ pub(super) fn compute_sentence_where_x(chunks: &[ClauseChunk]) -> Vec<Option<Str
     out
 }
 
+/// CR 611.2a + CR 608.2c: Compute, for each chunk, the LEADING duration its
+/// enclosing sentence stated — but only for the chunks that come AFTER the one
+/// the duration was printed on.
+///
+/// A leading duration scopes the whole coordinated predicate it introduces
+/// ("Until end of turn, you may play lands **and** cast spells from among cards
+/// exiled this way …" — Magus of the Mind), yet `split_clause_sequence` cuts that
+/// predicate into sibling chunks and only the first of them still carries the
+/// printed prefix. `with_clause_duration` therefore reconciles the first chunk
+/// and cannot reach the rest; this fills that gap.
+///
+/// Deliberately NOT forward-filled across sentences, unlike
+/// `compute_sentence_where_x`: CR 107.3i makes one X binding apply to every later
+/// instance of X on the object, but a duration scopes exactly the predicate it
+/// introduces (CR 611.2a) and must not leak into the next printed sentence.
+///
+/// The group boundary rule is shared verbatim with `compute_sentence_where_x`, so
+/// the two passes cannot disagree about where a sentence ends.
+///
+/// KNOWN RESIDUAL — a coordinated predicate whose conjuncts CHANGE SUBJECT is
+/// not re-bound. Xanathar, Guild Kingpin prints "Until end of turn, **that
+/// player** can't cast spells, **you** may look at the top card of their library
+/// any time, **you** may play the top card of their library, and **you** may
+/// spend mana as though …": the duration reaches the leading restriction
+/// conjunct (`AddRestriction` gets `UntilEndOfTurn`) but the later cast
+/// permission is lowered with `duration: None`, i.e. indefinite. The
+/// subject-changing conjunct breaks the run this pass walks, so the cast half is
+/// never reached. This predates the pass and is outside the "you may cast … from
+/// among them" grammar it was added for; fixing it means teaching the chunk
+/// splitter about subject changes inside a coordinated predicate, which is a
+/// change to the splitter rather than to this binding.
+pub(super) fn compute_sentence_leading_duration(chunks: &[ClauseChunk]) -> Vec<Option<Duration>> {
+    let mut out = vec![None; chunks.len()];
+    let mut group_start = 0usize;
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let ends_sentence = matches!(chunk.boundary_after, Some(ClauseBoundary::Sentence) | None);
+        if !ends_sentence {
+            continue;
+        }
+        // The duration must HEAD the sentence to scope it; one stated mid-sentence
+        // belongs to its own clause and is handled by that clause's own seams
+        // (the trailing-duration fixup, or `from_among_batch_cast_driver`'s
+        // in-clause scan for Ral, Leyline Prodigy's mid-clause "this turn").
+        if let Some((duration, _)) = strip_leading_duration(chunks[group_start].text.trim()) {
+            for slot in &mut out[group_start + 1..=idx] {
+                *slot = Some(duration.clone());
+            }
+        }
+        group_start = idx + 1;
+    }
+    out
+}
+
 pub(crate) fn strip_trailing_where_x<'a>(tp: TextPair<'a>) -> (TextPair<'a>, Option<String>) {
     for needle in [", where x is ", " where x is "] {
         if let Some((before, after)) = tp.split_around(needle) {
@@ -12112,12 +12233,10 @@ mod tests {
         assert!(matches!(
             count,
             QuantityExpr::Ref {
-                qty: QuantityRef::Aggregate {
-                    function: AggregateFunction::Max,
-                    property: ObjectProperty::ManaValue,
-                    ..
-                }
+                qty: QuantityRef::PropertyAggregate(aggregate)
             }
+            if aggregate.function() == AggregateFunction::Max
+                && aggregate.property() == ObjectProperty::ManaValue
         ));
     }
 
@@ -13601,7 +13720,9 @@ mod strip_optional_effect_prefix_tests {
 /// lift helper, and the wrapper-vs-`_ref` non-domination guard.
 #[cfg(test)]
 mod dq_d_player_set_lift_tests {
-    use super::{for_each_repeatable_repeat_for, strip_for_each_repeat_suffix};
+    use super::{
+        for_each_repeatable_repeat_for, strip_for_each_repeat_suffix, strip_player_scope_subject,
+    };
     use crate::parser::oracle_nom::quantity::parse_for_each_clause_ref;
     use crate::types::ability::{MultiTargetSpec, PlayerFilter, QuantityExpr, QuantityRef};
 
@@ -14005,6 +14126,18 @@ mod dq_d_player_set_lift_tests {
             parse_each_of_target_distribution("up to two other targets"),
             None,
             "bare-plural `other targets` is intentionally NOT accepted"
+        );
+    }
+
+    #[test]
+    fn prepositional_player_scope_preserves_opponent_iteration() {
+        let (scope, body) = strip_player_scope_subject(
+            "For each opponent, you create a 2/2 black Zombie creature token unless they sacrifice a creature.",
+        );
+        assert_eq!(scope, Some(PlayerFilter::Opponent));
+        assert_eq!(
+            body,
+            "create a 2/2 black Zombie creature token unless they sacrifice a creature."
         );
     }
 }

@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { PlayerId } from "../../adapter/types.ts";
+import { usePlayerAvatarImage } from "../../hooks/usePlayerAvatarImage.ts";
+import type { PlayerAvatarIdentity } from "../../services/playerAvatars.ts";
 import { useUiStore } from "../../stores/uiStore.ts";
 import { AvatarHoverPreview } from "./AvatarHoverPreview.tsx";
 import { UnderAttackOverlay } from "./UnderAttackOverlay.tsx";
@@ -25,8 +27,8 @@ interface HudPlateProps {
   seatColor?: string;
   /** Passive imposed state: one or more creatures are attacking this player. */
   underAttack?: boolean;
-  /** Planeswalker art crop URL for the player avatar. */
-  avatarUrl?: string | null;
+  /** Semantic gameplay avatar identity for this exact player seat. */
+  avatarIdentity?: PlayerAvatarIdentity | null;
   /** When set, the plate renders a fuchsia debug-highlight ring iff this
    *  player matches `useUiStore.debugHighlightedPlayerId`. Threaded through
    *  by both `PlayerHud` and `OpponentHud`; absence means the plate never
@@ -62,11 +64,12 @@ export function HudPlate({
   active = false,
   seatColor,
   underAttack = false,
-  avatarUrl,
+  avatarIdentity,
   playerId,
   density = "default",
 }: HudPlateProps) {
   const { t } = useTranslation("game");
+  const avatar = usePlayerAvatarImage(avatarIdentity ?? null);
   const Component = onClick ? "button" : "div";
   const activeChrome = active ? ` ${ACTIVE_TURN_CLASSES[tone]}` : "";
   const isDebugHighlighted = useUiStore(
@@ -117,15 +120,16 @@ export function HudPlate({
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
-        data-avatar-fallback={avatarUrl ? undefined : "true"}
+        data-avatar-fallback={avatar.src ? undefined : "true"}
         data-hud-plate-art=""
-        style={avatarUrl || !seatColor ? undefined : { color: seatColor }}
+        style={avatar.src || !seatColor ? undefined : { color: seatColor }}
       >
-        {avatarUrl ? (
+        {avatar.src ? (
           <img
-            src={avatarUrl}
+            src={avatar.src}
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
+            onError={() => avatar.advanceFailedSource(avatar.src!)}
           />
         ) : (
           <svg
@@ -148,13 +152,14 @@ export function HudPlate({
         </div>
       ) : null}
       <div className="pointer-events-none absolute inset-[1px] border-t border-[#f5eac8]/10" />
-      {avatarUrl ? (
+      {avatar.src ? (
         <div className="contents" data-hud-plate-avatar="">
           <HudAvatar
             label={label}
-            avatarUrl={avatarUrl}
+            avatarUrl={avatar.src}
             seatColor={seatColor}
             compact={compact}
+            onAvatarError={avatar.advanceFailedSource}
           />
         </div>
       ) : null}
@@ -167,7 +172,7 @@ export function HudPlate({
             className={`flex min-w-0 items-center justify-center ${contentGap}`}
             data-hud-plate-label=""
           >
-            {!avatarUrl && seatColor && (
+            {!avatar.src && seatColor && (
               <span
                 aria-hidden
                 className={`${compact ? "h-2 w-2" : "h-2.5 w-2.5"} shrink-0 rounded-full ring-1 ring-black/30`}
@@ -206,11 +211,13 @@ function HudAvatar({
   avatarUrl,
   seatColor,
   compact,
+  onAvatarError,
 }: {
   label: string;
   avatarUrl: string;
   seatColor?: string;
   compact: boolean;
+  onAvatarError(failedSrc: string): void;
 }) {
   return (
     <AvatarHoverPreview
@@ -223,11 +230,13 @@ function HudAvatar({
         borderColor: `${seatColor}cc`,
         boxShadow: `0 0 0 1px ${seatColor}55, 0 10px 24px rgba(0,0,0,0.35)`,
       } : undefined}
+      onAvatarError={onAvatarError}
     >
       <img
         src={avatarUrl}
         alt={label}
         className="h-full w-full object-cover"
+        onError={() => onAvatarError(avatarUrl)}
       />
       <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-transparent to-black/32" />
     </AvatarHoverPreview>

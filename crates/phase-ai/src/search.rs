@@ -51,7 +51,7 @@ use crate::policies::strategy_helpers::{cmp_sacrifice, sacrifice_key};
 use crate::policies::tutor::score_search_choice_selection;
 use crate::policies::{PolicyId, PolicyRegistry, PolicyVerdict};
 use crate::session::AiSession;
-use crate::tactical_gate::gate_candidates;
+use crate::tactical_gate::{gate_candidates, gate_prepared_candidates};
 use crate::threat_profile::{
     build_threat_profile_multiplayer, ArchetypeBaseProbabilities, ThreatProfile,
 };
@@ -1552,6 +1552,14 @@ pub fn fallback_action(
         }),
 
         // Binary accept/decline decisions: decline is always safe.
+        WaitingFor::ResolutionOptionalPaymentChoice { .. } => issued(|action| {
+            matches!(
+                action,
+                GameAction::ChooseResolutionOptionalPaymentBranch {
+                    choice: engine::types::ResolutionOptionalPaymentChoice::Decline,
+                }
+            )
+        }),
         WaitingFor::OptionalEffectChoice { .. }
         | WaitingFor::OpponentMayChoice { .. }
         | WaitingFor::TributeChoice { .. }
@@ -2818,7 +2826,7 @@ fn rank_root_payment_candidates(
             let ranked = prepared
                 .iter()
                 .find(|prepared_candidate| {
-                    prepared_candidate.candidate.action == gated_candidate.candidate.action
+                    prepared_candidate.source_index == gated_candidate.source_index
                 })
                 .and_then(|prepared_candidate| prepared_candidate.payment_successor.clone())
                 .map_or_else(
@@ -3135,17 +3143,11 @@ fn score_candidates_core(
     let mut services =
         PlannerServices::with_deadline(ai_player, config, policies, context, deadline_override);
     let prepared = prepare_payment_candidates(state, ctx.candidates.clone());
-    let candidates = services.validate_candidates(
-        state,
-        prepared
-            .iter()
-            .map(|candidate| candidate.candidate.clone())
-            .collect(),
-    );
-    let gated = gate_candidates(
+    let prepared = services.validate_prepared_candidates(state, prepared);
+    let gated = gate_prepared_candidates(
         state,
         &ctx,
-        candidates,
+        prepared.clone(),
         ai_player,
         config,
         &services.context,
@@ -4772,6 +4774,223 @@ mod tests {
             player: PlayerId(0),
         };
         state
+    }
+
+    /// Regression: the equip announcement opens a real
+    /// `WaitingFor::TargetSelection` (driven here through `engine::apply` —
+    /// production wiring, not a hand-built prompt), and `choose_action` must
+    /// never pick the creature the Equipment is already attached to. Fails on
+    /// revert of the `SelectTarget` arm of `EquipmentPriorityPolicy`.
+    #[test]
+    fn choose_action_never_picks_current_host_at_equip_announcement() {
+        let mut state = make_state();
+        let equip = create_object(
+            &mut state,
+            CardId(9),
+            P0,
+            "Summoner's Grimoire".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let e = state.objects.get_mut(&equip).unwrap();
+            e.card_types.core_types.push(CoreType::Artifact);
+            e.card_types.subtypes.push("Book".to_string());
+            e.card_types.subtypes.push("Equipment".to_string());
+            e.base_card_types = e.card_types.clone();
+            Arc::make_mut(&mut e.abilities).push(AbilityDefinition::new(
+                AbilityKind::Activated,
+                Effect::Attach {
+                    attachment: TargetFilter::SelfRef,
+                    target: TargetFilter::Typed(
+                        engine::types::ability::TypedFilter::creature()
+                            .controller(ControllerRef::You),
+                    ),
+                },
+            ));
+        }
+        let host = add_creature(&mut state, P0, 1, 1);
+        // A second creature exists — the trivial "no other home" activation
+        // rejection does NOT apply here; the host pick is the only place the
+        // same-host play can be stopped.
+        let upgrade = add_creature(&mut state, P0, 3, 3);
+        state.objects.get_mut(&equip).unwrap().attached_to =
+            Some(engine::game::game_object::AttachTarget::Object(host));
+
+        let announced = engine::game::engine::apply(
+            &mut state,
+            P0,
+            GameAction::ActivateAbility {
+                source_id: equip,
+                ability_index: 0,
+            },
+        )
+        .expect("free equip activation must announce");
+        let WaitingFor::TargetSelection { .. } = &announced.waiting_for else {
+            panic!(
+                "equip activation must open TargetSelection, got {:?}",
+                announced.waiting_for
+            );
+        };
+
+        let config = create_config(AiDifficulty::Medium, Platform::Native);
+        let action = choose_action(&state, P0, &config, &mut SmallRng::seed_from_u64(7))
+            .expect("AI must produce an action at the equip host prompt");
+        assert!(
+            !matches!(
+                action,
+                GameAction::ChooseTarget {
+                    target: Some(TargetRef::Object(id)),
+                } if id == host
+            ),
+            "AI must not pick the current equip host at announcement; got {action:?} \
+             (host {host:?}, upgrade {upgrade:?})"
+        );
+
+        // Reach guard — the negative assertion above is a seeded softmax pick;
+        // pin the ground truth so the test fails structurally if the
+        // same-host Reject regresses (e.g. to a soft penalty): the host-pick
+        // candidate at this exact prompt must be in the issued domain and its
+        // EquipmentPriority verdict a hard Reject.
+        let issued = engine::ai_support::legal_actions(&state);
+        assert!(
+            issued.iter().any(
+                |a| matches!(a, GameAction::ChooseTarget { target: Some(TargetRef::Object(id)) }
+                    if *id == host)
+            ),
+            "reach guard: the current host must be a legal equip target at the announcement prompt"
+        );
+        let host_pick = CandidateAction {
+            action: GameAction::ChooseTarget {
+                target: Some(TargetRef::Object(host)),
+            },
+            metadata: ActionMetadata::for_actor(Some(P0), TacticalClass::Utility),
+        };
+        let policy_decision = AiDecisionContext {
+            waiting_for: state.waiting_for.clone(),
+            candidates: Vec::new(),
+        };
+        let policy_context = crate::context::AiContext::empty(&config.weights);
+        let verdicts =
+            crate::policies::registry::PolicyRegistry::shared().verdicts(&PolicyContext {
+                state: &state,
+                decision: &policy_decision,
+                candidate: &host_pick,
+                ai_player: P0,
+                config: &config,
+                context: &policy_context,
+                cast_facts: None,
+                search_depth: crate::policies::context::SearchDepth::Root,
+            });
+        let equip_verdict = verdicts
+            .iter()
+            .find(|(id, _)| *id == crate::policies::registry::PolicyId::EquipmentPriority)
+            .map(|(_, v)| v);
+        assert!(
+            matches!(
+                equip_verdict,
+                Some(crate::policies::registry::PolicyVerdict::Reject { reason })
+                    if reason.kind == "equipment_reequip_same_host"
+            ),
+            "reach guard: picking the current host at the announcement prompt must be \
+             a hard Reject from EquipmentPriorityPolicy; got {equip_verdict:?}"
+        );
+    }
+
+    /// With the Equipment attached to its only creature, the AI must never
+    /// surface the equip activation at priority (pre-existing
+    /// `equipment_no_other_home` rejection — kept as a guard on the activation
+    /// stage).
+    #[test]
+    fn choose_action_never_activates_reequip_without_better_host() {
+        let mut state = make_state();
+        let equip = create_object(
+            &mut state,
+            CardId(9),
+            P0,
+            "Summoner's Grimoire".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let e = state.objects.get_mut(&equip).unwrap();
+            e.card_types.core_types.push(CoreType::Artifact);
+            e.card_types.subtypes.push("Book".to_string());
+            e.card_types.subtypes.push("Equipment".to_string());
+            e.base_card_types = e.card_types.clone();
+            Arc::make_mut(&mut e.abilities).push(AbilityDefinition::new(
+                AbilityKind::Activated,
+                Effect::Attach {
+                    attachment: TargetFilter::SelfRef,
+                    target: TargetFilter::Any,
+                },
+            ));
+        }
+        let host = add_creature(&mut state, P0, 1, 1);
+        state.objects.get_mut(&equip).unwrap().attached_to =
+            Some(engine::game::game_object::AttachTarget::Object(host));
+        // {3} available for the equip cost — the activation is affordable.
+        add_mana(&mut state, P0, ManaType::Colorless, 3);
+
+        let config = create_config(AiDifficulty::Medium, Platform::Native);
+        let mut rng = SmallRng::seed_from_u64(7);
+        let action =
+            choose_action(&state, P0, &config, &mut rng).expect("AI must produce an action");
+        assert!(
+            !matches!(
+                action,
+                GameAction::ActivateAbility { source_id, .. } if source_id == equip
+            ),
+            "AI must not re-activate equip of an Equipment already attached to its \
+             only host; got {action:?}"
+        );
+
+        // Reach guard — the negative assertion above is vacuous unless the
+        // activation was actually available and hard-rejected by policy. Pin
+        // both so the test flips if the `equipment_no_other_home` guard
+        // regresses to a soft penalty.
+        let issued = engine::ai_support::legal_actions(&state);
+        assert!(
+            issued.iter().any(
+                |a| matches!(a, GameAction::ActivateAbility { source_id, ability_index }
+                    if *source_id == equip && *ability_index == 0)
+            ),
+            "reach guard: the equip activation must be a legal action at priority"
+        );
+        let candidate = CandidateAction {
+            action: GameAction::ActivateAbility {
+                source_id: equip,
+                ability_index: 0,
+            },
+            metadata: ActionMetadata::for_actor(Some(P0), TacticalClass::Ability),
+        };
+        let policy_decision = AiDecisionContext {
+            waiting_for: WaitingFor::Priority { player: P0 },
+            candidates: Vec::new(),
+        };
+        let policy_context = crate::context::AiContext::empty(&config.weights);
+        let verdicts =
+            crate::policies::registry::PolicyRegistry::shared().verdicts(&PolicyContext {
+                state: &state,
+                decision: &policy_decision,
+                candidate: &candidate,
+                ai_player: P0,
+                config: &config,
+                context: &policy_context,
+                cast_facts: None,
+                search_depth: crate::policies::context::SearchDepth::Root,
+            });
+        let equip_verdict = verdicts
+            .iter()
+            .find(|(id, _)| *id == crate::policies::registry::PolicyId::EquipmentPriority)
+            .map(|(_, v)| v);
+        assert!(
+            matches!(
+                equip_verdict,
+                Some(crate::policies::registry::PolicyVerdict::Reject { reason })
+                    if reason.kind == "equipment_no_other_home"
+            ),
+            "reach guard: the no-other-home equip activation must be a hard Reject \
+             from EquipmentPriorityPolicy; got {equip_verdict:?}"
+        );
     }
 
     /// T8 — the combat production wiring at `deterministic_choice`'s combat
@@ -8363,17 +8582,11 @@ mod tests {
         let services = PlannerServices::with_deadline(P0, &enabled, policies, context, None);
         let decision = build_decision_context(&state);
         let prepared = prepare_payment_candidates(&state, decision.candidates.clone());
-        let validated = services.validate_candidates(
-            &state,
-            prepared
-                .iter()
-                .map(|candidate| candidate.candidate.clone())
-                .collect(),
-        );
-        let gated = gate_candidates(
+        let prepared = services.validate_prepared_candidates(&state, prepared);
+        let gated = gate_prepared_candidates(
             &state,
             &decision,
-            validated,
+            prepared.clone(),
             P0,
             &enabled,
             &services.context,
@@ -8410,6 +8623,36 @@ mod tests {
             .as_ref()
             .is_some_and(|action| expected.contains(action)));
         assert!(calls.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    }
+
+    #[test]
+    fn payment_certificates_remain_bound_to_issued_positions_not_action_equality() {
+        let state = flexible_mana_payment_state();
+        let decision = build_decision_context(&state);
+        let original = decision.candidates[0].clone();
+        let mut equivalent = original.clone();
+        equivalent.metadata.tactical_class = TacticalClass::Utility;
+
+        let prepared = prepare_payment_candidates(&state, vec![original, equivalent]);
+        assert_eq!(
+            prepared
+                .iter()
+                .map(|candidate| candidate.source_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+            "equivalent raw actions keep distinct engine-issued provenance"
+        );
+        assert!(
+            prepared
+                .iter()
+                .all(|candidate| candidate.payment_successor.is_some()),
+            "both issued positions retain their own cached reducer certificate"
+        );
+        assert_ne!(
+            prepared[0].candidate.metadata.tactical_class,
+            prepared[1].candidate.metadata.tactical_class,
+            "reach-guard: the positions differ in metadata even though their actions match"
+        );
     }
 
     #[test]
@@ -10569,17 +10812,11 @@ mod tests {
     fn build_root_beam(state: &GameState, services: &PlannerServices<'_>) -> Vec<RankedCandidate> {
         let ctx = build_decision_context(state);
         let prepared = prepare_payment_candidates(state, ctx.candidates.clone());
-        let candidates = services.validate_candidates(
-            state,
-            prepared
-                .iter()
-                .map(|candidate| candidate.candidate.clone())
-                .collect(),
-        );
-        let gated = gate_candidates(
+        let prepared = services.validate_prepared_candidates(state, prepared);
+        let gated = gate_prepared_candidates(
             state,
             &ctx,
-            candidates,
+            prepared.clone(),
             services.ai_player,
             services.config,
             &services.context,
@@ -11782,6 +12019,7 @@ mod tests {
             conditional_enter_with_counters: Vec::new(),
             count_param: 0,
             library_position: None,
+            mass_library_order: None,
             is_cost_payment: false,
             enters_modified_if: None,
             duration: None,
@@ -12428,6 +12666,7 @@ mod tests {
                 conditional_enter_with_counters: Vec::new(),
                 count_param: 0,
                 library_position: None,
+                mass_library_order: None,
                 is_cost_payment: false,
                 enters_modified_if: None,
                 duration: None,

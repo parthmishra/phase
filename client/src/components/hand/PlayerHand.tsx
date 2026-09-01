@@ -535,7 +535,12 @@ export function PlayerHand() {
     (objectId: number, e?: React.MouseEvent) => {
       if (useUiStore.getState().debugInteractionMode && e) {
         e.stopPropagation();
-        useUiStore.getState().openDebugContextMenu({ objectId, x: e.clientX, y: e.clientY });
+        useUiStore.getState().openDebugContextMenu({
+          objectId,
+          x: e.clientX,
+          y: e.clientY,
+          surface: "game",
+        });
         return;
       }
       // Read the transient lift through a ref so this callback stays stable
@@ -1296,6 +1301,7 @@ const ZoneFanCard = memo(function ZoneFanCard({
   return (
     <motion.div
       data-zone-fan-card
+      data-object-id={objectId}
       // Marks the card as inspectable, which is what usePreviewDismiss's 300ms
       // `[data-card-hover]:hover` poll (and uiStore's 50ms deferred clear) test
       // for. Without it the poll saw nothing hovered and tore the preview down

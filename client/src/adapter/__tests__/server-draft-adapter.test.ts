@@ -66,11 +66,17 @@ function createMockDraftView(overrides: Partial<DraftPlayerView> = {}): DraftPla
     pick_number: 0,
     pass_direction: "Left",
     current_pack: null,
+    required_pick_count: 0,
+    pick_selection_mode: "Direct",
     pool: [],
     draft_effects: [],
     pool_groups: EMPTY_DRAFT_POOL_GROUPS,
     seats: [],
     cards_per_pack: 14,
+    pack_sizes: [14, 14, 14],
+    pack_set_codes: ["TST", "TST", "TST"],
+    pack_pick_steps: [14, 14, 14],
+    pick_steps_per_pack: 14,
     pack_count: 3,
     min_deck_size: 40,
     addable_cards: ["Plains", "Island", "Swamp", "Mountain", "Forest"],
@@ -134,7 +140,7 @@ describe("ServerDraftAdapter", () => {
     // Start a createDraft flow — this triggers attachSocket.
     const createPromise = adapter.createDraft({
       displayName: "Alice",
-      setCode: "MKM",
+      setCodes: ["MKM"],
       kind: "Premier",
       public: true,
       tournamentFormat: "Swiss",
@@ -151,6 +157,66 @@ describe("ServerDraftAdapter", () => {
       }),
     );
     await createPromise;
+  });
+
+  it("rejects a stale Full server before setup or draft updates can mutate state", async () => {
+    MockWebSocket.last = null;
+    const staleAdapter = new ServerDraftAdapter("ws://localhost:9374/ws");
+    const listener = vi.fn();
+    staleAdapter.onEvent(listener);
+    const createPromise = staleAdapter.createDraft({
+      displayName: "Alice",
+      setCodes: ["MKM"],
+      kind: "CommanderDraft",
+      public: true,
+      tournamentFormat: "Swiss",
+      podPolicy: "Competitive",
+      podSize: 8,
+    });
+
+    await Promise.resolve();
+    const staleWs = MockWebSocket.last!;
+    staleWs.dispatchSynthetic(
+      "message",
+      JSON.stringify({
+        type: "ServerHello",
+        data: {
+          server_version: "0.0.0-stale",
+          build_commit: "stalehash",
+          protocol_version: PROTOCOL_VERSION - 1,
+          mode: "Full",
+        },
+      }),
+    );
+
+    await expect(createPromise).rejects.toThrow("older than supported");
+    expect(staleWs.close).toHaveBeenCalledOnce();
+    expect(staleWs.send).not.toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "serverHello",
+        compatible: false,
+        info: expect.objectContaining({ protocolVersion: PROTOCOL_VERSION - 1, mode: "Full" }),
+      }),
+    );
+
+    staleWs.dispatchSynthetic(
+      "message",
+      JSON.stringify({
+        type: "DraftStateUpdate",
+        data: {
+          view: {
+            ...createMockDraftView({ kind: "CommanderDraft", pick_selection_mode: "Ordered" }),
+            pick_selection_mode: undefined,
+          },
+        },
+      }),
+    );
+
+    expect(staleAdapter.currentDraftView).toBeNull();
+    expect(listener).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "draftViewUpdated" }),
+    );
   });
 
   it("transitions phase to match on DraftMatchStart", () => {
@@ -188,7 +254,7 @@ describe("ServerDraftAdapter", () => {
     const setupFailingAdapter = new ServerDraftAdapter("ws://localhost:9374/ws");
     const createPromise = setupFailingAdapter.createDraft({
       displayName: "Alice",
-      setCode: "MKM",
+      setCodes: ["MKM"],
       kind: "Premier",
       public: true,
       tournamentFormat: "Swiss",
@@ -403,7 +469,7 @@ describe("ServerDraftAdapter", () => {
         type: "DraftAction",
         data: {
           draft_code: "ABCD12",
-          action: { type: "Pick", data: { seat: 0, card_instance_id: "card-001" } },
+          action: { type: "Pick", data: { seat: 0, card_instance_ids: ["card-001"] } },
         },
       }),
     );
@@ -421,6 +487,54 @@ describe("ServerDraftAdapter", () => {
     expect(result.pick_number).toBe(1);
   });
 
+  it("submitDeck sends DraftAction carrying the commander designation", async () => {
+    // This file is the run's one TYPECHECK-BLIND payload: `private send(msg:
+    // unknown)` means neither `tsc` nor the adapter's own type can see a skew.
+    // `JSON.stringify` equality is what makes this discriminate — it reds if
+    // `commanders` is OMITTED, MISNAMED (`commander`, `commanderNames`), or
+    // MISORDERED relative to `main_deck`. The key order deliberately mirrors
+    // the Rust struct's field order (`seat`, `main_deck`, `commanders`); serde
+    // does not care, but pinning it makes a future reorder visible.
+    //
+    // Reach limitation, stated rather than softened: this row asserts the
+    // payload is EMITTED. It does not, and cannot, prove that any production
+    // path calls the emitter — measured, none does (D5). The row exists so the
+    // seam cannot rot silently.
+    ws.send.mockClear();
+    const deckPromise = adapter.submitDeck(
+      ["Plains", "Island"],
+      ["Kenrith, the Returned King"],
+    );
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: "DraftAction",
+        data: {
+          draft_code: "ABCD12",
+          action: {
+            type: "SubmitDeck",
+            data: {
+              seat: 0,
+              main_deck: ["Plains", "Island"],
+              commanders: ["Kenrith, the Returned King"],
+            },
+          },
+        },
+      }),
+    );
+
+    ws.dispatchSynthetic(
+      "message",
+      JSON.stringify({
+        type: "DraftStateUpdate",
+        data: { view: createMockDraftView({ pick_number: 2 }) },
+      }),
+    );
+
+    const result = await deckPromise;
+    expect(result.pick_number).toBe(2);
+  });
+
   it("DraftStateUpdate resolves pending pick promise", async () => {
     const pickPromise = adapter.submitPick("card-002");
 
@@ -434,6 +548,41 @@ describe("ServerDraftAdapter", () => {
 
     const result = await pickPromise;
     expect(result.pick_number).toBe(2);
+  });
+
+  it("DraftStateUpdate preserves workspace presentation metadata", async () => {
+    const pickPromise = adapter.submitPick("card-003");
+    const workspaceMetadata: Pick<
+      DraftPlayerView["pool_groups"],
+      "workspace_capabilities" | "workspace_row_classification"
+    > = {
+      workspace_capabilities: {
+        rarity_group_order: ["mythic", "rare", "uncommon", "common", "rarity_other"],
+      },
+      workspace_row_classification: {
+        creature_instance_ids: ["creature-1", "creature-2"],
+        noncreature_instance_ids: ["instant-1"],
+      },
+    };
+    const view = createMockDraftView({
+      pick_number: 3,
+      pool_groups: {
+        ...EMPTY_DRAFT_POOL_GROUPS,
+        ...workspaceMetadata,
+      },
+    });
+
+    ws.dispatchSynthetic(
+      "message",
+      JSON.stringify({
+        type: "DraftStateUpdate",
+        data: { view },
+      }),
+    );
+
+    const result = await pickPromise;
+    expect(result.pool_groups).toMatchObject(workspaceMetadata);
+    expect(adapter.currentDraftView?.pool_groups).toMatchObject(workspaceMetadata);
   });
 
   it("DraftTimerSync emits timerSync event", () => {
@@ -525,7 +674,7 @@ describe("ServerDraftAdapter", () => {
         "message",
         JSON.stringify({
           type: "ActionRejected",
-          data: { reason: "Engine error: ReorderHand: expected 6 ids, got 5" },
+          data: { rejection: { code: "stale_action", disposition: "stale", message: "That action is based on outdated game state.", related_object_ids: [] } },
         }),
       );
 
@@ -541,7 +690,7 @@ describe("ServerDraftAdapter", () => {
         "message",
         JSON.stringify({
           type: "ActionRejected",
-          data: { reason: "Engine error: something genuinely wrong" },
+          data: { rejection: { code: "invalid_action", disposition: "invalid", message: "That action is not valid in the current game state.", related_object_ids: [] } },
         }),
       );
 
@@ -566,7 +715,7 @@ describe("ServerDraftAdapter", () => {
           type: "ManaPaymentPreviewRejected",
           data: {
             request_id: sent.data.request_id,
-            reason: "Engine error: ReorderHand: expected 6 ids, got 5",
+            rejection: { code: "stale_action", disposition: "stale", message: "That action is based on outdated game state.", related_object_ids: [] },
           },
         }),
       );
@@ -585,13 +734,47 @@ describe("ServerDraftAdapter", () => {
         "message",
         JSON.stringify({
           type: "ManaPaymentPreviewRejected",
-          data: { request_id: sent.data.request_id, reason: "Engine error: no mana sources" },
+          data: { request_id: sent.data.request_id, rejection: { code: "invalid_action", disposition: "invalid", message: "That action is not valid in the current game state.", related_object_ids: [] } },
         }),
       );
 
       await expect(pending).rejects.toMatchObject({
         code: "ACTION_REJECTED",
         recoverable: true,
+      });
+    });
+
+    it("settles operational action and matching preview failures", async () => {
+      const action = adapter.submitAction({ type: "PassPriority" }, 0);
+      ws.dispatchSynthetic(
+        "message",
+        JSON.stringify({ type: "ActionFailed", data: { message: "action persistence failed" } }),
+      );
+      await expect(action).rejects.toMatchObject({
+        code: "WS_ERROR",
+        message: "action persistence failed",
+        recoverable: false,
+      });
+
+      const preview = adapter.previewManaPayment({ type: "PassPriority" }, 0);
+      const calls = ws.send.mock.calls;
+      const sent = JSON.parse(calls[calls.length - 1][0] as string);
+      const settled = vi.fn();
+      void preview.then(settled, settled);
+      ws.dispatchSynthetic(
+        "message",
+        JSON.stringify({ type: "ManaPaymentPreviewFailed", data: { request_id: sent.data.request_id + 1, message: "other preview failed" } }),
+      );
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      ws.dispatchSynthetic(
+        "message",
+        JSON.stringify({ type: "ManaPaymentPreviewFailed", data: { request_id: sent.data.request_id, message: "preview lookup failed" } }),
+      );
+      await expect(preview).rejects.toMatchObject({
+        code: "WS_ERROR",
+        message: "preview lookup failed",
+        recoverable: false,
       });
     });
   });

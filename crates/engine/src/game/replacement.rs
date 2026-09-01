@@ -5060,8 +5060,11 @@ fn bind_search_found_definition(
                         single_use_group: None,
                         single_use: false,
                         cast_cost_raise: None,
+                        alt_ability_cost: None,
                         land_enter_tapped,
                         invalidation: None,
+                        provenance: crate::types::ability::PlayFromExileProvenance::Impulse,
+                        mode: crate::types::ability::CardPlayMode::Play,
                     },
                 target: TargetFilter::ParentTarget,
                 grantee: PermissionGrantee::AbilityController,
@@ -7720,6 +7723,7 @@ impl ReplacementPromptCauses {
         Self(cause.bit())
     }
 
+    #[cfg(test)]
     pub(crate) const fn contains(self, cause: ReplacementPromptCause) -> bool {
         self.0 & cause.bit() != 0
     }
