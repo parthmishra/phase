@@ -728,6 +728,12 @@ export function GamePage() {
   }, []);
 
   const handleNoDeck = useCallback((reason?: string, bracketViolation?: boolean) => {
+    if (sourceParam === "draft" && draftIdParam) {
+      navigate("/draft/quick?resume=1", {
+        state: { draftStartError: reason ?? null, draftId: draftIdParam },
+      });
+      return;
+    }
     if (reason) {
       // cEDH bracket lock: surface as a blocking modal rather than navigating
       // away, so the user can read the explanation before going back to setup.
@@ -741,7 +747,7 @@ export function GamePage() {
       return;
     }
     navigate("/");
-  }, [navigate]);
+  }, [navigate, sourceParam, draftIdParam]);
 
   const handleCardDataMissing = useCallback(() => {
     setShowCardDataMissing(true);
